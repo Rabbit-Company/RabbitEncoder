@@ -1,0 +1,40 @@
+services:
+  rabbit-encoder:
+    build: .
+    container_name: rabbit-encoder
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./temp:/data/temp
+    environment:
+      # Server
+      - PORT=3000
+
+      # File watcher
+      # Seconds the file size must stay unchanged before encoding starts
+      - FILE_COOLDOWN=30
+
+      # Encoder defaults
+      # Video quality: low, medium, high
+      - ENCODER_QUALITY=medium
+      # Encoder speed: slower, slow, medium, fast, faster
+      - ENCODER_SPEED=slow
+      # Encoder version label for metadata
+      - ENCODER_VERSION=Auto-Boost-Essential v2.0
+
+      # Audio bitrates (kbps per channel layout)
+      - AUDIO_BITRATE_MONO=64
+      - AUDIO_BITRATE_STEREO=128
+      - AUDIO_BITRATE_2_1=160
+      - AUDIO_BITRATE_5_1=256
+      - AUDIO_BITRATE_6_1=320
+      - AUDIO_BITRATE_7_1=384
+      - AUDIO_BITRATE_7_1_4=512
+
+      # Paths (usually no need to change)
+      - INPUT_DIR=/data/input
+      - OUTPUT_DIR=/data/output
+      - TEMP_DIR=/data/temp

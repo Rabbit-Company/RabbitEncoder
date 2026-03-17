@@ -1,0 +1,7 @@
+node_modules/
+dist/
+input/
+output/
+temp/
+*.log
+bun.lock
