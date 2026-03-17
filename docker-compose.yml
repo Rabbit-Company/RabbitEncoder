@@ -23,8 +23,6 @@ services:
       - ENCODER_QUALITY=medium
       # Encoder speed: slower, slow, medium, fast, faster
       - ENCODER_SPEED=slow
-      # Encoder version label for metadata
-      - ENCODER_VERSION=Auto-Boost-Essential v2.0
 
       # Audio bitrates (kbps per channel layout)
       - AUDIO_BITRATE_MONO=64
@@ -34,6 +32,10 @@ services:
       - AUDIO_BITRATE_6_1=320
       - AUDIO_BITRATE_7_1=384
       - AUDIO_BITRATE_7_1_4=512
+
+      # Metadata
+      - ORGANIZATION=RabbitCompany
+      - CONTACT=https://rabbit-company.com
 
       # Paths (usually no need to change)
       - INPUT_DIR=/data/input

@@ -29,7 +29,8 @@ export function loadConfig(): AppConfig {
 		outputDir: process.env.OUTPUT_DIR || "/data/output",
 		tempDir: process.env.TEMP_DIR || "/data/temp",
 		port: parseInt(process.env.PORT || "3000"),
-		encoderVersion: process.env.ENCODER_VERSION || "Auto-Boost-Essential v2.0",
+		organization: process.env.ORGANIZATION || "RabbitCompany",
+		contact: process.env.CONTACT || "https://rabbit-company.com",
 		defaults: {
 			quality,
 			finalSpeed,

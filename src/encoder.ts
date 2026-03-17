@@ -3,6 +3,7 @@ import { join, parse as parsePath } from "path";
 import type { Job, JobStep, AppConfig, ProbeResult } from "./types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "./logger";
+import pkg from "../package.json";
 
 async function run(cmd: string[], opts?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string }> {
 	const proc = Bun.spawn(cmd, {
@@ -65,6 +66,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 	mkdirSync(tempDir, { recursive: true });
 
 	const stem = parsePath(job.filename).name;
+	const sourceTag = detectSourceTag(stem);
 	const baseTitle = stem.replace(/\s*[\-–—]*\s*\[.*/, "").trim();
 
 	const steps = makeSteps();
@@ -291,9 +293,9 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 					"--title",
 					stream.title || stream.language || `Stream ${i + 1}`,
 					"--comment",
-					"ORGANIZATION=RabbitCompany",
+					`ORGANIZATION=${config.organization}`,
 					"--comment",
-					"CONTACT=https://rabbit-company.com",
+					`CONTACT=${config.contact}`,
 					"--discard-comments",
 					"--discard-pictures",
 					"-",
@@ -330,7 +332,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 		const audioLabel = audioStreams.length > 1 ? "Multi Opus" : getAudioReplacementLabel(probe.audioLayout);
 		const resTag = probe.width >= 3840 ? "2160p" : probe.height >= 1080 ? "1080p" : "720p";
-		const outputFilename = `${baseTitle} - [Bluray-${resTag}][${audioLabel}][AV1]-RabbitCompany.mkv`;
+		const outputFilename = `${baseTitle} - [${sourceTag}-${resTag}][${audioLabel}][AV1]-${config.organization}.mkv`;
 		const finalOutput = join(tempDir, "final.mkv");
 
 		const xmlTags = [
@@ -338,11 +340,10 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			"<Tags><Tag>",
 			"<Targets><TargetTypeValue>50</TargetTypeValue></Targets>",
 			`<Simple><Name>Title</Name><String>${escapeXml(baseTitle)}</String></Simple>`,
-			"<Simple><Name>Organization</Name><String>RabbitCompany</String></Simple>",
-			"<Simple><Name>Contact</Name><String>https://rabbit-company.com</String></Simple>",
-			`<Simple><Name>Encoder</Name><String>${escapeXml(config.encoderVersion)}</String></Simple>`,
+			`<Simple><Name>Organization</Name><String>${config.organization}</String></Simple>`,
+			`<Simple><Name>Contact</Name><String>${config.contact}</String></Simple>`,
+			`<Simple><Name>Encoder</Name><String>RabbitEncoder v${pkg.version}</String></Simple>`,
 			`<Simple><Name>Encoder Settings</Name><String>Quality ${job.settings.quality}, Speed ${job.settings.finalSpeed}</String></Simple>`,
-			`<Simple><Name>Encoded date</Name><String>${new Date().toISOString()}</String></Simple>`,
 			"</Tag></Tags>",
 		].join("\n");
 
@@ -465,6 +466,38 @@ async function applyHDRMetadata(mkvPath: string, probe: ProbeResult) {
 		}
 	}
 	await run(cmd);
+}
+
+function detectSourceTag(filename: string): string {
+	const upper = filename.toUpperCase();
+
+	// Remux should become Bluray after encode
+	if (/\bREMUX\b/.test(upper)) return "Bluray";
+
+	const sources = ["WEBDL", "WEBRIP", "BLURAY", "HDTV", "DVD", "SDTV", "CAM"] as const;
+
+	for (const source of sources) {
+		if (new RegExp(`\\b${source}\\b`).test(upper)) {
+			switch (source) {
+				case "BLURAY":
+					return "Bluray";
+				case "WEBRIP":
+					return "WEBRip";
+				case "WEBDL":
+					return "WEBDL";
+				case "HDTV":
+					return "HDTV";
+				case "DVD":
+					return "DVD";
+				case "SDTV":
+					return "SDTV";
+				case "CAM":
+					return "CAM";
+			}
+		}
+	}
+
+	return "Bluray";
 }
 
 function escapeXml(s: string): string {

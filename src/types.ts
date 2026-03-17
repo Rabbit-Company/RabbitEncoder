@@ -80,5 +80,6 @@ export interface AppConfig {
 	tempDir: string;
 	port: number;
 	defaults: JobSettings;
-	encoderVersion: string;
+	organization: string;
+	contact: string;
 }
