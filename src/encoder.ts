@@ -65,7 +65,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 	mkdirSync(tempDir, { recursive: true });
 
 	const stem = parsePath(job.filename).name;
-	const baseTitle = stem.replace(/ - \[.*/, "");
+	const baseTitle = stem.replace(/\s*[\-–—]*\s*\[.*/, "").trim();
 
 	const steps = makeSteps();
 
@@ -341,8 +341,8 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			"<Simple><Name>Organization</Name><String>RabbitCompany</String></Simple>",
 			"<Simple><Name>Contact</Name><String>https://rabbit-company.com</String></Simple>",
 			`<Simple><Name>Encoder</Name><String>${escapeXml(config.encoderVersion)}</String></Simple>`,
-			`<Simple><Name>Encoder Settings</Name><String>Auto-Boost-Essential, Quality ${job.settings.quality}, Speed ${job.settings.finalSpeed}</String></Simple>`,
-			`<Simple><Name>Encoding Date</Name><String>${new Date().toISOString()}</String></Simple>`,
+			`<Simple><Name>Encoder Settings</Name><String>Quality ${job.settings.quality}, Speed ${job.settings.finalSpeed}</String></Simple>`,
+			`<Simple><Name>Encoded date</Name><String>${new Date().toISOString()}</String></Simple>`,
 			"</Tag></Tags>",
 		].join("\n");
 
@@ -351,15 +351,20 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 		setStep(S_MUX, { progress: 30, detail: "Merging MKV" });
 
-		const mkvArgs = ["mkvmerge", "-o", finalOutput, "--no-audio", "--title", baseTitle, "--global-tags", xmlPath, videoMkv];
+		const mkvArgs = ["mkvmerge", "-o", finalOutput, "--title", baseTitle, "--global-tags", xmlPath, "--no-audio", "--no-subtitles", videoMkv];
 
 		for (let i = 0; i < audioStreams.length; i++) {
 			const stream = audioStreams[i]!;
 			if (stream.language) {
-				mkvArgs.push("--language", `${i}:${stream.language}`);
+				mkvArgs.push("--language", `0:${stream.language}`);
+			}
+			if (stream.title) {
+				mkvArgs.push("--track-name", `0:${stream.title}`);
 			}
 			mkvArgs.push(encodedAudioFiles[i]!);
 		}
+
+		mkvArgs.push("--no-video", "--no-audio", job.inputPath);
 
 		const mergeRes = await run(mkvArgs);
 		if (mergeRes.code !== 0 && mergeRes.code !== 1) {
