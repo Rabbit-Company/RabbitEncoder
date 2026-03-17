@@ -1,6 +1,10 @@
+import Blake2b from "@rabbit-company/blake2b";
+
 const API = "";
 let defaults = null;
 let currentEditJobId = null;
+let authToken = localStorage.getItem("authToken") || "";
+let pollTimer = null;
 
 const QUALITIES = ["low", "medium", "high"];
 const SPEEDS = ["slower", "slow", "medium", "fast", "faster"];
@@ -14,18 +18,114 @@ const CHANNELS = [
 	{ key: "7.1.4", label: "7.1.4 Atmos" },
 ];
 
+function hashPassword(password) {
+	return Blake2b.hash(`rabbitencoder-${password}`);
+}
+
+function showLogin(message) {
+	const modal = document.getElementById("login-modal");
+	const error = document.getElementById("login-error");
+	const input = document.getElementById("login-password");
+	error.textContent = message || "";
+	input.value = "";
+	modal.style.display = "";
+	input.focus();
+}
+
+function hideLogin() {
+	document.getElementById("login-modal").style.display = "none";
+}
+
+async function handleLogin() {
+	const input = document.getElementById("login-password");
+	const password = input.value.trim();
+	if (!password) return;
+
+	const btn = document.getElementById("login-submit-btn");
+	btn.disabled = true;
+	btn.textContent = "Verifying...";
+
+	authToken = hashPassword(password);
+
+	try {
+		const res = await fetch(`${API}/api/config`, {
+			headers: { Authorization: `Bearer ${authToken}` },
+		});
+
+		if (res.status === 401 || res.status === 403) {
+			document.getElementById("login-error").textContent = "Invalid password";
+			input.value = "";
+			input.focus();
+			return;
+		}
+
+		if (!res.ok) {
+			document.getElementById("login-error").textContent = `Server error (${res.status})`;
+			return;
+		}
+
+		localStorage.setItem("authToken", authToken);
+		hideLogin();
+		defaults = await res.json();
+		startPolling();
+	} catch (e) {
+		document.getElementById("login-error").textContent = "Cannot reach server";
+	} finally {
+		btn.disabled = false;
+		btn.textContent = "Login";
+	}
+}
+
+function logout() {
+	authToken = "";
+	localStorage.removeItem("authToken");
+	defaults = null;
+	lastJobsJson = "";
+	stopPolling();
+	document.getElementById("jobs-list").style.display = "none";
+	document.getElementById("empty-state").style.display = "";
+	showLogin("");
+}
+
+async function authFetch(url, opts = {}) {
+	const headers = { ...(opts.headers || {}) };
+	if (authToken) {
+		headers["Authorization"] = `Bearer ${authToken}`;
+	}
+	const res = await fetch(url, { ...opts, headers });
+
+	if (res.status === 401 || res.status === 403) {
+		authToken = "";
+		localStorage.removeItem("authToken");
+		stopPolling();
+		showLogin("Session expired, please log in again");
+		throw new Error("Unauthorized");
+	}
+
+	return res;
+}
+
 async function fetchJobs() {
-	const res = await fetch(`${API}/api/jobs`);
+	const res = await authFetch(`${API}/api/jobs`);
 	return res.json();
 }
 
 async function fetchConfig() {
-	const res = await fetch(`${API}/api/config`);
+	const res = await authFetch(`${API}/api/config`);
+	return res.json();
+}
+
+async function patchConfig(settings) {
+	const res = await authFetch(`${API}/api/config`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(settings),
+	});
 	return res.json();
 }
 
 async function patchJob(id, settings) {
-	const res = await fetch(`${API}/api/jobs/${id}`, {
+	const res = await authFetch(`${API}/api/jobs/${id}`, {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(settings),
@@ -34,11 +134,11 @@ async function patchJob(id, settings) {
 }
 
 async function deleteJob(id) {
-	await fetch(`${API}/api/jobs/${id}`, { method: "DELETE" });
+	await authFetch(`${API}/api/jobs/${id}`, { method: "DELETE" });
 }
 
 async function retryJob(id) {
-	await fetch(`${API}/api/jobs/${id}/retry`, { method: "POST" });
+	await authFetch(`${API}/api/jobs/${id}/retry`, { method: "POST" });
 }
 
 function renderRadioPills(container, options, selected, onChange) {
@@ -164,7 +264,6 @@ function renderJobCard(job) {
 		error = `<div class="job-error">${escapeHtml(job.error)}</div>`;
 	}
 
-	// Replace inline onclick with data attributes
 	let actions = "";
 	if (job.status === "queued") {
 		actions = `
@@ -236,12 +335,23 @@ async function update() {
 		listEl.style.display = "";
 		listEl.innerHTML = jobs.map(renderJobCard).join("");
 	} catch (e) {
+		if (e.message === "Unauthorized") return;
 		console.error("Poll error:", e);
 	}
 }
 
-setInterval(update, 1500);
-update();
+function startPolling() {
+	stopPolling();
+	update();
+	pollTimer = setInterval(update, 1500);
+}
+
+function stopPolling() {
+	if (pollTimer) {
+		clearInterval(pollTimer);
+		pollTimer = null;
+	}
+}
 
 async function openSettings() {
 	if (!defaults) defaults = await fetchConfig();
@@ -255,8 +365,14 @@ async function openSettings() {
 	renderRadioPills(document.getElementById("default-speed"), SPEEDS, tempDefaults.finalSpeed, (v) => (tempDefaults.finalSpeed = v));
 	renderBitrateInputs(document.getElementById("default-bitrates"), tempDefaults.audioBitrates, (ch, val) => (tempDefaults.audioBitrates[ch] = val));
 
-	window._tempDefaults = tempDefaults; // still useful for persistence
+	window._tempDefaults = tempDefaults;
 	document.getElementById("settings-modal").style.display = "";
+}
+
+async function saveSettings() {
+	if (!window._tempDefaults) return;
+	defaults = await patchConfig(window._tempDefaults);
+	closeSettings();
 }
 
 function closeSettings() {
@@ -317,10 +433,17 @@ async function doRetry(id) {
 function initEventListeners() {
 	document.getElementById("open-settings-btn").addEventListener("click", openSettings);
 	document.getElementById("close-settings-btn").addEventListener("click", closeSettings);
+	document.getElementById("save-settings-btn").addEventListener("click", saveSettings);
 	document.getElementById("settings-modal").addEventListener("click", closeSettingsIfOutside);
 	document.getElementById("close-job-modal-btn").addEventListener("click", closeJobModal);
 	document.getElementById("job-modal").addEventListener("click", closeJobModalIfOutside);
 	document.getElementById("save-job-settings-btn").addEventListener("click", saveJobSettings);
+	document.getElementById("logout-btn").addEventListener("click", logout);
+
+	document.getElementById("login-submit-btn").addEventListener("click", handleLogin);
+	document.getElementById("login-password").addEventListener("keydown", (e) => {
+		if (e.key === "Enter") handleLogin();
+	});
 
 	document.getElementById("jobs-list").addEventListener("click", (e) => {
 		const button = e.target.closest(".btn-icon");
@@ -339,7 +462,31 @@ function initEventListeners() {
 	});
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+async function init() {
 	initEventListeners();
-	fetchConfig().then((c) => (defaults = c));
-});
+
+	if (!authToken) {
+		showLogin("");
+		return;
+	}
+
+	try {
+		const res = await fetch(`${API}/api/config`, {
+			headers: { Authorization: `Bearer ${authToken}` },
+		});
+
+		if (res.status === 401 || res.status === 403) {
+			authToken = "";
+			localStorage.removeItem("authToken");
+			showLogin("");
+			return;
+		}
+
+		defaults = await res.json();
+		startPolling();
+	} catch {
+		showLogin("Cannot reach server");
+	}
+}
+
+document.addEventListener("DOMContentLoaded", init);

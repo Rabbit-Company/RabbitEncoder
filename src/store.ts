@@ -9,6 +9,18 @@ export function initStore(config: AppConfig) {
 	appConfig = config;
 }
 
+export function updateDefaults(settings: Partial<JobSettings>): JobSettings {
+	if (settings.quality) appConfig.defaults.quality = settings.quality;
+	if (settings.finalSpeed) appConfig.defaults.finalSpeed = settings.finalSpeed;
+	if (settings.audioBitrates) {
+		appConfig.defaults.audioBitrates = {
+			...appConfig.defaults.audioBitrates,
+			...settings.audioBitrates,
+		};
+	}
+	return appConfig.defaults;
+}
+
 export function getAllJobs(): Job[] {
 	return Array.from(jobs.values()).sort((a, b) => {
 		const order: Record<string, number> = {

@@ -22,7 +22,7 @@
 	--radius: 10px;
 	--radius-sm: 6px;
 	--font-body: "DM Sans", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", monospace;
+	--font-mono: "JetBrains Mono", "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
 }
 
 *,
@@ -82,6 +82,12 @@ code {
 	font-weight: 400;
 }
 
+.header-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
 .btn {
 	display: inline-flex;
 	align-items: center;
@@ -112,6 +118,10 @@ code {
 }
 .btn-primary:hover {
 	background: var(--accent-dim);
+}
+.btn-primary:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .btn-sm {
@@ -177,8 +187,6 @@ code {
 	border: 1px solid var(--border-subtle);
 	border-radius: var(--radius);
 	padding: 18px 20px;
-	/* transition: border-color 0.2s; */
-	/* animation: fadeIn 0.3s ease; */
 }
 
 .job-card:hover {
@@ -496,11 +504,13 @@ code {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
+	gap: 12px;
 }
 
 .modal-note {
 	font-size: 0.75rem;
 	color: var(--text-2);
+	margin-right: auto;
 }
 
 .setting-group label {
@@ -576,6 +586,65 @@ code {
 
 .bitrate-field input:focus {
 	border-color: var(--accent);
+}
+
+.login-overlay {
+	z-index: 300;
+}
+
+.login-modal {
+	width: min(380px, calc(100vw - 32px));
+}
+
+.login-modal .modal-header {
+	justify-content: center;
+	padding: 24px 22px 12px;
+	border-bottom: none;
+}
+
+.login-modal .modal-header h2 {
+	font-size: 1.15rem;
+}
+
+.login-modal .modal-body {
+	padding: 8px 22px 16px;
+}
+
+.login-modal .modal-footer {
+	justify-content: stretch;
+	padding: 0 22px 22px;
+	border-top: none;
+}
+
+.login-modal .modal-footer .btn {
+	width: 100%;
+	justify-content: center;
+	padding: 10px 14px;
+}
+
+.login-input {
+	font-family: var(--font-mono);
+	font-size: 0.88rem;
+	background: var(--bg-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-0);
+	padding: 10px 14px;
+	width: 100%;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+.login-input:focus {
+	border-color: var(--accent);
+}
+
+.login-error {
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	color: var(--red);
+	min-height: 1.2em;
+	margin-top: 4px;
 }
 
 @media (max-width: 600px) {

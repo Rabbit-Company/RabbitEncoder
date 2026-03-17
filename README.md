@@ -31,18 +31,19 @@ cp movie.mkv input/
 
 All settings are configurable via environment variables in `docker-compose.yml`:
 
-| Variable               | Default  | Description                                                         |
-| ---------------------- | -------- | ------------------------------------------------------------------- |
-| `PORT`                 | `3000`   | Web dashboard port                                                  |
-| `ENCODER_QUALITY`      | `medium` | Default video quality (`low`, `medium`, `high`)                     |
-| `ENCODER_SPEED`        | `slow`   | Default encode speed (`slower`, `slow`, `medium`, `fast`, `faster`) |
-| `AUDIO_BITRATE_MONO`   | `64`     | Opus bitrate for mono audio (kbps)                                  |
-| `AUDIO_BITRATE_STEREO` | `128`    | Opus bitrate for stereo audio (kbps)                                |
-| `AUDIO_BITRATE_2_1`    | `160`    | Opus bitrate for 2.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_5_1`    | `256`    | Opus bitrate for 5.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_6_1`    | `320`    | Opus bitrate for 6.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_7_1`    | `384`    | Opus bitrate for 7.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_7_1_4`  | `512`    | Opus bitrate for 7.1.4 Atmos audio (kbps)                           |
+| Variable               | Default         | Description                                                         |
+| ---------------------- | --------------- | ------------------------------------------------------------------- |
+| `PORT`                 | `3000`          | Web dashboard port                                                  |
+| `PASSWORD`             | `rabbitencoder` | Password to access web dashboard                                    |
+| `ENCODER_QUALITY`      | `medium`        | Default video quality (`low`, `medium`, `high`)                     |
+| `ENCODER_SPEED`        | `slow`          | Default encode speed (`slower`, `slow`, `medium`, `fast`, `faster`) |
+| `AUDIO_BITRATE_MONO`   | `64`            | Opus bitrate for mono audio (kbps)                                  |
+| `AUDIO_BITRATE_STEREO` | `128`           | Opus bitrate for stereo audio (kbps)                                |
+| `AUDIO_BITRATE_2_1`    | `160`           | Opus bitrate for 2.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_5_1`    | `256`           | Opus bitrate for 5.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_6_1`    | `320`           | Opus bitrate for 6.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_7_1`    | `384`           | Opus bitrate for 7.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_7_1_4`  | `512`           | Opus bitrate for 7.1.4 Atmos audio (kbps)                           |
 
 ## Web Dashboard
 
@@ -90,6 +91,7 @@ Files are named following the pattern:
 | `DELETE` | `/api/jobs/:id`       | Remove a job                      |
 | `POST`   | `/api/jobs/:id/retry` | Retry a failed job                |
 | `GET`    | `/api/config`         | Get default settings              |
+| `PATCH`  | `/api/config`         | Update settings                   |
 
 ## License
 

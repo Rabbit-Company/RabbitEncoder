@@ -13,6 +13,7 @@
 		"typescript": "^5.9.3"
 	},
 	"dependencies": {
+		"@rabbit-company/blake2b": "^2.1.0",
 		"@rabbit-company/web": "^0.18.2",
 		"@rabbit-company/web-middleware": "^0.18.2"
 	}

@@ -12,6 +12,7 @@ services:
     environment:
       # Server
       - PORT=3000
+      - PASSWORD=rabbitencoder
 
       # File watcher
       # Seconds the file size must stay unchanged before encoding starts

@@ -1,6 +1,6 @@
 import { mkdirSync } from "fs";
 import { loadConfig } from "./config";
-import { initStore, getAllJobs, getJob, addJob, updateJobSettings, removeJob, retryJob } from "./store";
+import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults } from "./store";
 import { startWatcher } from "./watcher";
 import { Web } from "@rabbit-company/web";
 import { cors } from "@rabbit-company/web-middleware/cors";
@@ -8,8 +8,11 @@ import type { JobSettings } from "./types";
 import { Logger } from "./logger";
 import { logger } from "@rabbit-company/web-middleware/logger";
 import indexHtml from "../public/index.html";
+import { bearerAuth } from "@rabbit-company/web-middleware/bearer-auth";
 
 const config = loadConfig();
+
+const hashedPassword = new Bun.CryptoHasher("blake2b512").update(`rabbitencoder-${process.env.PASSWORD || "rabbitencoder"}`).digest("hex");
 
 mkdirSync(config.inputDir, { recursive: true });
 mkdirSync(config.outputDir, { recursive: true });
@@ -22,6 +25,17 @@ startWatcher(config.inputDir);
 const app = new Web();
 app.use(logger({ logger: Logger }));
 app.use(cors());
+app.use(
+	bearerAuth({
+		validate(token, ctx) {
+			if (token.length !== hashedPassword.length) {
+				return !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(token));
+			}
+
+			return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(hashedPassword));
+		},
+	}),
+);
 
 app.get("/api/jobs", (c) => {
 	return c.json(getAllJobs());
@@ -54,6 +68,12 @@ app.post("/api/jobs/:id/retry", (c) => {
 
 app.get("/api/config", (c) => {
 	return c.json(config.defaults);
+});
+
+app.patch("/api/config", async (c) => {
+	const body = (await c.req.json()) as Partial<JobSettings>;
+	const updated = updateDefaults(body);
+	return c.json(updated);
 });
 
 Logger.info(`Rabbit Encoder started on http://0.0.0.0:${config.port}`);
