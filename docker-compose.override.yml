@@ -1,6 +1,6 @@
 services:
   rabbit-encoder:
-    image: rabbitcompany/rabbit-encoder:latest
+    build: .
     container_name: rabbit-encoder
     restart: unless-stopped
     ports:
