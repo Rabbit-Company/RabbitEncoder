@@ -290,17 +290,19 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 					"opusenc",
 					"--bitrate",
 					String(bitrate),
-					"--title",
-					stream.title || stream.language || `Stream ${i + 1}`,
 					"--comment",
 					`ORGANIZATION=${config.organization}`,
 					"--comment",
 					`CONTACT=${config.contact}`,
 					"--discard-comments",
 					"--discard-pictures",
-					"-",
-					opusFile,
 				];
+
+				if (stream.title?.trim()) {
+					opusArgs.push("--title", stream.title.trim());
+				}
+
+				opusArgs.push("-", opusFile);
 
 				const ffProc = Bun.spawn(ffArgs, { stdout: "pipe", stderr: "pipe" });
 				const opusProc = Bun.spawn(opusArgs, {
@@ -359,8 +361,8 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			if (stream.language) {
 				mkvArgs.push("--language", `0:${stream.language}`);
 			}
-			if (stream.title) {
-				mkvArgs.push("--track-name", `0:${stream.title}`);
+			if (stream.title?.trim()) {
+				mkvArgs.push("--track-name", `0:${stream.title.trim()}`);
 			}
 			mkvArgs.push(encodedAudioFiles[i]!);
 		}
