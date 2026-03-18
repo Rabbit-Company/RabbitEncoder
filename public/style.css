@@ -272,7 +272,10 @@ code {
 	text-transform: uppercase;
 	padding: 3px 8px;
 	border-radius: 4px;
-	display: inline-block;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
 }
 
 .status-queued {
@@ -390,11 +393,26 @@ code {
 	font-family: var(--font-mono);
 	font-size: 0.72rem;
 	font-weight: 600;
-	margin-left: auto;
 	color: var(--text-2);
 }
 .step-active .step-pct {
 	color: var(--accent);
+}
+
+.step-time {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	font-weight: 500;
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.step-time-done {
+	color: var(--text-2);
+}
+
+.step-time-active {
+	color: var(--amber);
 }
 
 .step-bar {

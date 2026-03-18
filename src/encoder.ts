@@ -72,7 +72,24 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 	const steps = makeSteps();
 
 	function setStep(idx: number, partial: Partial<JobStep>) {
-		Object.assign(steps[idx]!, partial);
+		const step = steps[idx]!;
+
+		// Auto-set startedAt when transitioning to active
+		if (partial.status === "active" && step.status !== "active") {
+			step.startedAt = Date.now();
+			step.finishedAt = undefined;
+		}
+
+		// Auto-set finishedAt when transitioning to done or error
+		if ((partial.status === "done" || partial.status === "error") && step.status !== "done" && step.status !== "error") {
+			step.finishedAt = Date.now();
+
+			if (!step.startedAt) {
+				step.startedAt = step.finishedAt;
+			}
+		}
+
+		Object.assign(step, partial);
 		const overall = steps.reduce((sum, s) => sum + s.progress, 0) / steps.length;
 		const activeStep = steps.find((s) => s.status === "active");
 

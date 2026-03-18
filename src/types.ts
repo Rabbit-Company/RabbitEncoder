@@ -54,6 +54,8 @@ export interface JobStep {
 	status: "pending" | "active" | "done" | "error";
 	progress: number;
 	detail?: string;
+	startedAt?: number;
+	finishedAt?: number;
 }
 
 export interface Job {

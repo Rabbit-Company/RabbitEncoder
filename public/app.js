@@ -194,9 +194,51 @@ function formatDuration(ms) {
 	const h = Math.floor(sec / 3600);
 	const m = Math.floor((sec % 3600) / 60);
 	const s = sec % 60;
+	if (h > 0) return `${h}h ${m}m ${s}s`;
+	if (m > 0) return `${m}m ${s}s`;
+	return `${s}s`;
+}
+
+function formatDurationShort(ms) {
+	const sec = Math.floor(ms / 1000);
+	const h = Math.floor(sec / 3600);
+	const m = Math.floor((sec % 3600) / 60);
+	const s = sec % 60;
 	if (h > 0) return `${h}h ${m}m`;
 	if (m > 0) return `${m}m ${s}s`;
 	return `${s}s`;
+}
+
+function computeStepElapsed(step) {
+	if (!step.startedAt) return null;
+	const end = step.finishedAt || Date.now();
+	return end - step.startedAt;
+}
+
+function computeStepETA(step) {
+	if (!step.startedAt || step.status !== "active" || step.progress <= 0) return null;
+	const elapsed = Date.now() - step.startedAt;
+	if (elapsed < 3000) return null; // need at least 3s of data
+	const totalEstimated = (elapsed / step.progress) * 100;
+	const remaining = totalEstimated - elapsed;
+	return remaining > 0 ? remaining : null;
+}
+
+function renderStepTime(step) {
+	if (step.status === "done" && step.startedAt) {
+		const elapsed = computeStepElapsed(step);
+		return `<span class="step-time step-time-done">${formatDurationShort(elapsed)}</span>`;
+	}
+	if (step.status === "active" && step.startedAt) {
+		const elapsed = computeStepElapsed(step);
+		const eta = computeStepETA(step);
+		let timeStr = formatDurationShort(elapsed);
+		if (eta !== null) {
+			timeStr += ` · ~${formatDurationShort(eta)} left`;
+		}
+		return `<span class="step-time step-time-active">${timeStr}</span>`;
+	}
+	return "";
 }
 
 function renderSteps(steps) {
@@ -211,6 +253,8 @@ function renderSteps(steps) {
 
 			const detail = step.detail && step.status === "active" ? `<span class="step-detail">${escapeHtml(step.detail)}</span>` : "";
 
+			const timeHtml = renderStepTime(step);
+
 			let progressBar = "";
 			if (step.status === "active") {
 				progressBar = `<div class="step-bar"><div class="step-bar-fill" style="width:${step.progress}%"></div></div>`;
@@ -222,6 +266,7 @@ function renderSteps(steps) {
           <span class="step-icon">${statusIcon}</span>
           <span class="step-label">${escapeHtml(step.label)}</span>
           <span class="step-pct">${pctStr}</span>
+          ${timeHtml}
         </div>
         ${progressBar}
         ${detail}
@@ -319,7 +364,9 @@ async function update() {
 		const jobs = await fetchJobs();
 		const json = JSON.stringify(jobs);
 
-		if (json === lastJobsJson) return;
+		const hasActive = jobs.some((j) => isActive(j.status));
+
+		if (json === lastJobsJson && !hasActive) return;
 		lastJobsJson = json;
 
 		const emptyEl = document.getElementById("empty-state");
