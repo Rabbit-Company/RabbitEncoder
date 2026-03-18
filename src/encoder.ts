@@ -349,7 +349,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 		setStep(S_MUX, { status: "active", progress: 0, detail: "Merging MKV" });
 		updateJob({ status: "muxing" });
 
-		const audioLabel = audioStreams.length > 1 ? "Multi Opus" : getAudioReplacementLabel(probe.audioLayout);
+		const audioLabel = getAudioReplacementLabel(probe.audioLayout);
 		const resTag = probe.width >= 3840 ? "2160p" : probe.height >= 1080 ? "1080p" : "720p";
 		const outputFilename = `${baseTitle} [${sourceTag}-${resTag}][${audioLabel}][AV1]-${config.organization}.mkv`;
 		const finalOutput = join(tempDir, "final.mkv");
