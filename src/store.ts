@@ -1,5 +1,9 @@
-import type { Job, JobSettings, AppConfig } from "./types";
+import { readdirSync } from "fs";
+import { join, extname, relative } from "path";
+import { type Job, type JobSettings, type AppConfig, MEDIA_EXTENSIONS } from "./types";
 import { encodeJob } from "./encoder";
+import { isAlreadyEncoded } from "./library";
+import { Logger } from "./logger";
 
 const jobs = new Map<string, Job>();
 let processing = false;
@@ -7,6 +11,10 @@ let appConfig: AppConfig;
 
 export function initStore(config: AppConfig) {
 	appConfig = config;
+}
+
+export function getAppConfig(): AppConfig {
+	return appConfig;
 }
 
 export function updateDefaults(settings: Partial<JobSettings>): JobSettings {
@@ -42,7 +50,7 @@ export function getJob(id: string): Job | undefined {
 	return jobs.get(id);
 }
 
-export function addJob(filename: string, inputPath: string, relativePath: string = ""): Job {
+export function addJob(filename: string, inputPath: string, relativePath: string = "", replaceSource: boolean = false): Job {
 	for (const job of jobs.values()) {
 		if (job.inputPath === inputPath && job.status !== "error" && job.status !== "done") {
 			return job;
@@ -63,11 +71,66 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 			...appConfig.defaults,
 			audioBitrates: { ...appConfig.defaults.audioBitrates },
 		},
+		replaceSource,
 	};
 
 	jobs.set(id, job);
 	processQueue();
 	return job;
+}
+
+export function scanLibraryFolder(folderPath: string): { added: number; skipped: number; alreadyEncoded: number } {
+	let added = 0;
+	let skipped = 0;
+	let alreadyEncoded = 0;
+
+	function scan(dir: string) {
+		try {
+			const entries = readdirSync(dir, { withFileTypes: true });
+			for (const entry of entries) {
+				const fullPath = join(dir, entry.name);
+
+				if (entry.isDirectory()) {
+					scan(fullPath);
+					continue;
+				}
+
+				const ext = extname(entry.name).toLowerCase();
+				if (!MEDIA_EXTENSIONS.has(ext)) continue;
+
+				if (isAlreadyEncoded(entry.name, appConfig.organization)) {
+					alreadyEncoded++;
+					continue;
+				}
+
+				let alreadyExists = false;
+				for (const job of jobs.values()) {
+					if (job.inputPath === fullPath && job.status !== "error" && job.status !== "done") {
+						alreadyExists = true;
+						break;
+					}
+				}
+
+				if (alreadyExists) {
+					skipped++;
+					continue;
+				}
+
+				const rel = relative(folderPath, dir);
+				const relativePath = rel === "." ? "" : rel;
+				const displayName = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+				Logger.info(`[library] Queuing: ${displayName}`);
+				addJob(entry.name, fullPath, relativePath, true);
+				added++;
+			}
+		} catch (err: any) {
+			Logger.error(`[library] Error scanning ${dir}:`, { "error.message": err?.message });
+		}
+	}
+
+	scan(folderPath);
+	return { added, skipped, alreadyEncoded };
 }
 
 export function updateJobSettings(id: string, settings: Partial<JobSettings>): Job | null {

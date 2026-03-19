@@ -2,8 +2,7 @@ import { watch, readdirSync, existsSync, statSync } from "fs";
 import { join, extname, relative, dirname } from "path";
 import { addJob } from "./store";
 import { Logger } from "./logger";
-
-const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".webm", ".flv", ".ts", ".mov"]);
+import { MEDIA_EXTENSIONS } from "./types";
 
 const COOLDOWN_SEC = parseInt(process.env.FILE_COOLDOWN || "300");
 const POLL_INTERVAL = 10;

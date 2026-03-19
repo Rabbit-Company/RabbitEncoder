@@ -1,7 +1,8 @@
 import { mkdirSync } from "fs";
 import { loadConfig } from "./config";
-import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults } from "./store";
+import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults, scanLibraryFolder } from "./store";
 import { startWatcher } from "./watcher";
+import { browseFolder, isPathAllowed } from "./library";
 import { Web } from "@rabbit-company/web";
 import { cors } from "@rabbit-company/web-middleware/cors";
 import type { JobSettings } from "./types";
@@ -76,7 +77,51 @@ app.patch("/api/config", async (c) => {
 	return c.json(updated);
 });
 
+app.get("/api/library", (c) => {
+	return c.json({
+		dirs: config.libraryDirs.map((dir) => ({
+			path: dir,
+			name: dir.split("/").filter(Boolean).pop() || dir,
+		})),
+	});
+});
+
+app.get("/api/library/browse", (c) => {
+	const path = c.query().get("path");
+	if (!path) {
+		return c.json({ error: "Missing 'path' query parameter" }, 400);
+	}
+
+	if (!isPathAllowed(path, config.libraryDirs)) {
+		return c.json({ error: "Path is not within any configured library directory" }, 403);
+	}
+
+	const entries = browseFolder(path, config.organization);
+	return c.json({ path, entries });
+});
+
+app.post("/api/library/encode", async (c) => {
+	const body = (await c.req.json()) as { path: string };
+	if (!body.path) {
+		return c.json({ error: "Missing 'path' in request body" }, 400);
+	}
+
+	if (!isPathAllowed(body.path, config.libraryDirs)) {
+		return c.json({ error: "Path is not within any configured library directory" }, 403);
+	}
+
+	Logger.info(`[library] Starting library encode for: ${body.path}`);
+	const result = scanLibraryFolder(body.path);
+	Logger.info(`[library] Queued ${result.added} files (${result.skipped} already queued, ${result.alreadyEncoded} already encoded)`);
+
+	return c.json({ ok: true, added: result.added, skipped: result.skipped, alreadyEncoded: result.alreadyEncoded });
+});
+
 Logger.info(`Rabbit Encoder started on http://0.0.0.0:${config.port}`);
+
+if (config.libraryDirs.length > 0) {
+	Logger.info(`Library directories: ${config.libraryDirs.join(", ")}`);
+}
 
 Bun.serve({
 	hostname: "0.0.0.0",

@@ -3,6 +3,8 @@ export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
 
 export type JobStatus = "queued" | "probing" | "encoding_video" | "encoding_audio" | "muxing" | "done" | "error";
 
+export const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".webm", ".flv", ".ts", ".mov"]);
+
 export interface AudioChannelBitrates {
 	mono: number;
 	stereo: number;
@@ -75,6 +77,7 @@ export interface Job {
 	finishedAt?: number;
 	encodedVideoSize?: string;
 	encodedFileSize?: string;
+	replaceSource: boolean;
 }
 
 export interface AppConfig {
@@ -85,4 +88,5 @@ export interface AppConfig {
 	defaults: JobSettings;
 	organization: string;
 	contact: string;
+	libraryDirs: string[];
 }

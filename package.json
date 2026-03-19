@@ -1,13 +1,13 @@
 {
 	"name": "rabbit-encoder",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"type": "module",
 	"scripts": {
 		"dev": "bun run --watch src/index.ts",
 		"start": "bun run src/index.ts"
 	},
 	"devDependencies": {
-		"@types/bun": "^1.3.10"
+		"@types/bun": "^1.3.11"
 	},
 	"peerDependencies": {
 		"typescript": "^5.9.3"

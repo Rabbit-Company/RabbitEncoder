@@ -24,6 +24,11 @@ export function loadConfig(): AppConfig {
 		"7.1.4": parseInt(process.env.AUDIO_BITRATE_7_1_4 || "") || DEFAULT_BITRATES["7.1.4"],
 	};
 
+	const libraryDirs = (process.env.LIBRARY_DIRS || "")
+		.split(",")
+		.map((d) => d.trim())
+		.filter((d) => d.length > 0);
+
 	return {
 		inputDir: process.env.INPUT_DIR || "/data/input",
 		outputDir: process.env.OUTPUT_DIR || "/data/output",
@@ -31,6 +36,7 @@ export function loadConfig(): AppConfig {
 		port: parseInt(process.env.PORT || "3000"),
 		organization: process.env.ORGANIZATION || "RabbitCompany",
 		contact: process.env.CONTACT || "https://rabbit-company.com",
+		libraryDirs,
 		defaults: {
 			quality,
 			finalSpeed,

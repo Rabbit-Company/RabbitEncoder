@@ -9,6 +9,10 @@ services:
       - ./input:/data/input
       - ./output:/data/output
       - ./temp:/data/temp
+      # Mount your media library folders for in-place encoding
+      # - /mnt/HDD/media/Animes:/data/library/Animes
+      # - /mnt/HDD/media/Shows:/data/library/Shows
+      # - /mnt/HDD/media/Movies:/data/library/Movies
     environment:
       # Server
       - PORT=3000
@@ -41,3 +45,9 @@ services:
       - INPUT_DIR=/data/input
       - OUTPUT_DIR=/data/output
       - TEMP_DIR=/data/temp
+
+      # Library directories (comma-separated paths inside the container)
+      # These folders are browsable from the UI for in-place re-encoding.
+      # The encoded file replaces the source and Jellyfin metadata (.nfo, thumbnails) is cleaned up.
+      # Files already ending with -{ORGANIZATION}.mkv are recognized as already encoded and skipped.
+      # - LIBRARY_DIRS=/data/library/Animes,/data/library/Shows,/data/library/Movies

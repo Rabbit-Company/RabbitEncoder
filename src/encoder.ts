@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, statSync, unlinkSync, rmSync } from "fs";
-import { join, parse as parsePath } from "path";
+import { existsSync, mkdirSync, statSync, unlinkSync, rmSync, readdirSync } from "fs";
+import { join, parse as parsePath, dirname, extname } from "path";
 import type { Job, JobStep, AppConfig, ProbeResult } from "./types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "./logger";
@@ -26,6 +26,15 @@ function humanSize(bytes: number): string {
 		i++;
 	}
 	return `${val.toFixed(2)} ${units[i]}`;
+}
+
+function getResolutionTag(width: number, height: number) {
+	if (width >= 3200 || height >= 2100) return "2160p";
+	if (width >= 1800 || height >= 1000) return "1080p";
+	if (width >= 1200 || height >= 700) return "720p";
+	if (width >= 1000 || height >= 560) return "576p";
+	if (width > 0 && height > 0) return "480p";
+	return "1080p";
 }
 
 function fmtFrames(current: number, total: number): string {
@@ -59,6 +68,34 @@ function makeSteps(): JobStep[] {
 		{ label: "Audio", status: "pending", progress: 0 },
 		{ label: "Mux & Finish", status: "pending", progress: 0 },
 	];
+}
+
+/**
+ * Remove .nfo, .srt, .jpg and .png files associated with a video file.
+ */
+function cleanupAssociatedFiles(videoPath: string): void {
+	const dir = dirname(videoPath);
+	const stem = parsePath(videoPath).name;
+
+	try {
+		const entries = readdirSync(dir);
+		for (const entry of entries) {
+			const entryStem = parsePath(entry).name;
+			const entryExt = extname(entry).toLowerCase();
+
+			const isAssociated = entryStem.startsWith(stem);
+
+			if (isAssociated && [".nfo", ".srt", ".jpg", ".png"].includes(entryExt)) {
+				const fullPath = join(dir, entry);
+				try {
+					unlinkSync(fullPath);
+					Logger.info(`[library] Removed associated file: ${entry}`);
+				} catch (err: any) {
+					Logger.warn(`[library] Failed to remove ${entry}:`, { "error.message": err?.message });
+				}
+			}
+		}
+	} catch {}
 }
 
 export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial: Partial<Job>) => void): Promise<void> {
@@ -350,7 +387,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 		updateJob({ status: "muxing" });
 
 		const audioLabel = getAudioReplacementLabel(probe.audioLayout);
-		const resTag = probe.width >= 3840 ? "2160p" : probe.height >= 1080 ? "1080p" : "720p";
+		const resTag = getResolutionTag(probe.width, probe.height);
 		const outputFilename = `${baseTitle} [${sourceTag}-${resTag}][${audioLabel}][AV1]-${config.organization}.mkv`;
 		const finalOutput = join(tempDir, "final.mkv");
 
@@ -398,14 +435,38 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 		setStep(S_MUX, { progress: 80, detail: "Moving to output" });
 
-		const outputSubDir = job.relativePath ? join(config.outputDir, job.relativePath) : config.outputDir;
-		mkdirSync(outputSubDir, { recursive: true });
-		const outputPath = join(outputSubDir, outputFilename);
-		const moveRes = await run(["mv", finalOutput, outputPath]);
+		let outputPath: string;
 
-		if (moveRes.code !== 0) {
-			await run(["cp", finalOutput, outputPath]);
-			unlinkSync(finalOutput);
+		if (job.replaceSource) {
+			const sourceDir = dirname(job.inputPath);
+			outputPath = join(sourceDir, outputFilename);
+
+			cleanupAssociatedFiles(job.inputPath);
+
+			try {
+				unlinkSync(job.inputPath);
+				Logger.info(`[library] Removed source: ${job.filename}`);
+			} catch (err: any) {
+				Logger.warn(`[library] Failed to remove source ${job.filename}:`, { "error.message": err?.message });
+			}
+
+			const moveRes = await run(["mv", finalOutput, outputPath]);
+			if (moveRes.code !== 0) {
+				await run(["cp", finalOutput, outputPath]);
+				unlinkSync(finalOutput);
+			}
+
+			Logger.info(`[library] Replaced with: ${outputFilename}`);
+		} else {
+			const outputSubDir = job.relativePath ? join(config.outputDir, job.relativePath) : config.outputDir;
+			mkdirSync(outputSubDir, { recursive: true });
+			outputPath = join(outputSubDir, outputFilename);
+
+			const moveRes = await run(["mv", finalOutput, outputPath]);
+			if (moveRes.code !== 0) {
+				await run(["cp", finalOutput, outputPath]);
+				unlinkSync(finalOutput);
+			}
 		}
 
 		setStep(S_MUX, { status: "done", progress: 100 });
@@ -414,7 +475,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			status: "done",
 			currentStage: "Complete",
 			progress: 100,
-			outputFilename: job.relativePath ? `${job.relativePath}/${outputFilename}` : outputFilename,
+			outputFilename: job.replaceSource ? outputFilename : job.relativePath ? `${job.relativePath}/${outputFilename}` : outputFilename,
 			encodedFileSize: humanSize(statSync(outputPath).size),
 			finishedAt: Date.now(),
 		});
@@ -423,9 +484,11 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			rmSync(tempDir, { recursive: true, force: true });
 		} catch {}
 
-		try {
-			unlinkSync(job.inputPath);
-		} catch {}
+		if (!job.replaceSource) {
+			try {
+				unlinkSync(job.inputPath);
+			} catch {}
+		}
 	} catch (err: any) {
 		const activeIdx = steps.findIndex((s) => s.status === "active");
 		if (activeIdx >= 0) steps[activeIdx]!.status = "error";

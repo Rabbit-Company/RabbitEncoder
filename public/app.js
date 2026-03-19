@@ -19,6 +19,9 @@ const CHANNELS = [
 ];
 
 const expandedFolders = new Set();
+let libraryDirs = [];
+let libraryCurrentPath = null;
+let libraryBrowseHistory = [];
 
 function hashPassword(password) {
 	return Blake2b.hash(`rabbitencoder-${password}`);
@@ -620,6 +623,249 @@ async function doRetry(id) {
 	update();
 }
 
+async function fetchLibraryDirs() {
+	const res = await authFetch(`${API}/api/library`);
+	const data = await res.json();
+	return data.dirs || [];
+}
+
+async function fetchLibraryBrowse(path) {
+	const res = await authFetch(`${API}/api/library/browse?path=${encodeURIComponent(path)}`);
+	return res.json();
+}
+
+async function postLibraryEncode(path) {
+	const res = await authFetch(`${API}/api/library/encode`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path }),
+	});
+	return res.json();
+}
+
+function humanFileSize(bytes) {
+	if (!bytes) return "";
+	const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+	let i = 0;
+	let val = bytes;
+	while (val >= 1024 && i < units.length - 1) {
+		val /= 1024;
+		i++;
+	}
+	return `${val.toFixed(1)} ${units[i]}`;
+}
+
+async function openLibrary() {
+	const modal = document.getElementById("library-modal");
+	const content = document.getElementById("library-content");
+	const note = document.getElementById("library-note");
+	const encodeBtn = document.getElementById("library-encode-btn");
+
+	content.innerHTML = `<div class="library-loading">Loading library...</div>`;
+	note.textContent = "";
+	encodeBtn.disabled = true;
+	modal.style.display = "";
+
+	try {
+		libraryDirs = await fetchLibraryDirs();
+
+		if (libraryDirs.length === 0) {
+			content.innerHTML = `<div class="library-empty">No library directories configured.<br>Set <code>LIBRARY_DIRS</code> in your docker-compose.yml</div>`;
+			renderLibraryBreadcrumb(null);
+			return;
+		}
+
+		libraryCurrentPath = null;
+		libraryBrowseHistory = [];
+		renderLibraryRoot();
+	} catch (e) {
+		content.innerHTML = `<div class="library-empty">Failed to load library</div>`;
+	}
+}
+
+function renderLibraryRoot() {
+	libraryCurrentPath = null;
+	libraryBrowseHistory = [];
+	renderLibraryBreadcrumb(null);
+
+	const content = document.getElementById("library-content");
+	const note = document.getElementById("library-note");
+	const encodeBtn = document.getElementById("library-encode-btn");
+
+	note.textContent = "";
+	encodeBtn.disabled = true;
+
+	if (libraryDirs.length === 0) {
+		content.innerHTML = `<div class="library-empty">No library directories configured</div>`;
+		return;
+	}
+
+	let html = "";
+	for (const dir of libraryDirs) {
+		html += `
+			<div class="library-entry" data-path="${escapeHtml(dir.path)}" data-type="directory">
+				<svg class="library-entry-icon is-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+				</svg>
+				<span class="library-entry-name">${escapeHtml(dir.name)}</span>
+				<span class="library-entry-meta">${escapeHtml(dir.path)}</span>
+			</div>`;
+	}
+	content.innerHTML = html;
+}
+
+async function browseLibraryPath(path) {
+	const content = document.getElementById("library-content");
+	const note = document.getElementById("library-note");
+	const encodeBtn = document.getElementById("library-encode-btn");
+
+	content.innerHTML = `<div class="library-loading">Loading...</div>`;
+
+	try {
+		const data = await fetchLibraryBrowse(path);
+
+		libraryCurrentPath = path;
+
+		// Build breadcrumb history
+		const rootDir = libraryDirs.find((d) => path === d.path || path.startsWith(d.path + "/"));
+		if (rootDir) {
+			libraryBrowseHistory = [{ name: rootDir.name, path: rootDir.path }];
+			if (path !== rootDir.path) {
+				const relPath = path.slice(rootDir.path.length + 1);
+				const parts = relPath.split("/");
+				let accumulated = rootDir.path;
+				for (const part of parts) {
+					accumulated += "/" + part;
+					libraryBrowseHistory.push({ name: part, path: accumulated });
+				}
+			}
+		}
+
+		renderLibraryBreadcrumb(path);
+
+		const entries = data.entries || [];
+
+		if (entries.length === 0) {
+			content.innerHTML = `<div class="library-empty">This folder is empty</div>`;
+			note.textContent = "";
+			encodeBtn.disabled = true;
+			return;
+		}
+
+		const folders = entries.filter((e) => e.type === "directory");
+		const files = entries.filter((e) => e.type === "file");
+		const encodedFiles = files.filter((e) => e.encoded);
+		const unencodedFiles = files.filter((e) => !e.encoded);
+		const totalVideos = folders.reduce((sum, f) => sum + (f.videoCount || 0), 0) + files.length;
+		const totalEncoded = folders.reduce((sum, f) => sum + (f.encodedCount || 0), 0) + encodedFiles.length;
+		const totalToEncode = totalVideos - totalEncoded;
+
+		let html = "";
+		for (const entry of entries) {
+			if (entry.type === "directory") {
+				const pending = (entry.videoCount || 0) - (entry.encodedCount || 0);
+				const allEncoded = entry.videoCount > 0 && pending === 0;
+				html += `
+					<div class="library-entry ${allEncoded ? "is-encoded" : ""}" data-path="${escapeHtml(entry.path)}" data-type="directory">
+						<svg class="library-entry-icon is-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+						</svg>
+						<span class="library-entry-name">${escapeHtml(entry.name)}</span>
+						<span class="library-entry-meta">${allEncoded ? `<span class="library-encoded-badge">encoded</span> ` : ""}${pending > 0 ? `${pending} to encode · ` : ""}${entry.videoCount || 0} video${entry.videoCount !== 1 ? "s" : ""}</span>
+					</div>`;
+			} else {
+				html += `
+					<div class="library-entry ${entry.encoded ? "is-encoded" : ""}" data-path="${escapeHtml(entry.path)}" data-type="file">
+						<svg class="library-entry-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+							<polygon points="23 7 16 12 23 17 23 7"/>
+							<rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+						</svg>
+						<span class="library-entry-name">${escapeHtml(entry.name)}</span>
+						<span class="library-entry-meta">${entry.encoded ? `<span class="library-encoded-badge">encoded</span> ` : ""}${humanFileSize(entry.size)}</span>
+					</div>`;
+			}
+		}
+		content.innerHTML = html;
+
+		// Update footer
+		if (totalToEncode > 0) {
+			note.textContent = `${totalToEncode} to encode` + (totalEncoded > 0 ? ` · ${totalEncoded} already encoded` : "") + ` · ${totalVideos} total`;
+		} else if (totalEncoded > 0) {
+			note.textContent = `All ${totalEncoded} video${totalEncoded !== 1 ? "s" : ""} already encoded`;
+		} else {
+			note.textContent = "No video files found";
+		}
+		encodeBtn.disabled = totalToEncode === 0;
+	} catch (e) {
+		content.innerHTML = `<div class="library-empty">Failed to browse folder</div>`;
+		note.textContent = "";
+		encodeBtn.disabled = true;
+	}
+}
+
+function renderLibraryBreadcrumb(currentPath) {
+	const bc = document.getElementById("library-breadcrumb");
+
+	let html = `<span class="library-breadcrumb-item ${!currentPath ? "current" : ""}" data-path="">Library</span>`;
+
+	if (libraryBrowseHistory.length > 0) {
+		for (let i = 0; i < libraryBrowseHistory.length; i++) {
+			const item = libraryBrowseHistory[i];
+			const isCurrent = i === libraryBrowseHistory.length - 1;
+			html += `<span class="library-breadcrumb-sep">/</span>`;
+			html += `<span class="library-breadcrumb-item ${isCurrent ? "current" : ""}" data-path="${escapeHtml(item.path)}">${escapeHtml(item.name)}</span>`;
+		}
+	}
+
+	bc.innerHTML = html;
+}
+
+async function handleLibraryEncode() {
+	if (!libraryCurrentPath) return;
+
+	const encodeBtn = document.getElementById("library-encode-btn");
+	encodeBtn.disabled = true;
+	encodeBtn.textContent = "Starting...";
+
+	try {
+		const result = await postLibraryEncode(libraryCurrentPath);
+		const note = document.getElementById("library-note");
+
+		const parts = [];
+		if (result.added > 0) {
+			parts.push(`Queued ${result.added} file${result.added !== 1 ? "s" : ""}`);
+		}
+		if (result.skipped > 0) {
+			parts.push(`${result.skipped} already queued`);
+		}
+		if (result.alreadyEncoded > 0) {
+			parts.push(`${result.alreadyEncoded} already encoded`);
+		}
+		if (parts.length === 0) {
+			parts.push("No video files found to encode");
+		}
+		note.textContent = parts.join(" · ");
+
+		if (result.added > 0) {
+			closeLibrary();
+			update();
+		}
+	} catch (e) {
+		document.getElementById("library-note").textContent = "Failed to start encoding";
+	} finally {
+		encodeBtn.textContent = "Encode Folder";
+		encodeBtn.disabled = !libraryCurrentPath;
+	}
+}
+
+function closeLibrary() {
+	document.getElementById("library-modal").style.display = "none";
+}
+
+function closeLibraryIfOutside(e) {
+	if (e.target === e.currentTarget) closeLibrary();
+}
+
 function initEventListeners() {
 	document.getElementById("open-settings-btn").addEventListener("click", openSettings);
 	document.getElementById("close-settings-btn").addEventListener("click", closeSettings);
@@ -663,6 +909,32 @@ function initEventListeners() {
 			doRetry(jobId);
 		}
 	});
+
+	document.getElementById("open-library-btn").addEventListener("click", openLibrary);
+	document.getElementById("close-library-btn").addEventListener("click", closeLibrary);
+	document.getElementById("library-modal").addEventListener("click", closeLibraryIfOutside);
+	document.getElementById("library-encode-btn").addEventListener("click", handleLibraryEncode);
+
+	document.getElementById("library-content").addEventListener("click", (e) => {
+		const entry = e.target.closest(".library-entry");
+		if (!entry) return;
+		const path = entry.dataset.path;
+		const type = entry.dataset.type;
+		if (type === "directory" && path) {
+			browseLibraryPath(path);
+		}
+	});
+
+	document.getElementById("library-breadcrumb").addEventListener("click", (e) => {
+		const item = e.target.closest(".library-breadcrumb-item");
+		if (!item || item.classList.contains("current")) return;
+		const path = item.dataset.path;
+		if (!path) {
+			renderLibraryRoot();
+		} else {
+			browseLibraryPath(path);
+		}
+	});
 }
 
 async function init() {
@@ -687,6 +959,13 @@ async function init() {
 
 		defaults = await res.json();
 		startPolling();
+
+		try {
+			const libData = await fetchLibraryDirs();
+			if (libData.length > 0) {
+				document.getElementById("open-library-btn").style.display = "";
+			}
+		} catch {}
 	} catch {
 		showLogin("Cannot reach server");
 	}
