@@ -94,11 +94,11 @@ services:
       - ./input:/data/input
       - ./output:/data/output
       - ./temp:/data/temp
-      - /mnt/HDD/media/Animes:/data/library/Animes
-      - /mnt/HDD/media/Shows:/data/library/Shows
-      - /mnt/HDD/media/Movies:/data/library/Movies
+      - /mnt/HDD/media/Animes:/Animes
+      - /mnt/HDD/media/Shows:/Shows
+      - /mnt/HDD/media/Movies:/Movies
     environment:
-      - LIBRARY_DIRS=/data/library/Animes,/data/library/Shows,/data/library/Movies
+      - LIBRARY_DIRS=/Animes,/Shows,/Movies
 ```
 
 ### Already-encoded detection
