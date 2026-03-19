@@ -42,7 +42,7 @@ export function getJob(id: string): Job | undefined {
 	return jobs.get(id);
 }
 
-export function addJob(filename: string, inputPath: string): Job {
+export function addJob(filename: string, inputPath: string, relativePath: string = ""): Job {
 	for (const job of jobs.values()) {
 		if (job.inputPath === inputPath && job.status !== "error" && job.status !== "done") {
 			return job;
@@ -54,6 +54,7 @@ export function addJob(filename: string, inputPath: string): Job {
 		id,
 		filename,
 		inputPath,
+		relativePath,
 		status: "queued",
 		progress: 0,
 		currentStage: "Waiting in queue",

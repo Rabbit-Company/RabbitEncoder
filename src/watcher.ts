@@ -1,5 +1,5 @@
 import { watch, readdirSync, existsSync, statSync } from "fs";
-import { join, extname } from "path";
+import { join, extname, relative, dirname } from "path";
 import { addJob } from "./store";
 import { Logger } from "./logger";
 
@@ -12,11 +12,11 @@ const knownFiles = new Set<string>();
 
 export function startWatcher(inputDir: string) {
 	if (existsSync(inputDir)) {
-		scanDirectory(inputDir);
+		scanDirectory(inputDir, inputDir);
 	}
 
 	try {
-		const watcher = watch(inputDir, { recursive: false }, (event, filename) => {
+		const watcher = watch(inputDir, { recursive: true }, (event, filename) => {
 			if (!filename) return;
 			const ext = extname(filename).toLowerCase();
 			if (!MEDIA_EXTENSIONS.has(ext)) return;
@@ -24,35 +24,43 @@ export function startWatcher(inputDir: string) {
 			const fullPath = join(inputDir, filename);
 			if (knownFiles.has(fullPath)) return;
 
-			waitForFile(fullPath, filename);
+			const relativePath = dirname(filename);
+			waitForFile(fullPath, filename, relativePath === "." ? "" : relativePath);
 		});
 
-		setInterval(() => scanDirectory(inputDir), 10_000);
+		setInterval(() => scanDirectory(inputDir, inputDir), 10_000);
 
-		Logger.info(`[watcher] Watching ${inputDir} for media files (cooldown: ${COOLDOWN_SEC}s)`);
+		Logger.info(`[watcher] Watching ${inputDir} recursively for media files (cooldown: ${COOLDOWN_SEC}s)`);
 	} catch (err: any) {
 		Logger.error(`[watcher] Error starting watcher:`, { "error.message": err?.message });
-		setInterval(() => scanDirectory(inputDir), 10_000);
-		Logger.info(`[watcher] Polling ${inputDir} for media files (cooldown: ${COOLDOWN_SEC}s, fallback mode)`);
+		setInterval(() => scanDirectory(inputDir, inputDir), 10_000);
+		Logger.info(`[watcher] Polling ${inputDir} recursively for media files (cooldown: ${COOLDOWN_SEC}s, fallback mode)`);
 	}
 }
 
-function scanDirectory(dir: string) {
+function scanDirectory(dir: string, inputRoot: string) {
 	try {
-		const files = readdirSync(dir);
-		for (const file of files) {
-			const ext = extname(file).toLowerCase();
+		const entries = readdirSync(dir, { withFileTypes: true });
+		for (const entry of entries) {
+			const fullPath = join(dir, entry.name);
+
+			if (entry.isDirectory()) {
+				scanDirectory(fullPath, inputRoot);
+				continue;
+			}
+
+			const ext = extname(entry.name).toLowerCase();
 			if (!MEDIA_EXTENSIONS.has(ext)) continue;
 
-			const fullPath = join(dir, file);
 			if (knownFiles.has(fullPath)) continue;
 
-			waitForFile(fullPath, file);
+			const rel = relative(inputRoot, dir);
+			waitForFile(fullPath, entry.name, rel === "." ? "" : rel);
 		}
 	} catch {}
 }
 
-async function waitForFile(fullPath: string, filename: string) {
+async function waitForFile(fullPath: string, filename: string, relativePath: string) {
 	if (knownFiles.has(fullPath)) return;
 	knownFiles.add(fullPath);
 
@@ -60,7 +68,8 @@ async function waitForFile(fullPath: string, filename: string) {
 	let lastSize = -1;
 	let stableCount = 0;
 
-	Logger.info(`[watcher] Detected ${filename}, waiting ${COOLDOWN_SEC}s for file to stabilize...`);
+	const displayName = relativePath ? `${relativePath}/${filename}` : filename;
+	Logger.info(`[watcher] Detected ${displayName}, waiting ${COOLDOWN_SEC}s for file to stabilize...`);
 
 	while (stableCount < requiredStableChecks) {
 		await new Promise((r) => setTimeout(r, POLL_INTERVAL * 1000));
@@ -71,18 +80,18 @@ async function waitForFile(fullPath: string, filename: string) {
 				stableCount++;
 			} else {
 				if (stableCount > 0) {
-					Logger.info(`[watcher] ${filename} still changing, resetting cooldown...`);
+					Logger.info(`[watcher] ${displayName} still changing, resetting cooldown...`);
 				}
 				stableCount = 0;
 				lastSize = stat.size;
 			}
 		} catch {
-			Logger.info(`[watcher] ${filename} was removed, skipping`);
+			Logger.info(`[watcher] ${displayName} was removed, skipping`);
 			knownFiles.delete(fullPath);
 			return;
 		}
 	}
 
-	Logger.info(`[watcher] ${filename} stable for ${COOLDOWN_SEC}s, queuing for encode`);
-	addJob(filename, fullPath);
+	Logger.info(`[watcher] ${displayName} stable for ${COOLDOWN_SEC}s, queuing for encode`);
+	addJob(filename, fullPath, relativePath);
 }

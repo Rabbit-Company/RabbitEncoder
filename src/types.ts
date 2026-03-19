@@ -62,6 +62,7 @@ export interface Job {
 	id: string;
 	filename: string;
 	inputPath: string;
+	relativePath: string;
 	status: JobStatus;
 	progress: number;
 	currentStage: string;

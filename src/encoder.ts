@@ -398,7 +398,9 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 		setStep(S_MUX, { progress: 80, detail: "Moving to output" });
 
-		const outputPath = join(config.outputDir, outputFilename);
+		const outputSubDir = job.relativePath ? join(config.outputDir, job.relativePath) : config.outputDir;
+		mkdirSync(outputSubDir, { recursive: true });
+		const outputPath = join(outputSubDir, outputFilename);
 		const moveRes = await run(["mv", finalOutput, outputPath]);
 
 		if (moveRes.code !== 0) {
@@ -412,7 +414,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			status: "done",
 			currentStage: "Complete",
 			progress: 100,
-			outputFilename,
+			outputFilename: job.relativePath ? `${job.relativePath}/${outputFilename}` : outputFilename,
 			encodedFileSize: humanSize(statSync(outputPath).size),
 			finishedAt: Date.now(),
 		});
