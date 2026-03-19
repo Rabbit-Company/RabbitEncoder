@@ -18,6 +18,8 @@ const CHANNELS = [
 	{ key: "7.1.4", label: "7.1.4 Atmos" },
 ];
 
+const expandedFolders = new Set();
+
 function hashPassword(password) {
 	return Blake2b.hash(`rabbitencoder-${password}`);
 }
@@ -218,7 +220,7 @@ function computeStepElapsed(step) {
 function computeStepETA(step) {
 	if (!step.startedAt || step.status !== "active" || step.progress <= 0) return null;
 	const elapsed = Date.now() - step.startedAt;
-	if (elapsed < 3000) return null; // need at least 3s of data
+	if (elapsed < 3000) return null;
 	const totalEstimated = (elapsed / step.progress) * 100;
 	const remaining = totalEstimated - elapsed;
 	return remaining > 0 ? remaining : null;
@@ -351,6 +353,147 @@ function renderJobCard(job) {
     </div>`;
 }
 
+function buildFolderTree(jobs) {
+	const root = { name: "", fullPath: "", children: new Map(), jobs: [] };
+
+	for (const job of jobs) {
+		const rel = job.relativePath || "";
+		if (!rel) {
+			root.jobs.push(job);
+			continue;
+		}
+
+		const parts = rel.split(/[/\\]/);
+		let current = root;
+		let pathSoFar = "";
+
+		for (const part of parts) {
+			pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
+			if (!current.children.has(part)) {
+				current.children.set(part, {
+					name: part,
+					fullPath: pathSoFar,
+					children: new Map(),
+					jobs: [],
+				});
+			}
+			current = current.children.get(part);
+		}
+
+		current.jobs.push(job);
+	}
+
+	return root;
+}
+
+function collectAllJobs(node) {
+	let all = [...node.jobs];
+	for (const child of node.children.values()) {
+		all = all.concat(collectAllJobs(child));
+	}
+	return all;
+}
+
+function computeFolderStats(node) {
+	const allJobs = collectAllJobs(node);
+	const total = allJobs.length;
+	const done = allJobs.filter((j) => j.status === "done").length;
+	const encoding = allJobs.filter((j) => isActive(j.status)).length;
+	const queued = allJobs.filter((j) => j.status === "queued").length;
+	const error = allJobs.filter((j) => j.status === "error").length;
+	return { total, done, encoding, queued, error };
+}
+
+function folderHasActive(node) {
+	return collectAllJobs(node).some((j) => isActive(j.status));
+}
+
+function renderFolderStats(stats) {
+	const parts = [];
+
+	parts.push(`<span class="folder-stat folder-stat-total">${stats.total} file${stats.total !== 1 ? "s" : ""}</span>`);
+
+	if (stats.encoding > 0) {
+		parts.push(`<span class="folder-stat folder-stat-encoding">${stats.encoding} encoding</span>`);
+	}
+	if (stats.queued > 0) {
+		parts.push(`<span class="folder-stat folder-stat-queued">${stats.queued} queued</span>`);
+	}
+	if (stats.done > 0) {
+		parts.push(`<span class="folder-stat folder-stat-done">${stats.done} done</span>`);
+	}
+	if (stats.error > 0) {
+		parts.push(`<span class="folder-stat folder-stat-error">${stats.error} error</span>`);
+	}
+
+	return parts.join("");
+}
+
+function renderFolderProgress(stats) {
+	if (stats.total === 0) return "";
+	const pct = Math.round((stats.done / stats.total) * 100);
+	return `<div class="folder-progress"><div class="folder-progress-fill" style="width:${pct}%"></div></div>`;
+}
+
+function renderFolderNode(node, depth) {
+	const isExpanded = expandedFolders.has(node.fullPath);
+	const stats = computeFolderStats(node);
+	const hasActive = folderHasActive(node);
+	const allDone = stats.total > 0 && stats.done === stats.total;
+
+	const chevronSvg = `<svg class="folder-chevron ${isExpanded ? "expanded" : ""}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+	const folderIconSvg = `<svg class="folder-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+
+	let html = `
+    <div class="folder-node ${hasActive ? "folder-active" : ""} ${allDone ? "folder-done" : ""}" style="--depth:${depth}">
+      <div class="folder-header" data-folder-path="${escapeHtml(node.fullPath)}">
+        <div class="folder-left">
+          ${chevronSvg}
+          ${folderIconSvg}
+          <span class="folder-name">${escapeHtml(node.name)}</span>
+        </div>
+        <div class="folder-right">
+          <div class="folder-stats">${renderFolderStats(stats)}</div>
+          ${renderFolderProgress(stats)}
+        </div>
+      </div>`;
+
+	if (isExpanded) {
+		html += `<div class="folder-children">`;
+
+		const sortedChildren = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+		for (const child of sortedChildren) {
+			html += renderFolderNode(child, depth + 1);
+		}
+
+		for (const job of node.jobs) {
+			html += `<div class="folder-job" style="--depth:${depth + 1}">${renderJobCard(job)}</div>`;
+		}
+
+		html += `</div>`;
+	}
+
+	html += `</div>`;
+	return html;
+}
+
+function renderJobsList(jobs) {
+	const tree = buildFolderTree(jobs);
+	let html = "";
+
+	const sortedFolders = Array.from(tree.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+	for (const folder of sortedFolders) {
+		html += renderFolderNode(folder, 0);
+	}
+
+	for (const job of tree.jobs) {
+		html += renderJobCard(job);
+	}
+
+	return html;
+}
+
 function escapeHtml(s) {
 	const d = document.createElement("div");
 	d.textContent = s;
@@ -380,7 +523,7 @@ async function update() {
 
 		emptyEl.style.display = "none";
 		listEl.style.display = "";
-		listEl.innerHTML = jobs.map(renderJobCard).join("");
+		listEl.innerHTML = renderJobsList(jobs);
 	} catch (e) {
 		if (e.message === "Unauthorized") return;
 		console.error("Poll error:", e);
@@ -493,6 +636,19 @@ function initEventListeners() {
 	});
 
 	document.getElementById("jobs-list").addEventListener("click", (e) => {
+		const folderHeader = e.target.closest(".folder-header");
+		if (folderHeader) {
+			const path = folderHeader.dataset.folderPath;
+			if (expandedFolders.has(path)) {
+				expandedFolders.delete(path);
+			} else {
+				expandedFolders.add(path);
+			}
+			lastJobsJson = "";
+			update();
+			return;
+		}
+
 		const button = e.target.closest(".btn-icon");
 		if (!button) return;
 

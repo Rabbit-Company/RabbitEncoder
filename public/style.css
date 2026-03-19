@@ -665,6 +665,156 @@ code {
 	margin-top: 4px;
 }
 
+.folder-node {
+	margin-left: calc(var(--depth, 0) * 20px);
+}
+
+.folder-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 12px 16px;
+	background: var(--bg-1);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius);
+	cursor: pointer;
+	transition: all 0.15s;
+	user-select: none;
+}
+
+.folder-header:hover {
+	border-color: var(--border);
+	background: var(--bg-hover);
+}
+
+.folder-active > .folder-header {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.folder-done > .folder-header {
+	opacity: 0.7;
+}
+
+.folder-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1;
+}
+
+.folder-chevron {
+	flex-shrink: 0;
+	color: var(--text-2);
+	transition: transform 0.2s ease;
+}
+
+.folder-chevron.expanded {
+	transform: rotate(90deg);
+}
+
+.folder-icon {
+	flex-shrink: 0;
+	color: var(--amber);
+}
+
+.folder-active .folder-icon {
+	color: var(--accent);
+}
+
+.folder-done .folder-icon {
+	color: var(--green);
+}
+
+.folder-name {
+	font-size: 0.88rem;
+	font-weight: 600;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folder-right {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.folder-stats {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.folder-stat {
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	padding: 2px 7px;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+
+.folder-stat-total {
+	background: var(--bg-3);
+	color: var(--text-2);
+}
+
+.folder-stat-encoding {
+	background: var(--accent-glow);
+	color: var(--accent);
+}
+
+.folder-stat-queued {
+	background: var(--bg-3);
+	color: var(--text-1);
+}
+
+.folder-stat-done {
+	background: var(--green-dim);
+	color: var(--green);
+}
+
+.folder-stat-error {
+	background: var(--red-dim);
+	color: var(--red);
+}
+
+.folder-progress {
+	width: 120px;
+	height: 3px;
+	background: var(--bg-3);
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.folder-progress-fill {
+	height: 100%;
+	background: linear-gradient(90deg, var(--accent), var(--green));
+	border-radius: 2px;
+	transition: width 0.4s ease;
+}
+
+.folder-children {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 8px;
+	padding-bottom: 4px;
+}
+
+.folder-job {
+	margin-left: calc(var(--depth, 0) * 20px);
+}
+
 @media (max-width: 600px) {
 	.header {
 		padding: 12px 16px;
@@ -680,6 +830,26 @@ code {
 	}
 	.bitrate-grid {
 		grid-template-columns: 1fr 1fr;
+	}
+	.folder-node {
+		margin-left: calc(var(--depth, 0) * 12px);
+	}
+	.folder-job {
+		margin-left: calc(var(--depth, 0) * 12px);
+	}
+	.folder-header {
+		padding: 10px 12px;
+		gap: 8px;
+	}
+	.folder-stats {
+		gap: 4px;
+	}
+	.folder-stat {
+		font-size: 0.6rem;
+		padding: 2px 5px;
+	}
+	.folder-progress {
+		width: 80px;
 	}
 }
 
