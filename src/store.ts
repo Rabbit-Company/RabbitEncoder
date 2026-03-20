@@ -1,5 +1,5 @@
 import { readdirSync } from "fs";
-import { join, extname, relative } from "path";
+import { join, extname, relative, basename } from "path";
 import { type Job, type JobSettings, type AppConfig, MEDIA_EXTENSIONS } from "./types";
 import { encodeJob } from "./encoder";
 import { isAlreadyEncoded } from "./library";
@@ -116,8 +116,9 @@ export function scanLibraryFolder(folderPath: string): { added: number; skipped:
 					continue;
 				}
 
+				const folderName = basename(folderPath);
 				const rel = relative(folderPath, dir);
-				const relativePath = rel === "." ? "" : rel;
+				const relativePath = rel === "." ? folderName : `${folderName}/${rel}`;
 				const displayName = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
 				Logger.info(`[library] Queuing: ${displayName}`);
