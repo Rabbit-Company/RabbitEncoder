@@ -340,17 +340,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 				}
 				ffArgs.push("-f", "flac", "-");
 
-				const opusArgs = [
-					"opusenc",
-					"--bitrate",
-					String(bitrate),
-					"--comment",
-					`ORGANIZATION=${config.organization}`,
-					"--comment",
-					`CONTACT=${config.contact}`,
-					"--discard-comments",
-					"--discard-pictures",
-				];
+				const opusArgs = ["opusenc", "--bitrate", String(bitrate), "--discard-comments", "--discard-pictures"];
 
 				if (stream.title?.trim()) {
 					opusArgs.push("--title", stream.title.trim());
@@ -396,8 +386,6 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			"<Tags><Tag>",
 			"<Targets><TargetTypeValue>50</TargetTypeValue></Targets>",
 			`<Simple><Name>Title</Name><String>${escapeXml(baseTitle)}</String></Simple>`,
-			`<Simple><Name>Organization</Name><String>${config.organization}</String></Simple>`,
-			`<Simple><Name>Contact</Name><String>${config.contact}</String></Simple>`,
 			`<Simple><Name>Encoder</Name><String>RabbitEncoder v${pkg.version}</String></Simple>`,
 			`<Simple><Name>Encoder Settings</Name><String>Quality ${job.settings.quality}, Speed ${job.settings.finalSpeed}</String></Simple>`,
 			"</Tag></Tags>",

@@ -35,7 +35,6 @@ export function loadConfig(): AppConfig {
 		tempDir: process.env.TEMP_DIR || "/data/temp",
 		port: parseInt(process.env.PORT || "3000"),
 		organization: process.env.ORGANIZATION || "RabbitCompany",
-		contact: process.env.CONTACT || "https://rabbit-company.com",
 		libraryDirs,
 		defaults: {
 			quality,

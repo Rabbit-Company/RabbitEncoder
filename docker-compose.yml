@@ -39,7 +39,6 @@ services:
 
       # Metadata
       - ORGANIZATION=RabbitCompany
-      - CONTACT=https://rabbit-company.com
 
       # Paths (usually no need to change)
       - INPUT_DIR=/data/input

@@ -34,26 +34,25 @@ cp movie.mkv input/
 
 All settings are configurable via environment variables in `docker-compose.yml`:
 
-| Variable               | Default                      | Description                                                         |
-| ---------------------- | ---------------------------- | ------------------------------------------------------------------- |
-| `PORT`                 | `3000`                       | Web dashboard port                                                  |
-| `PASSWORD`             | `rabbitencoder`              | Password to access web dashboard                                    |
-| `FILE_COOLDOWN`        | `30`                         | Seconds the file size must stay unchanged before encoding starts    |
-| `ENCODER_QUALITY`      | `medium`                     | Default video quality (`low`, `medium`, `high`)                     |
-| `ENCODER_SPEED`        | `slow`                       | Default encode speed (`slower`, `slow`, `medium`, `fast`, `faster`) |
-| `AUDIO_BITRATE_MONO`   | `64`                         | Opus bitrate for mono audio (kbps)                                  |
-| `AUDIO_BITRATE_STEREO` | `128`                        | Opus bitrate for stereo audio (kbps)                                |
-| `AUDIO_BITRATE_2_1`    | `160`                        | Opus bitrate for 2.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_5_1`    | `256`                        | Opus bitrate for 5.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_6_1`    | `320`                        | Opus bitrate for 6.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_7_1`    | `384`                        | Opus bitrate for 7.1 audio (kbps)                                   |
-| `AUDIO_BITRATE_7_1_4`  | `512`                        | Opus bitrate for 7.1.4 Atmos audio (kbps)                           |
-| `ORGANIZATION`         | `RabbitCompany`              | Organization tag in output filenames and MKV metadata               |
-| `CONTACT`              | `https://rabbit-company.com` | Contact URL or email embedded in MKV metadata                       |
-| `INPUT_DIR`            | `/data/input`                | Directory to watch for new media files                              |
-| `OUTPUT_DIR`           | `/data/output`               | Directory for encoded output files                                  |
-| `TEMP_DIR`             | `/data/temp`                 | Temporary working directory for encoding                            |
-| `LIBRARY_DIRS`         | _(empty)_                    | Comma-separated paths to media library folders (see below)          |
+| Variable               | Default         | Description                                                         |
+| ---------------------- | --------------- | ------------------------------------------------------------------- |
+| `PORT`                 | `3000`          | Web dashboard port                                                  |
+| `PASSWORD`             | `rabbitencoder` | Password to access web dashboard                                    |
+| `FILE_COOLDOWN`        | `30`            | Seconds the file size must stay unchanged before encoding starts    |
+| `ENCODER_QUALITY`      | `medium`        | Default video quality (`low`, `medium`, `high`)                     |
+| `ENCODER_SPEED`        | `slow`          | Default encode speed (`slower`, `slow`, `medium`, `fast`, `faster`) |
+| `AUDIO_BITRATE_MONO`   | `64`            | Opus bitrate for mono audio (kbps)                                  |
+| `AUDIO_BITRATE_STEREO` | `128`           | Opus bitrate for stereo audio (kbps)                                |
+| `AUDIO_BITRATE_2_1`    | `160`           | Opus bitrate for 2.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_5_1`    | `256`           | Opus bitrate for 5.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_6_1`    | `320`           | Opus bitrate for 6.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_7_1`    | `384`           | Opus bitrate for 7.1 audio (kbps)                                   |
+| `AUDIO_BITRATE_7_1_4`  | `512`           | Opus bitrate for 7.1.4 Atmos audio (kbps)                           |
+| `ORGANIZATION`         | `RabbitCompany` | Organization tag in output filenames                                |
+| `INPUT_DIR`            | `/data/input`   | Directory to watch for new media files                              |
+| `OUTPUT_DIR`           | `/data/output`  | Directory for encoded output files                                  |
+| `TEMP_DIR`             | `/data/temp`    | Temporary working directory for encoding                            |
+| `LIBRARY_DIRS`         | _(empty)_       | Comma-separated paths to media library folders (see below)          |
 
 ## Web Dashboard
 

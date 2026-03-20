@@ -87,6 +87,5 @@ export interface AppConfig {
 	port: number;
 	defaults: JobSettings;
 	organization: string;
-	contact: string;
 	libraryDirs: string[];
 }
