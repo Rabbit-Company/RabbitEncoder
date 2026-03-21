@@ -319,26 +319,35 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 		} else {
 			setStep(S_AUDIO, { progress: 10, detail: `Encoding ${audioStreams.length} audio stream(s)` });
 
-			const delayStr = await run(["mediainfo", "--Inform=Audio;%Delay%", job.inputPath]).then((r) => r.stdout.split(" ")[0] || "0");
-			const delayMs = parseFloat(delayStr) || 0;
-			const delaySec = delayMs / 1000;
+			const delayOutput = await run(["mediainfo", "--Inform=Audio;%Delay%\\n", job.inputPath]).then((r) => r.stdout.trim());
+			const delays = delayOutput.split("\n").map((s) => parseFloat(s.trim()) || 0);
 
 			for (let i = 0; i < audioStreams.length; i++) {
 				const stream = audioStreams[i]!;
+				const flacFile = join(tempDir, `audio_${i}.flac`);
 				const opusFile = join(tempDir, `audio_${i}.opus`);
 				encodedAudioFiles.push(opusFile);
 
 				const layout = normalizeLayout(stream.channelLayout);
 				const bitrate = getOpusBitrateForLayout(layout, job.settings.audioBitrates);
 
-				const ffArgs = ["ffmpeg", "-i", job.inputPath, "-y", "-map", `0:${stream.index}`, "-vn", "-sn", "-c:a", "flac"];
+				const delayMs = delays[i] ?? 0;
+				const delaySec = delayMs / 1000;
+
+				const ffArgs = ["ffmpeg", "-y", "-i", job.inputPath, "-map", `0:${stream.index}`, "-vn", "-sn", "-dn", "-c:a", "flac"];
 
 				if (delaySec < 0) {
 					ffArgs.push("-af", `atrim=start=${Math.abs(delaySec)}`);
 				} else if (delaySec > 0) {
 					ffArgs.push("-af", `adelay=${delayMs}:all=1`);
 				}
-				ffArgs.push("-f", "flac", "-");
+
+				ffArgs.push(flacFile);
+
+				const ffRes = await run(ffArgs);
+				if (ffRes.code !== 0) {
+					throw new Error(`FFmpeg audio extraction failed for stream ${i}: ${ffRes.stderr}`);
+				}
 
 				const opusArgs = ["opusenc", "--bitrate", String(bitrate), "--discard-comments", "--discard-pictures"];
 
@@ -346,27 +355,16 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 					opusArgs.push("--title", stream.title.trim());
 				}
 
-				opusArgs.push("-", opusFile);
+				opusArgs.push(flacFile, opusFile);
 
-				const ffProc = Bun.spawn(ffArgs, { stdout: "pipe", stderr: "pipe" });
-				const opusProc = Bun.spawn(opusArgs, {
-					stdin: ffProc.stdout,
-					stdout: "pipe",
-					stderr: "pipe",
+				const opusRes = await run(opusArgs);
+				if (opusRes.code !== 0) {
+					throw new Error(`Audio encoding failed for stream ${i}: ${opusRes.stderr}`);
+				}
+
+				setStep(S_AUDIO, {
+					progress: 10 + Math.round(((i + 1) / audioStreams.length) * 80),
 				});
-
-				const [ffCode, opusCode] = await Promise.all([ffProc.exited, opusProc.exited]);
-
-				if (ffCode !== 0) {
-					const ffErr = await new Response(ffProc.stderr).text();
-					throw new Error(`FFmpeg audio extraction failed for stream ${i}: ${ffErr}`);
-				}
-				if (opusCode !== 0) {
-					const opusErr = await new Response(opusProc.stderr).text();
-					throw new Error(`Audio encoding failed for stream ${i}: ${opusErr}`);
-				}
-
-				setStep(S_AUDIO, { progress: 10 + Math.round(((i + 1) / audioStreams.length) * 80) });
 			}
 
 			setStep(S_AUDIO, { status: "done", progress: 100 });
