@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, statSync, unlinkSync, rmSync, readdirSync } from "fs";
 import { join, parse as parsePath, dirname, extname } from "path";
-import type { Job, JobStep, AppConfig, ProbeResult } from "./types";
+import type { Job, JobStep, AppConfig, ProbeResult, AudioStreamInfo } from "./types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "./logger";
 import pkg from "../package.json";
@@ -35,6 +35,13 @@ function getResolutionTag(width: number, height: number) {
 	if (width >= 1000 || height >= 560) return "576p";
 	if (width > 0 && height > 0) return "480p";
 	return "1080p";
+}
+
+function shouldKeepAudioTitle(stream: AudioStreamInfo, streams: AudioStreamInfo[]) {
+	if (!stream.title?.trim()) return false;
+	if (!stream.language) return true;
+	const lang = stream.language || "und";
+	return streams.filter((s) => (s.language || "und") === lang).length > 1;
 }
 
 function fmtFrames(current: number, total: number): string {
@@ -351,8 +358,8 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 				const opusArgs = ["opusenc", "--bitrate", String(bitrate), "--discard-comments", "--discard-pictures"];
 
-				if (stream.title?.trim()) {
-					opusArgs.push("--title", stream.title.trim());
+				if (shouldKeepAudioTitle(stream, audioStreams)) {
+					opusArgs.push("--title", stream.title!.trim());
 				}
 
 				opusArgs.push(flacFile, opusFile);
@@ -401,8 +408,8 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			if (stream.language) {
 				mkvArgs.push("--language", `0:${stream.language}`);
 			}
-			if (stream.title?.trim()) {
-				mkvArgs.push("--track-name", `0:${stream.title.trim()}`);
+			if (shouldKeepAudioTitle(stream, audioStreams)) {
+				mkvArgs.push("--track-name", `0:${stream.title!.trim()}`);
 			}
 			mkvArgs.push(encodedAudioFiles[i]!);
 		}
