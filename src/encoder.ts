@@ -5,6 +5,16 @@ import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalize
 import { Logger } from "./logger";
 import pkg from "../package.json";
 
+const AUDIO_CODEC_NAMES = /\b(?:TrueHD(?:\s+Atmos)?|E-?AC-?3|DDP?|AC-?3|DTS(?:-?HD(?:[\s-]?MA)?|-?ES|-?X|-?MA)?|FLAC|AAC|L?PCM|MP3|Vorbis|WMA|Opus|Atmos)\b/gi;
+
+const sanitizeAudioTitle = (title: string) => {
+	return title
+		.replace(AUDIO_CODEC_NAMES, "Opus")
+		.replace(/\s*-\s*/g, " - ")
+		.replace(/\s{2,}/g, " ")
+		.trim();
+};
+
 async function run(cmd: string[], opts?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string }> {
 	const proc = Bun.spawn(cmd, {
 		stdout: "pipe",
@@ -359,7 +369,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 				const opusArgs = ["opusenc", "--bitrate", String(bitrate), "--discard-comments", "--discard-pictures"];
 
 				if (shouldKeepAudioTitle(stream, audioStreams)) {
-					opusArgs.push("--title", stream.title!.trim());
+					opusArgs.push("--title", sanitizeAudioTitle(stream.title!));
 				}
 
 				opusArgs.push(flacFile, opusFile);
@@ -409,7 +419,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 				mkvArgs.push("--language", `0:${stream.language}`);
 			}
 			if (shouldKeepAudioTitle(stream, audioStreams)) {
-				mkvArgs.push("--track-name", `0:${stream.title!.trim()}`);
+				mkvArgs.push("--track-name", `0:${sanitizeAudioTitle(stream.title!)}`);
 			}
 			mkvArgs.push(encodedAudioFiles[i]!);
 		}
