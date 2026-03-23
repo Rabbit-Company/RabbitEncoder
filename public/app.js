@@ -20,8 +20,25 @@ const CHANNELS = [
 
 const expandedFolders = new Set();
 let libraryDirs = [];
-let libraryCurrentPath = null;
-let libraryBrowseHistory = [];
+const libraryNodes = new Map();
+
+function createTreeNode(entry, depth, parentPath) {
+	return {
+		path: entry.path,
+		name: entry.name,
+		type: entry.type,
+		depth,
+		parentPath,
+		expanded: false,
+		checked: false,
+		children: entry.type === "directory" ? null : undefined,
+		loading: false,
+		encoded: entry.encoded || false,
+		videoCount: entry.videoCount || 0,
+		encodedCount: entry.encodedCount || 0,
+		size: entry.size || 0,
+	};
+}
 
 function hashPassword(password) {
 	return Blake2b.hash(`rabbitencoder-${password}`);
@@ -360,13 +377,24 @@ function buildFolderTree(jobs) {
 	const root = { name: "", fullPath: "", children: new Map(), jobs: [] };
 
 	for (const job of jobs) {
-		const rel = job.relativePath || "";
-		if (!rel) {
+		let parts = [];
+
+		if (job.replaceSource && job.inputPath) {
+			// Library job: derive full folder hierarchy from inputPath
+			const lastSlash = job.inputPath.lastIndexOf("/");
+			const dir = lastSlash > 0 ? job.inputPath.substring(1, lastSlash) : "";
+			parts = dir ? dir.split("/") : [];
+		} else {
+			// Regular job: use relativePath
+			const rel = job.relativePath || "";
+			parts = rel ? rel.split(/[/\\]/) : [];
+		}
+
+		if (parts.length === 0) {
 			root.jobs.push(job);
 			continue;
 		}
 
-		const parts = rel.split(/[/\\]/);
 		let current = root;
 		let pathSoFar = "";
 
@@ -634,11 +662,11 @@ async function fetchLibraryBrowse(path) {
 	return res.json();
 }
 
-async function postLibraryEncode(path) {
+async function postLibraryEncodePaths(paths) {
 	const res = await authFetch(`${API}/api/library/encode`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path }),
+		body: JSON.stringify({ paths }),
 	});
 	return res.json();
 }
@@ -655,12 +683,257 @@ function humanFileSize(bytes) {
 	return `${val.toFixed(1)} ${units[i]}`;
 }
 
+function setNodeChecked(path, checked) {
+	const node = libraryNodes.get(path);
+	if (!node) return;
+	node.checked = checked;
+	if (node.type === "directory" && node.children) {
+		for (const childPath of node.children) {
+			setNodeChecked(childPath, checked);
+		}
+	}
+}
+
+function getNodeCheckState(path) {
+	const node = libraryNodes.get(path);
+	if (!node) return { checked: false, indeterminate: false };
+	if (node.type === "file") return { checked: node.checked, indeterminate: false };
+	if (!node.children || node.children.length === 0) return { checked: node.checked, indeterminate: false };
+
+	let checkedCount = 0;
+	let totalCount = 0;
+	let hasIndeterminate = false;
+	for (const childPath of node.children) {
+		const s = getNodeCheckState(childPath);
+		totalCount++;
+		if (s.checked) checkedCount++;
+		if (s.indeterminate) hasIndeterminate = true;
+	}
+	if (hasIndeterminate || (checkedCount > 0 && checkedCount < totalCount)) {
+		return { checked: false, indeterminate: true };
+	}
+	return { checked: checkedCount === totalCount && totalCount > 0, indeterminate: false };
+}
+
+function updateParentCheckState(path) {
+	const node = libraryNodes.get(path);
+	if (!node || !node.parentPath) return;
+	const parent = libraryNodes.get(node.parentPath);
+	if (!parent || !parent.children) return;
+	const state = getNodeCheckState(parent.path);
+	parent.checked = state.checked;
+	updateParentCheckState(parent.path);
+}
+
+function toggleNodeCheck(path) {
+	const state = getNodeCheckState(path);
+	const newChecked = !(state.checked || state.indeterminate);
+	setNodeChecked(path, newChecked);
+	updateParentCheckState(path);
+	renderLibraryTree();
+	updateLibraryFooter();
+}
+
+async function toggleNodeExpand(path) {
+	const node = libraryNodes.get(path);
+	if (!node || node.type !== "directory") return;
+
+	if (node.expanded) {
+		node.expanded = false;
+		renderLibraryTree();
+		return;
+	}
+
+	if (node.children === null) {
+		node.loading = true;
+		renderLibraryTree();
+		try {
+			const data = await fetchLibraryBrowse(node.path);
+			const entries = data.entries || [];
+			node.children = [];
+			for (const entry of entries) {
+				const child = createTreeNode(entry, node.depth + 1, node.path);
+				if (node.checked) child.checked = true;
+				libraryNodes.set(child.path, child);
+				node.children.push(child.path);
+			}
+		} catch {
+			node.children = [];
+		}
+		node.loading = false;
+	}
+
+	node.expanded = true;
+	renderLibraryTree();
+}
+
+function getCheckedPaths() {
+	const paths = [];
+	function collect(path) {
+		const node = libraryNodes.get(path);
+		if (!node) return;
+		if (node.type === "file") {
+			if (node.checked && !node.encoded) paths.push(node.path);
+			return;
+		}
+		const state = getNodeCheckState(path);
+		if (state.checked) {
+			paths.push(node.path);
+			return;
+		}
+		if (state.indeterminate && node.children) {
+			for (const childPath of node.children) collect(childPath);
+		}
+	}
+	for (const dir of libraryDirs) {
+		const root = libraryNodes.get(dir.path);
+		if (root) collect(root.path);
+	}
+	return paths;
+}
+
+function countSelectedToEncode() {
+	let total = 0;
+	function count(path) {
+		const node = libraryNodes.get(path);
+		if (!node) return;
+		if (node.type === "file") {
+			if (node.checked && !node.encoded) total++;
+			return;
+		}
+		const state = getNodeCheckState(path);
+		if (state.checked) {
+			total += (node.videoCount || 0) - (node.encodedCount || 0);
+			return;
+		}
+		if (state.indeterminate && node.children) {
+			for (const childPath of node.children) count(childPath);
+		}
+	}
+	for (const dir of libraryDirs) {
+		const root = libraryNodes.get(dir.path);
+		if (root) count(root.path);
+	}
+	return total;
+}
+
+function renderLibraryTree() {
+	const content = document.getElementById("library-content");
+	if (libraryDirs.length === 0) {
+		content.innerHTML = `<div class="library-empty">No library directories configured.<br>Set <code>LIBRARY_DIRS</code> in your docker-compose.yml</div>`;
+		return;
+	}
+	let html = "";
+	for (const dir of libraryDirs) {
+		const node = libraryNodes.get(dir.path);
+		if (node) html += renderTreeNode(node);
+	}
+	content.innerHTML = html || `<div class="library-empty">No library directories configured</div>`;
+}
+
+function renderTreeNode(node) {
+	const isDir = node.type === "directory";
+	const state = getNodeCheckState(node.path);
+	const indent = node.depth * 24;
+
+	if (isDir) {
+		return renderTreeFolder(node, state.checked, state.indeterminate, indent);
+	}
+	return renderTreeFile(node, indent);
+}
+
+function renderTreeFolder(node, checked, indeterminate, indent) {
+	const chevronClass = node.expanded ? "expanded" : "";
+	const encodedClass = node.videoCount > 0 && node.videoCount === node.encodedCount ? " is-encoded" : "";
+	const pending = (node.videoCount || 0) - (node.encodedCount || 0);
+
+	let metaParts = [];
+	if (node.videoCount > 0 && pending === 0) metaParts.push(`<span class="library-encoded-badge">encoded</span>`);
+	if (pending > 0) metaParts.push(`${pending} to encode`);
+	if (node.videoCount > 0) metaParts.push(`${node.videoCount} video${node.videoCount !== 1 ? "s" : ""}`);
+
+	let childrenHtml = "";
+	if (node.expanded && node.children) {
+		if (node.children.length === 0) {
+			childrenHtml = `<div class="tree-empty" style="padding-left:${indent + 56}px">Empty folder</div>`;
+		} else {
+			for (const childPath of node.children) {
+				const child = libraryNodes.get(childPath);
+				if (child) childrenHtml += renderTreeNode(child);
+			}
+		}
+	}
+	if (node.loading) {
+		childrenHtml = `<div class="tree-loading" style="padding-left:${indent + 56}px">Loading...</div>`;
+	}
+
+	const cbHtml = renderCheckbox(node.path, checked, indeterminate);
+	return `
+		<div class="tree-node tree-folder${encodedClass}">
+			<div class="tree-row" style="padding-left:${indent}px">
+				<button class="tree-chevron ${chevronClass}" data-action="expand" data-path="${escapeHtml(node.path)}">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+				</button>
+				${cbHtml}
+				<svg class="tree-icon tree-icon-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+				</svg>
+				<span class="tree-name" data-action="expand" data-path="${escapeHtml(node.path)}">${escapeHtml(node.name)}</span>
+				<span class="tree-meta">${metaParts.join(" · ")}</span>
+			</div>
+			${childrenHtml}
+		</div>`;
+}
+
+function renderTreeFile(node, indent) {
+	const encodedClass = node.encoded ? " is-encoded" : "";
+	const cbHtml = renderCheckbox(node.path, node.checked, false);
+	let metaParts = [];
+	if (node.encoded) metaParts.push(`<span class="library-encoded-badge">encoded</span>`);
+	if (node.size) metaParts.push(humanFileSize(node.size));
+
+	return `
+		<div class="tree-node tree-file${encodedClass}">
+			<div class="tree-row" style="padding-left:${indent + 24}px">
+				${cbHtml}
+				<svg class="tree-icon tree-icon-file" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+					<polygon points="23 7 16 12 23 17 23 7"/>
+					<rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+				</svg>
+				<span class="tree-name tree-name-file">${escapeHtml(node.name)}</span>
+				<span class="tree-meta">${metaParts.join(" · ")}</span>
+			</div>
+		</div>`;
+}
+
+function renderCheckbox(path, checked, indeterminate) {
+	const cls = checked ? "checked" : indeterminate ? "indeterminate" : "";
+	const icon = checked
+		? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`
+		: indeterminate
+			? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="5" y1="12" x2="19" y2="12"/></svg>`
+			: "";
+	return `<button class="tree-checkbox ${cls}" data-action="check" data-path="${escapeHtml(path)}">${icon}</button>`;
+}
+
+function updateLibraryFooter() {
+	const note = document.getElementById("library-note");
+	const encodeBtn = document.getElementById("library-encode-btn");
+	const count = countSelectedToEncode();
+	if (count > 0) {
+		note.textContent = `${count} file${count !== 1 ? "s" : ""} selected for encoding`;
+		encodeBtn.disabled = false;
+	} else {
+		note.textContent = "Select folders or files to encode";
+		encodeBtn.disabled = true;
+	}
+}
+
 async function openLibrary() {
 	const modal = document.getElementById("library-modal");
 	const content = document.getElementById("library-content");
 	const note = document.getElementById("library-note");
 	const encodeBtn = document.getElementById("library-encode-btn");
-
 	content.innerHTML = `<div class="library-loading">Loading library...</div>`;
 	note.textContent = "";
 	encodeBtn.disabled = true;
@@ -668,193 +941,19 @@ async function openLibrary() {
 
 	try {
 		libraryDirs = await fetchLibraryDirs();
-
 		if (libraryDirs.length === 0) {
 			content.innerHTML = `<div class="library-empty">No library directories configured.<br>Set <code>LIBRARY_DIRS</code> in your docker-compose.yml</div>`;
-			renderLibraryBreadcrumb(null);
 			return;
 		}
-
-		libraryCurrentPath = null;
-		libraryBrowseHistory = [];
-		renderLibraryRoot();
-	} catch (e) {
+		libraryNodes.clear();
+		for (const dir of libraryDirs) {
+			const rootNode = createTreeNode({ path: dir.path, name: dir.name, type: "directory", videoCount: 0, encodedCount: 0 }, 0, null);
+			libraryNodes.set(dir.path, rootNode);
+		}
+		renderLibraryTree();
+		updateLibraryFooter();
+	} catch {
 		content.innerHTML = `<div class="library-empty">Failed to load library</div>`;
-	}
-}
-
-function renderLibraryRoot() {
-	libraryCurrentPath = null;
-	libraryBrowseHistory = [];
-	renderLibraryBreadcrumb(null);
-
-	const content = document.getElementById("library-content");
-	const note = document.getElementById("library-note");
-	const encodeBtn = document.getElementById("library-encode-btn");
-
-	note.textContent = "";
-	encodeBtn.disabled = true;
-
-	if (libraryDirs.length === 0) {
-		content.innerHTML = `<div class="library-empty">No library directories configured</div>`;
-		return;
-	}
-
-	let html = "";
-	for (const dir of libraryDirs) {
-		html += `
-			<div class="library-entry" data-path="${escapeHtml(dir.path)}" data-type="directory">
-				<svg class="library-entry-icon is-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-				</svg>
-				<span class="library-entry-name">${escapeHtml(dir.name)}</span>
-				<span class="library-entry-meta">${escapeHtml(dir.path)}</span>
-			</div>`;
-	}
-	content.innerHTML = html;
-}
-
-async function browseLibraryPath(path) {
-	const content = document.getElementById("library-content");
-	const note = document.getElementById("library-note");
-	const encodeBtn = document.getElementById("library-encode-btn");
-
-	content.innerHTML = `<div class="library-loading">Loading...</div>`;
-
-	try {
-		const data = await fetchLibraryBrowse(path);
-
-		libraryCurrentPath = path;
-
-		// Build breadcrumb history
-		const rootDir = libraryDirs.find((d) => path === d.path || path.startsWith(d.path + "/"));
-		if (rootDir) {
-			libraryBrowseHistory = [{ name: rootDir.name, path: rootDir.path }];
-			if (path !== rootDir.path) {
-				const relPath = path.slice(rootDir.path.length + 1);
-				const parts = relPath.split("/");
-				let accumulated = rootDir.path;
-				for (const part of parts) {
-					accumulated += "/" + part;
-					libraryBrowseHistory.push({ name: part, path: accumulated });
-				}
-			}
-		}
-
-		renderLibraryBreadcrumb(path);
-
-		const entries = data.entries || [];
-
-		if (entries.length === 0) {
-			content.innerHTML = `<div class="library-empty">This folder is empty</div>`;
-			note.textContent = "";
-			encodeBtn.disabled = true;
-			return;
-		}
-
-		const folders = entries.filter((e) => e.type === "directory");
-		const files = entries.filter((e) => e.type === "file");
-		const encodedFiles = files.filter((e) => e.encoded);
-		const unencodedFiles = files.filter((e) => !e.encoded);
-		const totalVideos = folders.reduce((sum, f) => sum + (f.videoCount || 0), 0) + files.length;
-		const totalEncoded = folders.reduce((sum, f) => sum + (f.encodedCount || 0), 0) + encodedFiles.length;
-		const totalToEncode = totalVideos - totalEncoded;
-
-		let html = "";
-		for (const entry of entries) {
-			if (entry.type === "directory") {
-				const pending = (entry.videoCount || 0) - (entry.encodedCount || 0);
-				const allEncoded = entry.videoCount > 0 && pending === 0;
-				html += `
-					<div class="library-entry ${allEncoded ? "is-encoded" : ""}" data-path="${escapeHtml(entry.path)}" data-type="directory">
-						<svg class="library-entry-icon is-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-						</svg>
-						<span class="library-entry-name">${escapeHtml(entry.name)}</span>
-						<span class="library-entry-meta">${allEncoded ? `<span class="library-encoded-badge">encoded</span> ` : ""}${pending > 0 ? `${pending} to encode · ` : ""}${entry.videoCount || 0} video${entry.videoCount !== 1 ? "s" : ""}</span>
-					</div>`;
-			} else {
-				html += `
-					<div class="library-entry ${entry.encoded ? "is-encoded" : ""}" data-path="${escapeHtml(entry.path)}" data-type="file">
-						<svg class="library-entry-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-							<polygon points="23 7 16 12 23 17 23 7"/>
-							<rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-						</svg>
-						<span class="library-entry-name">${escapeHtml(entry.name)}</span>
-						<span class="library-entry-meta">${entry.encoded ? `<span class="library-encoded-badge">encoded</span> ` : ""}${humanFileSize(entry.size)}</span>
-					</div>`;
-			}
-		}
-		content.innerHTML = html;
-
-		// Update footer
-		if (totalToEncode > 0) {
-			note.textContent = `${totalToEncode} to encode` + (totalEncoded > 0 ? ` · ${totalEncoded} already encoded` : "") + ` · ${totalVideos} total`;
-		} else if (totalEncoded > 0) {
-			note.textContent = `All ${totalEncoded} video${totalEncoded !== 1 ? "s" : ""} already encoded`;
-		} else {
-			note.textContent = "No video files found";
-		}
-		encodeBtn.disabled = totalToEncode === 0;
-	} catch (e) {
-		content.innerHTML = `<div class="library-empty">Failed to browse folder</div>`;
-		note.textContent = "";
-		encodeBtn.disabled = true;
-	}
-}
-
-function renderLibraryBreadcrumb(currentPath) {
-	const bc = document.getElementById("library-breadcrumb");
-
-	let html = `<span class="library-breadcrumb-item ${!currentPath ? "current" : ""}" data-path="">Library</span>`;
-
-	if (libraryBrowseHistory.length > 0) {
-		for (let i = 0; i < libraryBrowseHistory.length; i++) {
-			const item = libraryBrowseHistory[i];
-			const isCurrent = i === libraryBrowseHistory.length - 1;
-			html += `<span class="library-breadcrumb-sep">/</span>`;
-			html += `<span class="library-breadcrumb-item ${isCurrent ? "current" : ""}" data-path="${escapeHtml(item.path)}">${escapeHtml(item.name)}</span>`;
-		}
-	}
-
-	bc.innerHTML = html;
-}
-
-async function handleLibraryEncode() {
-	if (!libraryCurrentPath) return;
-
-	const encodeBtn = document.getElementById("library-encode-btn");
-	encodeBtn.disabled = true;
-	encodeBtn.textContent = "Starting...";
-
-	try {
-		const result = await postLibraryEncode(libraryCurrentPath);
-		const note = document.getElementById("library-note");
-
-		const parts = [];
-		if (result.added > 0) {
-			parts.push(`Queued ${result.added} file${result.added !== 1 ? "s" : ""}`);
-		}
-		if (result.skipped > 0) {
-			parts.push(`${result.skipped} already queued`);
-		}
-		if (result.alreadyEncoded > 0) {
-			parts.push(`${result.alreadyEncoded} already encoded`);
-		}
-		if (parts.length === 0) {
-			parts.push("No video files found to encode");
-		}
-		note.textContent = parts.join(" · ");
-
-		if (result.added > 0) {
-			closeLibrary();
-			update();
-		}
-	} catch (e) {
-		document.getElementById("library-note").textContent = "Failed to start encoding";
-	} finally {
-		encodeBtn.textContent = "Encode Folder";
-		encodeBtn.disabled = !libraryCurrentPath;
 	}
 }
 
@@ -864,6 +963,36 @@ function closeLibrary() {
 
 function closeLibraryIfOutside(e) {
 	if (e.target === e.currentTarget) closeLibrary();
+}
+
+async function handleLibraryEncode() {
+	const paths = getCheckedPaths();
+	if (paths.length === 0) return;
+
+	const encodeBtn = document.getElementById("library-encode-btn");
+	encodeBtn.disabled = true;
+	encodeBtn.textContent = "Starting...";
+
+	try {
+		const result = await postLibraryEncodePaths(paths);
+		const note = document.getElementById("library-note");
+		const parts = [];
+		if (result.added > 0) parts.push(`Queued ${result.added} file${result.added !== 1 ? "s" : ""}`);
+		if (result.skipped > 0) parts.push(`${result.skipped} already queued`);
+		if (result.alreadyEncoded > 0) parts.push(`${result.alreadyEncoded} already encoded`);
+		if (parts.length === 0) parts.push("No video files found to encode");
+		note.textContent = parts.join(" · ");
+
+		if (result.added > 0) {
+			closeLibrary();
+			update();
+		}
+	} catch {
+		document.getElementById("library-note").textContent = "Failed to start encoding";
+	} finally {
+		encodeBtn.textContent = "Encode Selected";
+		encodeBtn.disabled = getCheckedPaths().length === 0;
+	}
 }
 
 function initEventListeners() {
@@ -916,23 +1045,18 @@ function initEventListeners() {
 	document.getElementById("library-encode-btn").addEventListener("click", handleLibraryEncode);
 
 	document.getElementById("library-content").addEventListener("click", (e) => {
-		const entry = e.target.closest(".library-entry");
-		if (!entry) return;
-		const path = entry.dataset.path;
-		const type = entry.dataset.type;
-		if (type === "directory" && path) {
-			browseLibraryPath(path);
+		const chevron = e.target.closest('[data-action="expand"]');
+		if (chevron) {
+			const path = chevron.dataset.path;
+			if (path) toggleNodeExpand(path);
+			return;
 		}
-	});
 
-	document.getElementById("library-breadcrumb").addEventListener("click", (e) => {
-		const item = e.target.closest(".library-breadcrumb-item");
-		if (!item || item.classList.contains("current")) return;
-		const path = item.dataset.path;
-		if (!path) {
-			renderLibraryRoot();
-		} else {
-			browseLibraryPath(path);
+		const checkbox = e.target.closest('[data-action="check"]');
+		if (checkbox) {
+			const path = checkbox.dataset.path;
+			if (path) toggleNodeCheck(path);
+			return;
 		}
 	});
 }

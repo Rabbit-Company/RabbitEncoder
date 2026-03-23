@@ -1,5 +1,5 @@
-import { readdirSync } from "fs";
-import { join, extname, relative, basename } from "path";
+import { readdirSync, statSync } from "fs";
+import { resolve, dirname, join, extname, relative, basename } from "path";
 import { type Job, type JobSettings, type AppConfig, MEDIA_EXTENSIONS } from "./types";
 import { encodeJob } from "./encoder";
 import { isAlreadyEncoded } from "./library";
@@ -132,6 +132,44 @@ export function scanLibraryFolder(folderPath: string): { added: number; skipped:
 
 	scan(folderPath);
 	return { added, skipped, alreadyEncoded };
+}
+
+/**
+ * Encode a single path. Either a folder (recursive) or an individual file.
+ */
+export function scanLibraryPath(targetPath: string): { added: number; skipped: number; alreadyEncoded: number } {
+	const resolved = resolve(targetPath);
+
+	try {
+		const stat = statSync(resolved);
+		if (stat.isDirectory()) {
+			return scanLibraryFolder(resolved);
+		}
+	} catch {
+		return { added: 0, skipped: 0, alreadyEncoded: 0 };
+	}
+
+	const filename = basename(resolved);
+	const ext = extname(filename).toLowerCase();
+
+	if (!MEDIA_EXTENSIONS.has(ext)) {
+		return { added: 0, skipped: 0, alreadyEncoded: 0 };
+	}
+
+	if (isAlreadyEncoded(filename, appConfig.organization)) {
+		return { added: 0, skipped: 0, alreadyEncoded: 1 };
+	}
+
+	for (const job of jobs.values()) {
+		if (job.inputPath === resolved && job.status !== "error" && job.status !== "done") {
+			return { added: 0, skipped: 1, alreadyEncoded: 0 };
+		}
+	}
+
+	const dir = dirname(resolved);
+	const folderName = basename(dir);
+	addJob(filename, resolved, folderName, true);
+	return { added: 1, skipped: 0, alreadyEncoded: 0 };
 }
 
 export function updateJobSettings(id: string, settings: Partial<JobSettings>): Job | null {

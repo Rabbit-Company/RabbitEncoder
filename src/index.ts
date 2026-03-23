@@ -1,6 +1,6 @@
 import { mkdirSync } from "fs";
 import { loadConfig } from "./config";
-import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults, scanLibraryFolder } from "./store";
+import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults, scanLibraryFolder, scanLibraryPath } from "./store";
 import { startWatcher } from "./watcher";
 import { browseFolder, isPathAllowed } from "./library";
 import { Web } from "@rabbit-company/web";
@@ -101,20 +101,33 @@ app.get("/api/library/browse", (c) => {
 });
 
 app.post("/api/library/encode", async (c) => {
-	const body = (await c.req.json()) as { path: string };
-	if (!body.path) {
-		return c.json({ error: "Missing 'path' in request body" }, 400);
+	const body = (await c.req.json()) as { paths?: string[]; path?: string };
+
+	const paths = body.paths || (body.path ? [body.path] : []);
+	if (paths.length === 0) {
+		return c.json({ error: "Missing 'paths' in request body" }, 400);
 	}
 
-	if (!isPathAllowed(body.path, config.libraryDirs)) {
-		return c.json({ error: "Path is not within any configured library directory" }, 403);
+	for (const p of paths) {
+		if (!isPathAllowed(p, config.libraryDirs)) {
+			return c.json({ error: `Path is not within any configured library directory: ${p}` }, 403);
+		}
 	}
 
-	Logger.info(`[library] Starting library encode for: ${body.path}`);
-	const result = scanLibraryFolder(body.path);
-	Logger.info(`[library] Queued ${result.added} files (${result.skipped} already queued, ${result.alreadyEncoded} already encoded)`);
+	let totalAdded = 0;
+	let totalSkipped = 0;
+	let totalAlreadyEncoded = 0;
 
-	return c.json({ ok: true, added: result.added, skipped: result.skipped, alreadyEncoded: result.alreadyEncoded });
+	for (const p of paths) {
+		Logger.info(`[library] Encoding: ${p}`);
+		const result = scanLibraryPath(p);
+		totalAdded += result.added;
+		totalSkipped += result.skipped;
+		totalAlreadyEncoded += result.alreadyEncoded;
+	}
+
+	Logger.info(`[library] Queued ${totalAdded} files (${totalSkipped} already queued, ${totalAlreadyEncoded} already encoded)`);
+	return c.json({ ok: true, added: totalAdded, skipped: totalSkipped, alreadyEncoded: totalAlreadyEncoded });
 });
 
 Logger.info(`Rabbit Encoder started on http://0.0.0.0:${config.port}`);
