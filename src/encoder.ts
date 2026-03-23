@@ -15,6 +15,11 @@ const sanitizeAudioTitle = (title: string) => {
 		.trim();
 };
 
+function detectReleaseGroup(filename: string): string | null {
+	const match = filename.match(/\]-([A-Za-z0-9_]+)$/);
+	return match?.[1] ?? null;
+}
+
 async function run(cmd: string[], opts?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string }> {
 	const proc = Bun.spawn(cmd, {
 		stdout: "pipe",
@@ -121,6 +126,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 
 	const stem = parsePath(job.filename).name;
 	const sourceTag = detectSourceTag(stem);
+	const releaseGroup = detectReleaseGroup(stem);
 	const baseTitle = stem.replace(/\s*[\-–—]*\s*\[.*/, "").trim();
 
 	const steps = makeSteps();
@@ -403,6 +409,7 @@ export async function encodeJob(job: Job, config: AppConfig, updateJob: (partial
 			`<Simple><Name>Title</Name><String>${escapeXml(baseTitle)}</String></Simple>`,
 			`<Simple><Name>Encoder</Name><String>RabbitEncoder v${pkg.version}</String></Simple>`,
 			`<Simple><Name>Encoder Settings</Name><String>Quality ${job.settings.quality}, Speed ${job.settings.finalSpeed}</String></Simple>`,
+			...(releaseGroup ? [`<Simple><Name>Source</Name><String>${escapeXml(releaseGroup)}</String></Simple>`] : []),
 			"</Tag></Tags>",
 		].join("\n");
 
