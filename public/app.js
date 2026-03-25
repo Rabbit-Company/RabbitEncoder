@@ -498,12 +498,21 @@ function computeFolderTimeEstimate(node) {
 		}
 	}
 
+	let activeElapsed = 0;
+	for (const job of activeJobs) {
+		if (job.startedAt) {
+			activeElapsed += Date.now() - job.startedAt;
+		}
+	}
+
 	const estimatedRemaining = activeRemaining + queuedEstimate;
+	const estimatedTotal = totalElapsed + activeElapsed + estimatedRemaining;
 	const remainingCount = activeJobs.length + queuedJobs.length;
 
 	return {
 		totalElapsed,
 		estimatedRemaining,
+		estimatedTotal,
 		avgPerEpisode,
 		doneCount: doneJobs.length,
 		remainingCount,
@@ -519,10 +528,11 @@ function renderFolderTimeEstimate(node) {
 	const parts = [];
 
 	if (est.remainingCount > 0 && est.doneCount > 0) {
-		// Still encoding (show remaining estimate)
+		// Still encoding (show estimated total and remaining)
+		parts.push(`~${formatDurationShort(est.estimatedTotal)} total`);
 		parts.push(`~${formatDurationShort(est.estimatedRemaining)} remaining`);
 	} else if (est.remainingCount === 0 && est.doneCount > 0) {
-		// All done (show total time)
+		// All done (show actual total time)
 		parts.push(`Total: ${formatDurationShort(est.totalElapsed)}`);
 	}
 

@@ -868,8 +868,17 @@ code {
 		margin-left: 10px;
 	}
 	.folder-header {
+		flex-wrap: wrap;
 		padding: 10px 12px;
-		gap: 8px;
+		gap: 6px;
+	}
+	.folder-left {
+		flex: 1 1 100%;
+		min-width: 0;
+	}
+	.folder-right {
+		flex: 1 1 100%;
+		align-items: flex-start;
 	}
 	.folder-stats {
 		gap: 4px;
@@ -879,7 +888,11 @@ code {
 		padding: 2px 5px;
 	}
 	.folder-progress {
-		width: 80px;
+		width: 100%;
+	}
+	.folder-time-estimate {
+		font-size: 0.58rem;
+		text-align: left;
 	}
 	.folder-time-estimate {
 		font-size: 0.58rem;
