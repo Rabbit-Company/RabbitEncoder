@@ -149,7 +149,7 @@ code {
 }
 
 .main {
-	max-width: 900px;
+	max-width: 1100px;
 	margin: 0 auto;
 	padding: 28px 20px;
 }
@@ -666,7 +666,11 @@ code {
 }
 
 .folder-node {
-	margin-left: calc(var(--depth, 0) * 20px);
+	margin-left: 0;
+}
+
+.folder-children > .folder-node {
+	margin-left: 20px;
 }
 
 .folder-header {
@@ -803,6 +807,29 @@ code {
 	transition: width 0.4s ease;
 }
 
+.folder-time-estimate {
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	font-weight: 500;
+	color: var(--text-2);
+	white-space: nowrap;
+	text-align: right;
+}
+
+.folder-active .folder-time-estimate {
+	color: var(--amber);
+}
+
+.folder-done .folder-time-estimate {
+	color: var(--green);
+	opacity: 0.8;
+}
+
+.folder-time-pending {
+	opacity: 0.4;
+	font-style: italic;
+}
+
 .folder-children {
 	display: flex;
 	flex-direction: column;
@@ -812,7 +839,7 @@ code {
 }
 
 .folder-job {
-	margin-left: calc(var(--depth, 0) * 20px);
+	margin-left: 20px;
 }
 
 @media (max-width: 600px) {
@@ -832,10 +859,13 @@ code {
 		grid-template-columns: 1fr 1fr;
 	}
 	.folder-node {
-		margin-left: calc(var(--depth, 0) * 12px);
+		margin-left: 0;
+	}
+	.folder-children > .folder-node {
+		margin-left: 10px;
 	}
 	.folder-job {
-		margin-left: calc(var(--depth, 0) * 12px);
+		margin-left: 10px;
 	}
 	.folder-header {
 		padding: 10px 12px;
@@ -850,6 +880,9 @@ code {
 	}
 	.folder-progress {
 		width: 80px;
+	}
+	.folder-time-estimate {
+		font-size: 0.58rem;
 	}
 }
 

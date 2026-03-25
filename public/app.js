@@ -439,6 +439,102 @@ function folderHasActive(node) {
 	return collectAllJobs(node).some((j) => isActive(j.status));
 }
 
+function computeFolderTimeEstimate(node) {
+	const allJobs = collectAllJobs(node);
+
+	const doneJobs = allJobs.filter((j) => j.status === "done" && j.startedAt && j.finishedAt);
+	const activeJobs = allJobs.filter((j) => isActive(j.status));
+	const queuedJobs = allJobs.filter((j) => j.status === "queued");
+
+	if (doneJobs.length === 0 && activeJobs.length === 0) return null;
+
+	// Total elapsed time for completed jobs
+	const totalElapsed = doneJobs.reduce((sum, j) => sum + (j.finishedAt - j.startedAt), 0);
+
+	// Average encode time per episode
+	const avgPerEpisode = doneJobs.length > 0 ? totalElapsed / doneJobs.length : null;
+
+	// Try duration-weighted estimation
+	let useDurationWeighted = false;
+	let encodeRatio = null;
+
+	const doneWithDuration = doneJobs.filter((j) => j.probe && j.probe.duration > 0);
+	if (doneWithDuration.length > 0) {
+		const totalEncode = doneWithDuration.reduce((sum, j) => sum + (j.finishedAt - j.startedAt), 0);
+		const totalDuration = doneWithDuration.reduce((sum, j) => sum + j.probe.duration * 1000, 0);
+		encodeRatio = totalEncode / totalDuration;
+		useDurationWeighted = true;
+	}
+
+	// Estimate remaining time for queued jobs
+	let queuedEstimate = 0;
+	if (queuedJobs.length > 0) {
+		if (useDurationWeighted) {
+			const queuedWithDuration = queuedJobs.filter((j) => j.probe && j.probe.duration > 0);
+			const queuedWithoutDuration = queuedJobs.length - queuedWithDuration.length;
+			queuedEstimate += queuedWithDuration.reduce((sum, j) => sum + j.probe.duration * 1000 * encodeRatio, 0);
+			if (queuedWithoutDuration > 0 && avgPerEpisode) {
+				queuedEstimate += queuedWithoutDuration * avgPerEpisode;
+			}
+		} else if (avgPerEpisode) {
+			queuedEstimate = queuedJobs.length * avgPerEpisode;
+		}
+	}
+
+	// Estimate remaining time for active jobs
+	let activeRemaining = 0;
+	for (const job of activeJobs) {
+		if (job.startedAt && job.progress > 0) {
+			const elapsed = Date.now() - job.startedAt;
+			if (elapsed > 3000) {
+				const totalEstimated = (elapsed / job.progress) * 100;
+				const remaining = totalEstimated - elapsed;
+				activeRemaining += Math.max(0, remaining);
+			}
+		} else if (avgPerEpisode) {
+			activeRemaining += avgPerEpisode;
+		} else if (useDurationWeighted && job.probe && job.probe.duration > 0) {
+			activeRemaining += job.probe.duration * 1000 * encodeRatio;
+		}
+	}
+
+	const estimatedRemaining = activeRemaining + queuedEstimate;
+	const remainingCount = activeJobs.length + queuedJobs.length;
+
+	return {
+		totalElapsed,
+		estimatedRemaining,
+		avgPerEpisode,
+		doneCount: doneJobs.length,
+		remainingCount,
+	};
+}
+
+function renderFolderTimeEstimate(node) {
+	const est = computeFolderTimeEstimate(node);
+	if (!est) {
+		return `<div class="folder-time-estimate folder-time-pending">Estimated after 1st encode</div>`;
+	}
+
+	const parts = [];
+
+	if (est.remainingCount > 0 && est.doneCount > 0) {
+		// Still encoding (show remaining estimate)
+		parts.push(`~${formatDurationShort(est.estimatedRemaining)} remaining`);
+	} else if (est.remainingCount === 0 && est.doneCount > 0) {
+		// All done (show total time)
+		parts.push(`Total: ${formatDurationShort(est.totalElapsed)}`);
+	}
+
+	if (est.avgPerEpisode && est.doneCount > 0) {
+		parts.push(`${formatDurationShort(est.avgPerEpisode)} avg/ep`);
+	}
+
+	if (parts.length === 0) return `<div class="folder-time-estimate folder-time-pending">Estimated after 1st encode</div>`;
+
+	return `<div class="folder-time-estimate">${parts.join(" · ")}</div>`;
+}
+
 function renderFolderStats(stats) {
 	const parts = [];
 
@@ -487,6 +583,7 @@ function renderFolderNode(node, depth) {
         <div class="folder-right">
           <div class="folder-stats">${renderFolderStats(stats)}</div>
           ${renderFolderProgress(stats)}
+          ${renderFolderTimeEstimate(node)}
         </div>
       </div>`;
 
