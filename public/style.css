@@ -148,6 +148,30 @@ code {
 	border-color: var(--border);
 }
 
+.move-buttons {
+	display: inline-flex;
+	gap: 2px;
+	flex-shrink: 0;
+}
+
+.btn-move {
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	width: 24px;
+	height: 24px;
+}
+
+.folder-header:hover .btn-move,
+.job-card:hover .btn-move {
+	opacity: 1;
+}
+
+.btn-move:hover {
+	color: var(--accent) !important;
+	background: var(--accent-glow) !important;
+	border-color: var(--accent) !important;
+}
+
 .main {
 	max-width: 1100px;
 	margin: 0 auto;

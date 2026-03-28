@@ -1,6 +1,6 @@
 import { mkdirSync } from "fs";
 import { loadConfig } from "./config";
-import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults, scanLibraryFolder, scanLibraryPath } from "./store";
+import { initStore, getAllJobs, getJob, updateJobSettings, removeJob, retryJob, updateDefaults, scanLibraryPath, moveJob, reorderJobs } from "./store";
 import { startWatcher } from "./watcher";
 import { browseFolder, isPathAllowed } from "./library";
 import { Web } from "@rabbit-company/web";
@@ -65,6 +65,26 @@ app.post("/api/jobs/:id/retry", (c) => {
 	const job = retryJob(c.params.id!);
 	if (!job) return c.json({ error: "Job not found or not retryable" }, 400);
 	return c.json(job);
+});
+
+app.post("/api/jobs/:id/move", async (c) => {
+	const body = (await c.req.json()) as { direction?: string };
+	const direction = body.direction;
+	if (!direction || !["up", "down", "top", "bottom"].includes(direction)) {
+		return c.json({ error: "Invalid direction. Use: up, down, top, bottom" }, 400);
+	}
+	const ok = moveJob(c.params.id!, direction as "up" | "down" | "top" | "bottom");
+	if (!ok) return c.json({ error: "Job not found, not queued, or already at boundary" }, 400);
+	return c.json({ ok: true });
+});
+
+app.post("/api/jobs/reorder", async (c) => {
+	const body = (await c.req.json()) as { ids?: string[] };
+	if (!body.ids || !Array.isArray(body.ids)) {
+		return c.json({ error: "Missing 'ids' array in request body" }, 400);
+	}
+	reorderJobs(body.ids);
+	return c.json({ ok: true });
 });
 
 app.get("/api/config", (c) => {

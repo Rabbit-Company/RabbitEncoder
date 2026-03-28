@@ -7,6 +7,7 @@ import { Logger } from "./logger";
 
 const jobs = new Map<string, Job>();
 let processing = false;
+let orderCounter = 0;
 let appConfig: AppConfig;
 
 export function initStore(config: AppConfig) {
@@ -42,6 +43,9 @@ export function getAllJobs(): Job[] {
 		};
 		const diff = (order[a.status] ?? 1) - (order[b.status] ?? 1);
 		if (diff !== 0) return diff;
+		if (a.status === "queued" && b.status === "queued") {
+			return a.queueOrder - b.queueOrder;
+		}
 		return (a.startedAt || 0) - (b.startedAt || 0);
 	});
 }
@@ -65,6 +69,7 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 		relativePath,
 		status: "queued",
 		progress: 0,
+		queueOrder: ++orderCounter,
 		currentStage: "Waiting in queue",
 		steps: [],
 		settings: {
@@ -202,6 +207,7 @@ export function retryJob(id: string): Job | null {
 
 	job.status = "queued";
 	job.progress = 0;
+	job.queueOrder = ++orderCounter;
 	job.currentStage = "Waiting in queue";
 	job.steps = [];
 	job.error = undefined;
@@ -212,10 +218,57 @@ export function retryJob(id: string): Job | null {
 	return job;
 }
 
+export function moveJob(id: string, direction: "up" | "down" | "top" | "bottom"): boolean {
+	const job = jobs.get(id);
+	if (!job || job.status !== "queued") return false;
+
+	const queued = Array.from(jobs.values())
+		.filter((j) => j.status === "queued")
+		.sort((a, b) => a.queueOrder - b.queueOrder);
+
+	const idx = queued.findIndex((j) => j.id === id);
+	if (idx === -1) return false;
+
+	if (direction === "up" && idx > 0) {
+		const prev = queued[idx - 1]!;
+		const tmp = job.queueOrder;
+		job.queueOrder = prev.queueOrder;
+		prev.queueOrder = tmp;
+	} else if (direction === "down" && idx < queued.length - 1) {
+		const next = queued[idx + 1]!;
+		const tmp = job.queueOrder;
+		job.queueOrder = next.queueOrder;
+		next.queueOrder = tmp;
+	} else if (direction === "top" && idx > 0) {
+		const minOrder = queued[0]!.queueOrder;
+		job.queueOrder = minOrder - 1;
+	} else if (direction === "bottom" && idx < queued.length - 1) {
+		const maxOrder = queued[queued.length - 1]!.queueOrder;
+		job.queueOrder = maxOrder + 1;
+	} else {
+		return false;
+	}
+
+	return true;
+}
+
+export function reorderJobs(orderedIds: string[]): boolean {
+	let seq = 1;
+	for (const id of orderedIds) {
+		const job = jobs.get(id);
+		if (job && job.status === "queued") {
+			job.queueOrder = seq++;
+		}
+	}
+	return true;
+}
+
 async function processQueue() {
 	if (processing) return;
 
-	const next = Array.from(jobs.values()).find((j) => j.status === "queued");
+	const next = Array.from(jobs.values())
+		.filter((j) => j.status === "queued")
+		.sort((a, b) => a.queueOrder - b.queueOrder)[0];
 	if (!next) return;
 
 	processing = true;

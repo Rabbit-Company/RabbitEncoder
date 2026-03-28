@@ -163,6 +163,134 @@ async function retryJob(id) {
 	await authFetch(`${API}/api/jobs/${id}/retry`, { method: "POST" });
 }
 
+async function reorderQueue(orderedIds) {
+	await authFetch(`${API}/api/jobs/reorder`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ ids: orderedIds }),
+	});
+}
+
+function getMinQueueOrder(node) {
+	let min = Infinity;
+	for (const job of node.jobs) {
+		if (job.status === "queued" && job.queueOrder < min) min = job.queueOrder;
+	}
+	for (const child of node.children.values()) {
+		const childMin = getMinQueueOrder(child);
+		if (childMin < min) min = childMin;
+	}
+	return min;
+}
+
+function sortNodeChildren(children) {
+	return [...children].sort((a, b) => {
+		const aMin = getMinQueueOrder(a);
+		const bMin = getMinQueueOrder(b);
+		if (aMin === Infinity && bMin === Infinity) return a.name.localeCompare(b.name);
+		if (aMin === Infinity) return 1;
+		if (bMin === Infinity) return -1;
+		return aMin - bMin;
+	});
+}
+
+function collectQueuedIdsInOrder(node) {
+	const ids = [];
+
+	const sorted = sortNodeChildren(Array.from(node.children.values()));
+	for (const child of sorted) {
+		ids.push(...collectQueuedIdsInOrder(child));
+	}
+
+	const sortedJobs = [...node.jobs].sort((a, b) => a.queueOrder - b.queueOrder);
+	for (const job of sortedJobs) {
+		if (job.status === "queued") {
+			ids.push(job.id);
+		}
+	}
+
+	return ids;
+}
+
+function findFolderByPath(node, folderPath) {
+	if (node.fullPath === folderPath) return node;
+	for (const child of node.children.values()) {
+		const found = findFolderByPath(child, folderPath);
+		if (found) return found;
+	}
+	return null;
+}
+
+function findParentOfFolder(node, folderPath) {
+	for (const child of node.children.values()) {
+		if (child.fullPath === folderPath) return node;
+		const found = findParentOfFolder(child, folderPath);
+		if (found) return found;
+	}
+	return null;
+}
+
+async function handleMove(targetPath, direction, isFile, jobId) {
+	const jobs = await fetchJobs();
+	const tree = buildFolderTree(jobs);
+
+	if (isFile) {
+		const folder = findFolderByPath(tree, targetPath);
+		if (!folder) return;
+
+		const queuedJobs = folder.jobs.filter((j) => j.status === "queued").sort((a, b) => a.queueOrder - b.queueOrder);
+
+		const idx = queuedJobs.findIndex((j) => j.id === jobId);
+		if (idx === -1) return;
+
+		if (direction === "up" && idx > 0) {
+			const tmp = queuedJobs[idx];
+			queuedJobs[idx] = queuedJobs[idx - 1];
+			queuedJobs[idx - 1] = tmp;
+		} else if (direction === "down" && idx < queuedJobs.length - 1) {
+			const tmp = queuedJobs[idx];
+			queuedJobs[idx] = queuedJobs[idx + 1];
+			queuedJobs[idx + 1] = tmp;
+		} else {
+			return;
+		}
+
+		const orders = queuedJobs.map((j) => j.queueOrder).sort((a, b) => a - b);
+		for (let i = 0; i < queuedJobs.length; i++) {
+			queuedJobs[i].queueOrder = orders[i];
+		}
+	} else {
+		const parent = findParentOfFolder(tree, targetPath);
+		if (!parent) return;
+
+		const siblings = sortNodeChildren(Array.from(parent.children.values()));
+		const idx = siblings.findIndex((n) => n.fullPath === targetPath);
+		if (idx === -1) return;
+
+		if (direction === "up" && idx > 0) {
+			const tmp = siblings[idx];
+			siblings[idx] = siblings[idx - 1];
+			siblings[idx - 1] = tmp;
+		} else if (direction === "down" && idx < siblings.length - 1) {
+			const tmp = siblings[idx];
+			siblings[idx] = siblings[idx + 1];
+			siblings[idx + 1] = tmp;
+		} else {
+			return;
+		}
+
+		parent.children = new Map();
+		for (const child of siblings) {
+			parent.children.set(child.name, child);
+		}
+	}
+
+	const orderedIds = collectQueuedIdsInOrder(tree);
+	await reorderQueue(orderedIds);
+	lastJobsJson = "";
+	update();
+}
+
 function renderRadioPills(container, options, selected, onChange) {
 	container.innerHTML = "";
 	options.forEach((opt) => {
@@ -334,6 +462,14 @@ function renderJobCard(job) {
 	let actions = "";
 	if (job.status === "queued") {
 		actions = `
+      <div class="move-buttons" data-move-type="file" data-move-job="${job.id}">
+        <button class="btn-icon btn-move" title="Move up" data-action="move-up">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+        </button>
+        <button class="btn-icon btn-move" title="Move down" data-action="move-down">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
       <button class="btn-icon" title="Settings" data-job-id="${job.id}" data-action="edit">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
@@ -585,11 +721,19 @@ function renderFolderNode(node, depth) {
 	let html = `
     <div class="folder-node ${hasActive ? "folder-active" : ""} ${allDone ? "folder-done" : ""}" style="--depth:${depth}">
       <div class="folder-header" data-folder-path="${escapeHtml(node.fullPath)}">
-        <div class="folder-left">
-          ${chevronSvg}
-          ${folderIconSvg}
-          <span class="folder-name">${escapeHtml(node.name)}</span>
-        </div>
+				<div class="folder-left">
+					${chevronSvg}
+					${folderIconSvg}
+					<span class="folder-name">${escapeHtml(node.name)}</span>
+					<div class="move-buttons" data-move-type="folder" data-move-path="${escapeHtml(node.fullPath)}">
+						<button class="btn-icon btn-move" title="Move up" data-action="move-up">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>
+						</button>
+						<button class="btn-icon btn-move" title="Move down" data-action="move-down">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+						</button>
+					</div>
+				</div>
         <div class="folder-right">
           <div class="folder-stats">${renderFolderStats(stats)}</div>
           ${renderFolderProgress(stats)}
@@ -600,13 +744,14 @@ function renderFolderNode(node, depth) {
 	if (isExpanded) {
 		html += `<div class="folder-children">`;
 
-		const sortedChildren = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+		const sortedChildren = sortNodeChildren(Array.from(node.children.values()));
 		for (const child of sortedChildren) {
 			html += renderFolderNode(child, depth + 1);
 		}
 
-		for (const job of node.jobs) {
-			html += `<div class="folder-job" style="--depth:${depth + 1}">${renderJobCard(job)}</div>`;
+		const sortedJobs = [...node.jobs].sort((a, b) => a.queueOrder - b.queueOrder);
+		for (const job of sortedJobs) {
+			html += `<div class="folder-job" style="--depth:${depth + 1}" data-containing-folder="${escapeHtml(node.fullPath)}">${renderJobCard(job)}</div>`;
 		}
 
 		html += `</div>`;
@@ -620,7 +765,7 @@ function renderJobsList(jobs) {
 	const tree = buildFolderTree(jobs);
 	let html = "";
 
-	const sortedFolders = Array.from(tree.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+	const sortedFolders = sortNodeChildren(Array.from(tree.children.values()));
 	for (const folder of sortedFolders) {
 		html += renderFolderNode(folder, 0);
 	}
@@ -1118,6 +1263,24 @@ function initEventListeners() {
 	});
 
 	document.getElementById("jobs-list").addEventListener("click", (e) => {
+		const moveBtn = e.target.closest(".btn-move");
+		if (moveBtn) {
+			e.stopPropagation();
+			const direction = moveBtn.dataset.action === "move-up" ? "up" : "down";
+			const moveContainer = moveBtn.closest(".move-buttons");
+			const moveType = moveContainer.dataset.moveType;
+
+			if (moveType === "folder") {
+				handleMove(moveContainer.dataset.movePath, direction, false, null);
+			} else if (moveType === "file") {
+				const jobId = moveContainer.dataset.moveJob;
+				const folderJob = moveBtn.closest(".folder-job");
+				const containingFolder = folderJob ? folderJob.dataset.containingFolder : "";
+				handleMove(containingFolder, direction, true, jobId);
+			}
+			return;
+		}
+
 		const folderHeader = e.target.closest(".folder-header");
 		if (folderHeader) {
 			const path = folderHeader.dataset.folderPath;

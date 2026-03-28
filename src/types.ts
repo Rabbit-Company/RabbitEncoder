@@ -67,6 +67,7 @@ export interface Job {
 	relativePath: string;
 	status: JobStatus;
 	progress: number;
+	queueOrder: number;
 	currentStage: string;
 	steps: JobStep[];
 	settings: JobSettings;
