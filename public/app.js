@@ -194,6 +194,19 @@ function sortNodeChildren(children) {
 	});
 }
 
+function collectAllQueuedJobs(node) {
+	const result = [];
+	for (const child of node.children.values()) {
+		result.push(...collectAllQueuedJobs(child));
+	}
+	for (const job of node.jobs) {
+		if (job.status === "queued") {
+			result.push(job);
+		}
+	}
+	return result;
+}
+
 function collectQueuedIdsInOrder(node) {
 	const ids = [];
 
@@ -267,21 +280,31 @@ async function handleMove(targetPath, direction, isFile, jobId) {
 		const idx = siblings.findIndex((n) => n.fullPath === targetPath);
 		if (idx === -1) return;
 
+		let otherIdx;
 		if (direction === "up" && idx > 0) {
-			const tmp = siblings[idx];
-			siblings[idx] = siblings[idx - 1];
-			siblings[idx - 1] = tmp;
+			otherIdx = idx - 1;
 		} else if (direction === "down" && idx < siblings.length - 1) {
-			const tmp = siblings[idx];
-			siblings[idx] = siblings[idx + 1];
-			siblings[idx + 1] = tmp;
+			otherIdx = idx + 1;
 		} else {
 			return;
 		}
 
-		parent.children = new Map();
-		for (const child of siblings) {
-			parent.children.set(child.name, child);
+		const jobsA = collectAllQueuedJobs(siblings[idx]).sort((a, b) => a.queueOrder - b.queueOrder);
+		const jobsB = collectAllQueuedJobs(siblings[otherIdx]).sort((a, b) => a.queueOrder - b.queueOrder);
+
+		if (jobsA.length === 0 && jobsB.length === 0) return;
+
+		const allOrders = [...jobsA, ...jobsB].map((j) => j.queueOrder).sort((a, b) => a - b);
+
+		const first = direction === "up" ? jobsA : jobsB;
+		const second = direction === "up" ? jobsB : jobsA;
+
+		let i = 0;
+		for (const job of first) {
+			job.queueOrder = allOrders[i++];
+		}
+		for (const job of second) {
+			job.queueOrder = allOrders[i++];
 		}
 	}
 
