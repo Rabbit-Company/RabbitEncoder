@@ -240,7 +240,8 @@ export function getResolutionTag(width: number, height: number): string {
 /**
  * Strip scene/release metadata from a filename stem to get the base title.
  *
- * Removes *trailing* metadata only:
+ * Removes metadata conservatively:
+ *   - IMDb ID metadata wherever it appears (`[imdbid-tt0983213]`)
  *   - a trailing release group   (`...[x265]-Judas`  -> `...[x265]`)
  *   - trailing `[...]` / `(...)` tag blocks, peeled off one at a time
  *   - any leftover trailing separator dash / whitespace
@@ -256,6 +257,10 @@ export function getResolutionTag(width: number, height: number): string {
  */
 export function extractBaseTitle(stem: string): string {
 	let s = stem.trim();
+
+	// Media managers commonly include this identity tag between the title and
+	// the release tags. It describes the file, but is not part of its title.
+	s = s.replace(/\s*\[imdbid-tt\d+\]\s*/gi, " ").trim();
 
 	// Trailing release group: `]-Group` -> `]`
 	s = s.replace(/(\])-[A-Za-z0-9._&-]+$/, "$1");
