@@ -66,10 +66,17 @@ export const CHANNELS: readonly { key: keyof AudioChannelBitrates; label: string
 	{ key: "mono", label: "Mono" },
 	{ key: "stereo", label: "Stereo" },
 	{ key: "2.1", label: "2.1" },
+	{ key: "3.0", label: "3.0" },
+	{ key: "3.1", label: "3.1" },
+	{ key: "4.0", label: "4.0" },
+	{ key: "4.1", label: "4.1" },
+	{ key: "5.0", label: "5.0" },
 	{ key: "5.1", label: "5.1" },
+	{ key: "6.0", label: "6.0" },
 	{ key: "6.1", label: "6.1" },
+	{ key: "7.0", label: "7.0" },
 	{ key: "7.1", label: "7.1" },
-	{ key: "7.1.4", label: "7.1.4 Atmos" },
+	{ key: "7.1.4", label: "7.1.4" },
 ];
 
 export const PIPELINE_PRESETS: readonly PipelinePreset[] = ["full", "prepare", "translate", "custom"];

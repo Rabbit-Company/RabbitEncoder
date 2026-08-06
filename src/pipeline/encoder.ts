@@ -741,7 +741,7 @@ export async function encodeJob(
 				const estimatedAudioStreams = (probe.audioStreams || []).filter((s) => !s.title || !/compatibility/i.test(s.title));
 				const estimatedAudioBytes = Math.round(
 					((estimatedAudioStreams.reduce((sum, s) => {
-						const layout = normalizeLayout(s.channelLayout);
+						const layout = normalizeLayout(s.channelLayout, s.channels);
 						return sum + getOpusBitrateForLayout(layout, job.settings.audioBitrates);
 					}, 0) *
 						1000) /
@@ -1219,7 +1219,7 @@ export async function encodeJob(
 					const opusFile = join(tempDir, `audio_${i}.opus`);
 					encodedAudioFiles.push(opusFile);
 
-					const layout = normalizeLayout(stream.channelLayout);
+					const layout = normalizeLayout(stream.channelLayout, stream.channels);
 					const bitrate = getOpusBitrateForLayout(layout, job.settings.audioBitrates);
 
 					const delayMs = stream.delayMs;
@@ -1810,7 +1810,7 @@ export async function encodeJob(
 			height: shouldDownscale ? 1080 : probe.height,
 		};
 
-		const firstSortedLayout = audioStreams.length > 0 ? normalizeLayout(audioStreams[0]!.channelLayout) : probe.audioLayout;
+		const firstSortedLayout = audioStreams.length > 0 ? normalizeLayout(audioStreams[0]!.channelLayout, audioStreams[0]!.channels) : probe.audioLayout;
 		const audioLabel = getAudioReplacementLabel(firstSortedLayout);
 		const resTag = getResolutionTag(encodedDims.width, encodedDims.height);
 		const videoCodecTag = skipVideoEncode ? "FFV1" : "AV1";

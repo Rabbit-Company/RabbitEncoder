@@ -116,7 +116,13 @@ function loadQueue(): void {
 				continue;
 			}
 
-			raw.settings = { ...appConfig.defaults, ...(raw.settings ?? {}) };
+			const restoredSettings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
+			const restoredBitrates = restoredSettings.audioBitrates && typeof restoredSettings.audioBitrates === "object" ? restoredSettings.audioBitrates : {};
+			raw.settings = {
+				...appConfig.defaults,
+				...restoredSettings,
+				audioBitrates: { ...appConfig.defaults.audioBitrates, ...restoredBitrates },
+			};
 
 			jobs.set(raw.id, raw as Job);
 			if (raw.queueOrder > orderCounter) {
@@ -147,7 +153,12 @@ function loadSettings(): void {
 		if (!existsSync(settingsFile)) return;
 		const raw = JSON.parse(readFileSync(settingsFile, "utf-8"));
 		if (!raw || typeof raw !== "object") return;
-		appConfig.defaults = { ...appConfig.defaults, ...raw };
+		const restoredBitrates = raw.audioBitrates && typeof raw.audioBitrates === "object" ? raw.audioBitrates : {};
+		appConfig.defaults = {
+			...appConfig.defaults,
+			...raw,
+			audioBitrates: { ...appConfig.defaults.audioBitrates, ...restoredBitrates },
+		};
 		Logger.info("[store] Restored defaults from settings.json");
 	} catch (err: any) {
 		Logger.warn("[store] Failed to load settings:", { "error.message": err?.message });

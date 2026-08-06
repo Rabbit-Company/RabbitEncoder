@@ -20,3 +20,21 @@ describe("settings code — font/style not carried (RE1 compat)", () => {
 		expect(partial.fontGroup).toBeUndefined(); // group is environment-specific
 	});
 });
+
+describe("settings code — extended audio layouts", () => {
+	it("supplies new layout defaults when decoding an older RE1 code", () => {
+		const decoded = decodeSettingsCode("RE1");
+		expect(decoded.audioBitrates?.["5.0"]).toBe(224);
+		expect(decoded.audioBitrates?.["6.0"]).toBe(256);
+	});
+
+	it("round-trips custom bitrates for newly supported layouts", () => {
+		const settings = getDefaultJobSettings();
+		settings.audioBitrates["5.0"] = 240;
+		settings.audioBitrates["7.0"] = 336;
+
+		const decoded = decodeSettingsCode(encodeSettingsCode(settings));
+		expect(decoded.audioBitrates?.["5.0"]).toBe(240);
+		expect(decoded.audioBitrates?.["7.0"]).toBe(336);
+	});
+});

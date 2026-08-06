@@ -112,7 +112,7 @@ export async function probeFile(inputPath: string): Promise<ProbeResult> {
 		}));
 
 	const firstAudio = audioStreams[0];
-	const audioLayout = firstAudio ? normalizeLayout(firstAudio.channelLayout) : "stereo";
+	const audioLayout = firstAudio ? normalizeLayout(firstAudio.channelLayout, firstAudio.channels) : "stereo";
 	const audioChannels = firstAudio ? firstAudio.channels : 2;
 
 	// Color / HDR
@@ -169,19 +169,52 @@ export async function probeFile(inputPath: string): Promise<ProbeResult> {
 	};
 }
 
-export function normalizeLayout(layout: string): string {
+export function normalizeLayout(layout: string, channels?: number): string {
 	const map: Record<string, string> = {
 		mono: "mono",
 		stereo: "stereo",
 		"2.1": "2.1",
+		"3.0": "3.0",
+		"3.0(back)": "3.0",
+		"3.1": "3.1",
+		"4.0": "4.0",
+		quad: "4.0",
+		"quad(side)": "4.0",
+		"4.1": "4.1",
+		"5.0": "5.0",
+		"5.0(side)": "5.0",
 		"5.1": "5.1",
 		"5.1(side)": "5.1",
+		"6.0": "6.0",
+		"6.0(front)": "6.0",
+		hexagonal: "6.0",
 		"6.1": "6.1",
+		"6.1(back)": "6.1",
+		"6.1(front)": "6.1",
+		"7.0": "7.0",
+		"7.0(front)": "7.0",
 		"7.1": "7.1",
+		"7.1(wide)": "7.1",
+		"7.1(wide-side)": "7.1",
+		octagonal: "7.1",
 		"7.1.4": "7.1.4",
 		dolbyatmos: "7.1.4",
 	};
-	return map[layout] || "stereo";
+	const normalized = map[layout.trim().toLowerCase()];
+	if (normalized) return normalized;
+
+	const fallbackByChannels: Record<number, string> = {
+		1: "mono",
+		2: "stereo",
+		3: "3.0",
+		4: "4.0",
+		5: "5.0",
+		6: "5.1",
+		7: "6.1",
+		8: "7.1",
+		12: "7.1.4",
+	};
+	return (channels ? fallbackByChannels[channels] : undefined) || "stereo";
 }
 
 export function getOpusBitrateForLayout(layout: string, bitrates: AudioChannelBitrates): number {
@@ -194,8 +227,15 @@ export function getAudioReplacementLabel(layout: string): string {
 		mono: "Opus 1.0",
 		stereo: "Opus 2.0",
 		"2.1": "Opus 2.1",
+		"3.0": "Opus 3.0",
+		"3.1": "Opus 3.1",
+		"4.0": "Opus 4.0",
+		"4.1": "Opus 4.1",
+		"5.0": "Opus 5.0",
 		"5.1": "Opus 5.1",
+		"6.0": "Opus 6.0",
 		"6.1": "Opus 6.1",
+		"7.0": "Opus 7.0",
 		"7.1": "Opus 7.1",
 		"7.1.4": "Opus 7.1.4",
 	};

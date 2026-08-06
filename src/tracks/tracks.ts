@@ -2288,7 +2288,7 @@ export function previewAudio(
 		title: s.title || "",
 		trackType: detectAudioTrackType(s, detect),
 		channels: s.channels,
-		channelLayout: normalizeLayout(s.channelLayout),
+		channelLayout: normalizeLayout(s.channelLayout, s.channels),
 		bitrate: s.bitrate,
 		isDefault: false,
 		isOriginal: s.isOriginal || false,
@@ -2328,7 +2328,7 @@ export function previewAudio(
 		const trackType = detectAudioTrackType(s, detect);
 		const lang = s.language || "und";
 		const langGroup = normalizeLanguageGroup(lang);
-		const layout = normalizeLayout(s.channelLayout);
+		const layout = normalizeLayout(s.channelLayout, s.channels);
 
 		const isDefault = trackType === "main" && !defaultAssigned.has(langGroup);
 		if (isDefault) defaultAssigned.add(langGroup);

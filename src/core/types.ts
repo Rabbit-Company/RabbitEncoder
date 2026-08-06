@@ -63,8 +63,15 @@ export interface AudioChannelBitrates {
 	mono: number;
 	stereo: number;
 	"2.1": number;
+	"3.0": number;
+	"3.1": number;
+	"4.0": number;
+	"4.1": number;
+	"5.0": number;
 	"5.1": number;
+	"6.0": number;
 	"6.1": number;
+	"7.0": number;
 	"7.1": number;
 	"7.1.4": number;
 }
