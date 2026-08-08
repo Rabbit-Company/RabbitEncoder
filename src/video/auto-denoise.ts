@@ -116,9 +116,21 @@ export interface DenoiseSegment {
 	level: DenoiseRange["level"] | null;
 }
 
-interface NoiseSample {
+export interface NoiseSample {
 	time: number;
 	y: number;
+}
+
+/** Per-scene median noise value, as used by the classifier. */
+export interface SceneNoise {
+	start: number;
+	end: number;
+	median: number;
+}
+
+export interface RawNoiseAnalysis {
+	samples: NoiseSample[];
+	cuts: number[];
 }
 
 const SAMPLE_EVERY_N_FRAMES = 12;
@@ -171,13 +183,12 @@ export function parseAutoThresholds(light: string | undefined, medium: string | 
 	return parsed;
 }
 
-export async function runAnalysisPass(
-	inputPath: string,
-	tempDir: string,
-	totalDuration: number,
-	thresholds: AutoDenoiseThresholds,
-	signal?: AbortSignal,
-): Promise<DenoisePlan | null> {
+/**
+ * Run the scene-detection + noise-sampling ffmpeg pass and return the raw
+ * samples/cuts, without classifying them into a denoise plan. Shared by
+ * `runAnalysisPass` (auto-denoise) and the on-demand bitrate/noise chart.
+ */
+export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, totalDuration: number, signal?: AbortSignal): Promise<RawNoiseAnalysis | null> {
 	const scenesLog = join(tempDir, "denoise_scenes.log");
 	const noiseLog = join(tempDir, "denoise_noise.log");
 
@@ -295,12 +306,35 @@ export async function runAnalysisPass(
 	const cuts = parseSceneCuts(scenesLog);
 	const samples = parseNoiseSamples(noiseLog);
 
+	for (const p of [scenesLog, noiseLog]) {
+		try {
+			unlinkSync(p);
+		} catch {}
+	}
+
 	if (samples.length === 0) {
 		Logger.warn(`[auto-denoise] No noise samples parsed from ${noiseLog}, skipping auto denoise`);
 		return null;
 	}
 
-	const plan = buildPlan(samples, cuts, totalDuration, thresholds);
+	return { samples, cuts };
+}
+
+/**
+ * Run the noise-scene analysis pass and classify the result into a denoise
+ * plan using `thresholds`. Returns null if the analysis pass itself failed.
+ */
+export async function runAnalysisPass(
+	inputPath: string,
+	tempDir: string,
+	totalDuration: number,
+	thresholds: AutoDenoiseThresholds,
+	signal?: AbortSignal,
+): Promise<DenoisePlan | null> {
+	const raw = await runNoiseSceneAnalysis(inputPath, tempDir, totalDuration, signal);
+	if (!raw) return null;
+
+	const plan = buildPlan(raw.samples, raw.cuts, totalDuration, thresholds);
 
 	const totalDenoised = plan.reduce((s, r) => s + (r.end - r.start), 0);
 	const pct = totalDuration > 0 ? (100 * totalDenoised) / totalDuration : 0;
@@ -311,12 +345,6 @@ export async function runAnalysisPass(
 			`(${counts.light}×light + ${counts.medium}×medium + ${counts.heavy}×heavy), ` +
 			`${totalDenoised.toFixed(1)}s denoised (${pct.toFixed(1)}% of ${totalDuration.toFixed(1)}s)`,
 	);
-
-	for (const p of [scenesLog, noiseLog]) {
-		try {
-			unlinkSync(p);
-		} catch {}
-	}
 
 	return plan;
 }
@@ -610,9 +638,12 @@ export async function runSegmentedAutoDenoiseGpu(
 }
 
 /**
- * Build the per-scene plan from raw samples and cut times.
+ * Walk scene-cut boundaries and compute the median noise value of the
+ * samples falling in each scene. Shared by `buildPlan` (which classifies
+ * each scene into a denoise level) and the on-demand bitrate/noise chart
+ * (which just wants the median as a step-line series).
  */
-export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration: number, thresholds: AutoDenoiseThresholds): DenoisePlan {
+export function groupSamplesByScene(samples: NoiseSample[], cuts: number[], totalDuration: number): SceneNoise[] {
 	if (totalDuration <= 0) return [];
 
 	const sortedCuts = cuts
@@ -621,8 +652,7 @@ export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration:
 		.filter((c) => c > 0 && c < totalDuration);
 	const boundaries = [0, ...sortedCuts, totalDuration];
 
-	type Scene = { start: number; end: number; level: "off" | "light" | "medium" | "heavy" };
-	const scenes: Scene[] = [];
+	const scenes: SceneNoise[] = [];
 
 	let sIdx = 0;
 	for (let i = 0; i < boundaries.length - 1; i++) {
@@ -638,15 +668,25 @@ export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration:
 			probe++;
 		}
 
-		let level: Scene["level"];
-		if (ys.length === 0) {
-			level = scenes.length > 0 ? scenes[scenes.length - 1]!.level : "off";
-		} else {
-			level = classifyNoise(median(ys), thresholds);
-		}
-
-		scenes.push({ start, end, level });
+		const sceneMedian = ys.length > 0 ? median(ys) : scenes.length > 0 ? scenes[scenes.length - 1]!.median : 0;
+		scenes.push({ start, end, median: sceneMedian });
 	}
+
+	return scenes;
+}
+
+/**
+ * Build the per-scene plan from raw samples and cut times.
+ */
+export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration: number, thresholds: AutoDenoiseThresholds): DenoisePlan {
+	if (totalDuration <= 0) return [];
+
+	type Scene = { start: number; end: number; level: "off" | "light" | "medium" | "heavy" };
+	const scenes: Scene[] = groupSamplesByScene(samples, cuts, totalDuration).map((s) => ({
+		start: s.start,
+		end: s.end,
+		level: classifyNoise(s.median, thresholds),
+	}));
 
 	for (let i = 0; i < scenes.length; i++) {
 		const s = scenes[i]!;

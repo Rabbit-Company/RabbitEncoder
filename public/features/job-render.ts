@@ -427,6 +427,12 @@ export function renderJobCard(job: Job): string {
     </svg>
   </button>`;
 
+	const bitrateBtn = `<button class="btn-icon" title="Bitrate Analysis" data-id="${job.id}" data-action="bitrate">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+    </svg>
+  </button>`;
+
 	let actions = "";
 	if (job.status === "queued") {
 		actions = `
@@ -442,6 +448,7 @@ export function renderJobCard(job: Job): string {
 			${audioBtn}
 			${subBtn}
 			${previewBtn}
+			${bitrateBtn}
       <button class="btn-icon" title="Settings" data-id="${job.id}" data-action="edit">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
@@ -454,6 +461,7 @@ export function renderJobCard(job: Job): string {
 			${audioBtn}
 			${subBtn}
 			${previewBtn}
+			${bitrateBtn}
       <button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       </button>`;
@@ -463,6 +471,7 @@ export function renderJobCard(job: Job): string {
 			${audioBtn}
 			${subBtn}
 			${previewBtn}
+			${bitrateBtn}
       <button class="btn-icon" title="Retry" data-id="${job.id}" data-action="retry">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       </button>
@@ -471,6 +480,7 @@ export function renderJobCard(job: Job): string {
       </button>`;
 	} else if (done) {
 		actions = `
+			${bitrateBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;

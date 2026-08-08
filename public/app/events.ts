@@ -11,6 +11,7 @@ import {
 	openMediaInfo,
 	openSubtitlePreview,
 } from "../features/job-render";
+import { closeBitrateAnalysis, closeBitrateAnalysisIfOutside, handleBitrateSaveThresholds, openBitrateAnalysis } from "../features/bitrate-analysis";
 import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, saveJobSettings } from "../features/job-settings";
 import { openFolderFromSearch, renderLibraryView } from "../features/library-search";
 import { closeLibrary, closeLibraryIfOutside, handleLibraryEncode, openLibrary, toggleNodeCheck, toggleNodeExpand } from "../features/library";
@@ -188,6 +189,7 @@ export function initEventListeners() {
 			"sub-preview": openSubtitlePreview,
 			"audio-preview": openAudioPreview,
 			mediainfo: openMediaInfo,
+			bitrate: openBitrateAnalysis,
 		});
 	});
 
@@ -282,4 +284,9 @@ export function initEventListeners() {
 		navigator.clipboard.writeText(byId("mediainfo-content").textContent ?? "");
 		closeMediaInfo();
 	});
+
+	byId("close-bitrate-modal-btn").addEventListener("click", closeBitrateAnalysis);
+	byId("close-bitrate-done-btn").addEventListener("click", closeBitrateAnalysis);
+	byId("bitrate-modal").addEventListener("click", closeBitrateAnalysisIfOutside);
+	byId("bitrate-save-btn").addEventListener("click", handleBitrateSaveThresholds);
 }

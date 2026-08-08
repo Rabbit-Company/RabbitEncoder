@@ -1,5 +1,16 @@
 import Blake2b from "@rabbit-company/blake2b";
-import type { FontAxis, GroupStyleConfig, Job, JobSettings, PreviewState, StyleAppearance, VsFilterEntry, VsPresetManifest } from "../types";
+import type {
+	AutoDenoiseThresholds,
+	BitrateAnalysisResult,
+	FontAxis,
+	GroupStyleConfig,
+	Job,
+	JobSettings,
+	PreviewState,
+	StyleAppearance,
+	VsFilterEntry,
+	VsPresetManifest,
+} from "../types";
 import type { BenchmarkState, FetchOptions, GpuDevice, SystemStats } from "../ui/models";
 import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
@@ -372,6 +383,22 @@ export async function reorderQueue(orderedIds: string[]): Promise<void> {
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ ids: orderedIds }),
 	});
+}
+
+export async function fetchBitrateAnalysis(jobId: string): Promise<BitrateAnalysisResult & { error?: string }> {
+	const res = await authFetch(`${API}/api/jobs/${jobId}/bitrate-analysis`);
+	const data = await res.json();
+	if (!res.ok) return { ...data, mode: "source", durationSec: 0, bitrate: [], noise: null, error: data?.error || `Request failed (${res.status})` };
+	return data;
+}
+
+export async function patchJobAutoThresholds(id: string, thresholds: AutoDenoiseThresholds): Promise<Job> {
+	const res = await authFetch(`${API}/api/jobs/${id}`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ autoDenoiseThresholds: thresholds }),
+	});
+	return res.json();
 }
 
 export async function fetchPreviewState(jobId: string): Promise<PreviewState> {

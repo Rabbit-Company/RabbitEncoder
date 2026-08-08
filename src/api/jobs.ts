@@ -1,11 +1,13 @@
 import { existsSync, mkdtempSync, rmSync } from "fs";
-import { join } from "path";
+import { join, dirname, basename } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, JobSettings } from "../core/types";
+import type { AppConfig, BitrateAnalysisResult, JobSettings } from "../core/types";
 import { cancelJob, getAllJobs, getJob, moveJob, removeJob, reorderJobs, retryJob, updateJobSettings } from "../queue/store";
 import { probeFile } from "../pipeline/probe";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewAudio, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
+import { sampleBitrateOverTime } from "../video/bitrate-sample";
+import { groupSamplesByScene, runNoiseSceneAnalysis } from "../video/auto-denoise";
 
 export function registerJobRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/jobs", (c) => {
@@ -198,6 +200,62 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 			return c.json({ filename: job.filename, text: text.trim() });
 		} catch (err: any) {
 			return c.json({ error: `mediainfo failed: ${err.message || err}` }, 500);
+		}
+	});
+
+	app.get("/api/jobs/:id/bitrate-analysis", async (c) => {
+		const job = getJob(c.params.id!);
+		if (!job) return c.json({ error: "Job not found" }, 404);
+
+		try {
+			if (job.status === "done") {
+				if (!job.outputFilename) return c.json({ error: "Output file not available" }, 400);
+
+				const outPath = job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
+
+				if (!existsSync(outPath)) return c.json({ error: "Output file no longer accessible" }, 400);
+
+				const probe = await probeFile(outPath);
+				const bitrate = await sampleBitrateOverTime(outPath);
+
+				const result: BitrateAnalysisResult = { mode: "encoded", durationSec: probe.duration, bitrate, noise: null };
+				return c.json(result);
+			}
+
+			if (!existsSync(job.inputPath)) {
+				return c.json({ error: "Source file no longer accessible" }, 400);
+			}
+
+			const probe = job.probe ?? (await probeFile(job.inputPath));
+			const bitrate = await sampleBitrateOverTime(job.inputPath);
+
+			const tempDir = mkdtempSync(join(config.tempDir, "bitrate-analysis-"));
+			let noise: BitrateAnalysisResult["noise"] = null;
+			try {
+				const raw = await runNoiseSceneAnalysis(job.inputPath, tempDir, probe.duration);
+				if (raw) {
+					noise = {
+						samples: raw.samples.map((s) => ({ t: s.time, y: s.y })),
+						scenes: groupSamplesByScene(raw.samples, raw.cuts, probe.duration),
+						cuts: raw.cuts,
+					};
+				}
+			} finally {
+				try {
+					rmSync(tempDir, { recursive: true, force: true });
+				} catch {}
+			}
+
+			const result: BitrateAnalysisResult = {
+				mode: "source",
+				durationSec: probe.duration,
+				bitrate,
+				noise,
+				thresholds: job.settings.autoDenoiseThresholds,
+			};
+			return c.json(result);
+		} catch (err: any) {
+			return c.json({ error: `Bitrate analysis failed: ${err.message || err}` }, 500);
 		}
 	});
 

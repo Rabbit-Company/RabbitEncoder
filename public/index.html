@@ -792,6 +792,44 @@
 				</div>
 			</div>
 
+			<!-- Bitrate Analysis Modal -->
+			<div id="bitrate-modal" class="modal-overlay" style="display: none">
+				<div class="modal bitrate-modal">
+					<div class="modal-header">
+						<h2 id="bitrate-modal-title">Bitrate Analysis</h2>
+						<button class="btn-close" id="close-bitrate-modal-btn">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div id="bitrate-loading" class="sub-preview-loading">Analyzing…</div>
+						<div id="bitrate-error" class="sub-preview-error" style="display: none"></div>
+						<div id="bitrate-content" style="display: none">
+							<div class="bitrate-toolbar">
+								<p class="bitrate-mode-note" id="bitrate-mode-note"></p>
+								<div class="bitrate-zoom-controls">
+									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-out-btn" title="Zoom out">&minus;</button>
+									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-in-btn" title="Zoom in">+</button>
+									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-reset-btn" title="Reset zoom">Reset zoom</button>
+								</div>
+							</div>
+							<div id="bitrate-stats" class="bitrate-stats"></div>
+							<div class="bitrate-chart-wrap">
+								<canvas id="bitrate-canvas"></canvas>
+							</div>
+							<div class="lang-filter-hint">Scroll to zoom, drag to pan.</div>
+							<div id="bitrate-thresholds" class="setting-group" style="display: none">
+								<label>Auto Denoise Thresholds (Y bitplane-4)</label>
+								<div id="bitrate-thresholds-grid"></div>
+								<div class="lang-filter-hint">Adjust to preview which scenes would be classified light / medium / heavy, then save to this job's settings.</div>
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-primary" id="bitrate-save-btn" style="display: none">Save to job</button>
+						<button class="btn btn-ghost" id="close-bitrate-done-btn">Close</button>
+					</div>
+				</div>
+			</div>
+
 			<!-- Audio Preview Modal -->
 			<div id="audio-preview-modal" class="modal-overlay" style="display: none">
 				<div class="modal sub-preview-modal">

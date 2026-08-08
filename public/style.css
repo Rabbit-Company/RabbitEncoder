@@ -1682,6 +1682,96 @@ code {
 	margin: 0;
 }
 
+.bitrate-modal {
+	width: 95vw;
+	height: 95vh;
+	max-height: 95vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+.bitrate-modal .modal-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+}
+.bitrate-modal #bitrate-content {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	gap: 16px;
+}
+.bitrate-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+.bitrate-zoom-controls {
+	display: flex;
+	gap: 6px;
+	flex: none;
+}
+.bitrate-mode-note {
+	font-size: 0.8rem;
+	color: var(--text-2);
+	margin: 0;
+}
+.bitrate-stats {
+	display: flex;
+	gap: 20px;
+	flex-wrap: wrap;
+}
+.bitrate-stat {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 0.8rem;
+}
+.bitrate-stat-label {
+	color: var(--text-2);
+	text-transform: uppercase;
+	font-size: 0.68rem;
+	letter-spacing: 0.05em;
+}
+.bitrate-stat-value {
+	color: var(--text-0);
+	font-family: var(--font-mono);
+	font-weight: 600;
+}
+.bitrate-chart-wrap {
+	position: relative;
+	width: 100%;
+	flex: 1;
+	min-height: 320px;
+}
+.bitrate-chart-wrap canvas {
+	width: 100% !important;
+	height: 100% !important;
+	cursor: grab;
+}
+.auto-threshold-pct {
+	font-size: 0.72rem;
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	margin-left: 6px;
+}
+.bitrate-thresholds-summary {
+	margin-top: 10px;
+	font-size: 0.8rem;
+	color: var(--text-1);
+	font-weight: 500;
+}
+#bitrate-thresholds-grid .auto-threshold-row:nth-child(1) input {
+	border-color: color-mix(in srgb, #7fd88f 55%, var(--border));
+}
+#bitrate-thresholds-grid .auto-threshold-row:nth-child(2) input {
+	border-color: color-mix(in srgb, #e0a63e 55%, var(--border));
+}
+#bitrate-thresholds-grid .auto-threshold-row:nth-child(3) input {
+	border-color: color-mix(in srgb, #e0605b 55%, var(--border));
+}
+
 .benchmark-modal {
 	width: min(700px, calc(100vw - 32px));
 }

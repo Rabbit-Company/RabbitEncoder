@@ -438,6 +438,43 @@ export interface AudioPreviewResult {
 	output: AudioPreviewTrack[];
 }
 
+export interface BitrateSamplePoint {
+	t: number;
+	kbps: number;
+}
+
+export interface NoiseSamplePoint {
+	t: number;
+	y: number;
+}
+
+export interface NoiseScenePoint {
+	start: number;
+	end: number;
+	median: number;
+}
+
+export interface BitrateNoiseData {
+	samples: NoiseSamplePoint[];
+	scenes: NoiseScenePoint[];
+	cuts: number[];
+}
+
+/**
+ * Response for GET /api/jobs/:id/bitrate-analysis.
+ *   - "source"  : job's source file still exists. Includes noise samples for
+ *                 auto-denoise threshold calibration.
+ *   - "encoded" : job is done and its source was cleaned up; only the final
+ *                 output's bitrate is available.
+ */
+export interface BitrateAnalysisResult {
+	mode: "source" | "encoded";
+	durationSec: number;
+	bitrate: BitrateSamplePoint[];
+	noise: BitrateNoiseData | null;
+	thresholds?: AutoDenoiseThresholds;
+}
+
 export interface PreviewSampleVsFrame {
 	/** Zero-based index in the active VS chain. */
 	index: number;
