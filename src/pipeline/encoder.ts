@@ -2001,10 +2001,48 @@ export async function encodeJob(
 			if (skipSubtitleProcessing) passes.push("subtitles");
 			Logger.info(`[mux] Passthrough from source: ${passes.join(", ")}`);
 		} else if (skipAudioEncode || skipSubtitleProcessing) {
-			Logger.warn(
-				`[mux] Source is ${sourceExt} (not MKV), but a copy-through stage is enabled. ` +
-					`Audio/subtitle passthrough may not work; consider remuxing the source to MKV first.`,
-			);
+			// mkvmerge can't reliably demux every container we accept as input
+			// (flv/ts in particular), so route the requested streams through an
+			// ffmpeg stream-copy into small intermediate MKVs first, then let
+			// mkvmerge pull tracks from those the same way it would for a native
+			// MKV source. Audio and subtitles are remuxed independently so an
+			// unsupported subtitle codec (example mp4's mov_text has no Matroska
+			// CodecID) can't also take audio passthrough down with it.
+			const passes: string[] = [];
+
+			if (skipAudioEncode) {
+				const audioRef = join(tempDir, "source_ref_audio.mkv");
+				const remuxRes = await run(
+					["ffmpeg", "-y", "-i", job.inputPath, "-map", "0:a?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", audioRef],
+					{ signal: stageSignal },
+				);
+				if (remuxRes.code === 0 && existsSync(audioRef)) {
+					mkvArgs.push("--no-video", "--no-subtitles", "--no-chapters", "--no-global-tags", "--no-track-tags", audioRef);
+					passes.push("audio");
+				} else {
+					Logger.warn(`[mux] Could not copy audio from ${sourceExt} source: ${remuxRes.stderr || remuxRes.stdout}`);
+				}
+			}
+
+			if (skipSubtitleProcessing) {
+				const subsRef = join(tempDir, "source_ref_subs.mkv");
+				const remuxRes = await run(["ffmpeg", "-y", "-i", job.inputPath, "-map", "0:s?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", subsRef], {
+					signal: stageSignal,
+				});
+				if (remuxRes.code === 0 && existsSync(subsRef)) {
+					mkvArgs.push("--no-video", "--no-audio", "--no-chapters", "--no-global-tags", "--no-track-tags", subsRef);
+					passes.push("subtitles");
+				} else {
+					Logger.warn(
+						`[mux] Could not copy subtitles from ${sourceExt} source (subtitle codec may be unsupported by Matroska): ` +
+							`${remuxRes.stderr || remuxRes.stdout}`,
+					);
+				}
+			}
+
+			if (passes.length > 0) {
+				Logger.info(`[mux] Passthrough from ${sourceExt} source via ffmpeg remux: ${passes.join(", ")}`);
+			}
 		}
 
 		setStep(S_MUX, { progress: 50, detail: `Merging MKV` });
