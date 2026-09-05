@@ -2,6 +2,7 @@ import type {
 	AudioChannelBitrates,
 	AudioCodecPriority,
 	AudioEncodeMode,
+	AutoDenoiseMetric,
 	CropMode,
 	DebandLevel,
 	DenoiseBackend,
@@ -59,6 +60,8 @@ export const DEFAULT_GRADFUN_PARAMS = {
 	heavy: { strength: 2.8, radius: 24 },
 };
 export const DEFAULT_AUTO_THRESHOLDS = { light: 0.5, medium: 0.7, heavy: 0.9 };
+export const DEFAULT_BITRATE_THRESHOLDS = { light: 1.3, medium: 1.8, heavy: 2.5 };
+export const AUTO_DENOISE_METRICS: readonly AutoDenoiseMetric[] = ["noise", "bitrate"];
 
 export const AUDIO_CODEC_PRIORITY_OPTIONS: AudioCodecPriority[] = ["lossless-first", "smallest-first"];
 

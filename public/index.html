@@ -40,6 +40,15 @@
 						</svg>
 						Benchmark
 					</button>
+					<button title="Import a downloaded bitrate-analysis.json" class="btn btn-ghost" id="import-bitrate-analysis-btn">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+							<polyline points="7 10 12 15 17 10" />
+							<line x1="12" y1="15" x2="12" y2="3" />
+						</svg>
+						Import Analysis
+					</button>
+					<input type="file" id="bitrate-import-input" accept="application/json,.json" style="display: none" />
 					<button title="Defaults" class="btn btn-ghost" id="open-settings-btn">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<circle cx="12" cy="12" r="3" />
@@ -660,14 +669,18 @@
 							<div class="radio-group radio-group-stacked" id="advanced-gpu-device"></div>
 						</div>
 
+						<!-- Auto-denoise metric -->
+						<div class="setting-group">
+							<label>Auto Denoise Metric</label>
+							<div class="radio-group" id="advanced-auto-denoise-metric"></div>
+							<div class="lang-filter-hint" id="advanced-auto-denoise-metric-help"></div>
+						</div>
+
 						<!-- Auto-denoise thresholds -->
 						<div class="setting-group">
-							<label>Auto Denoise Thresholds (Y bitplane-4)</label>
+							<label id="advanced-auto-thresholds-label">Auto Denoise Thresholds</label>
 							<div id="advanced-auto-thresholds"></div>
-							<div class="lang-filter-hint">
-								Scenes with median Y bitplane-4 ≥ each threshold get the corresponding denoise level. Run an analysis on a known clean and known grainy file to
-								calibrate.
-							</div>
+							<div class="lang-filter-hint" id="advanced-auto-thresholds-hint"></div>
 						</div>
 
 						<!-- nlmeans per-level params -->
@@ -806,24 +819,29 @@
 							<div class="bitrate-toolbar">
 								<p class="bitrate-mode-note" id="bitrate-mode-note"></p>
 								<div class="bitrate-zoom-controls">
+									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-refresh-btn" title="Re-run analysis, ignoring the cached result">
+										Re-analyze
+									</button>
 									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-out-btn" title="Zoom out">&minus;</button>
 									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-in-btn" title="Zoom in">+</button>
 									<button class="btn btn-ghost btn-sm" type="button" id="bitrate-zoom-reset-btn" title="Reset zoom">Reset zoom</button>
 								</div>
 							</div>
+							<div id="bitrate-applied-legend" class="bitrate-applied-legend" style="display: none"></div>
 							<div id="bitrate-stats" class="bitrate-stats"></div>
 							<div class="bitrate-chart-wrap">
 								<canvas id="bitrate-canvas"></canvas>
 							</div>
 							<div class="lang-filter-hint">Scroll to zoom, drag to pan.</div>
 							<div id="bitrate-thresholds" class="setting-group" style="display: none">
-								<label>Auto Denoise Thresholds (Y bitplane-4)</label>
+								<label>Auto Denoise Thresholds</label>
 								<div id="bitrate-thresholds-grid"></div>
 								<div class="lang-filter-hint">Adjust to preview which scenes would be classified light / medium / heavy, then save to this job's settings.</div>
 							</div>
 						</div>
 					</div>
 					<div class="modal-footer">
+						<button class="btn btn-ghost" id="bitrate-download-btn" style="display: none">Download data</button>
 						<button class="btn btn-primary" id="bitrate-save-btn" style="display: none">Save to job</button>
 						<button class="btn btn-ghost" id="close-bitrate-done-btn">Close</button>
 					</div>

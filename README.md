@@ -253,6 +253,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/jobs/:id/subtitle-preview`            | Preview subtitle reorder/rename for a job                                      |
 | `GET`    | `/api/jobs/:id/subtitle-tracks`             | List source subtitle tracks (for the translate-only source picker)             |
 | `GET`    | `/api/jobs/:id/mediainfo`                   | Run `mediainfo` on the source file and return the report                       |
+| `GET`    | `/api/jobs/:id/bitrate-analysis`            | Bitrate + noise/bitrate-metric scene data, cached (`?refresh=1` to re-run)     |
 | `GET`    | `/api/jobs/:id/preview`                     | Get preview-encode state for a job (`idle`, running, or completed samples)     |
 | `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode; optional body configures sample count and duration     |
 | `DELETE` | `/api/jobs/:id/preview`                     | Cancel a running preview, or clear completed preview artifacts                 |

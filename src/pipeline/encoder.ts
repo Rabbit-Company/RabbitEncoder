@@ -464,12 +464,15 @@ export async function encodeJob(
 			checkCancelled();
 			setStep(S_PREPARE, { progress: 4.7, detail: "Analyzing noise..." });
 			try {
-				autoPlan = await runAnalysisPass(preparedVideo, tempDir, probe.duration, job.settings.autoDenoiseThresholds, signal);
+				const metric = job.settings.autoDenoiseMetric;
+				const thresholds = metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds;
+				autoPlan = await runAnalysisPass(preparedVideo, tempDir, probe.duration, metric, thresholds, signal);
 			} catch (err) {
 				if (err instanceof CancelledError) throw err;
 				Logger.warn(`[auto-denoise] Analysis failed, proceeding without denoise: ${err instanceof Error ? err.message : err}`);
 				autoPlan = null;
 			}
+			updateJob({ autoDenoisePlan: autoPlan });
 		}
 
 		const prepareFilter = await buildPrepareFilterConfig({

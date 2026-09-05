@@ -6,6 +6,7 @@ import {
 	CROP_OPTIONS,
 	DEBAND_LEVELS,
 	DEFAULT_AUTO_THRESHOLDS,
+	DEFAULT_BITRATE_THRESHOLDS,
 	DEFAULT_GRADFUN_PARAMS,
 	DEFAULT_NLMEANS_PARAMS,
 	DENOISE_LEVELS,
@@ -94,7 +95,9 @@ export function cloneSettingsForEditing(base: JobSettings, audioBitratesFallback
 	return {
 		...base,
 		audioBitrates: { ...(base.audioBitrates || audioBitratesFallback) },
+		autoDenoiseMetric: base.autoDenoiseMetric || "noise",
 		autoDenoiseThresholds: { ...(base.autoDenoiseThresholds || DEFAULT_AUTO_THRESHOLDS) },
+		autoDenoiseBitrateThresholds: { ...(base.autoDenoiseBitrateThresholds || DEFAULT_BITRATE_THRESHOLDS) },
 		nlmeansParams: base.nlmeansParams ? JSON.parse(JSON.stringify(base.nlmeansParams)) : JSON.parse(JSON.stringify(DEFAULT_NLMEANS_PARAMS)),
 		gradfunParams: base.gradfunParams ? JSON.parse(JSON.stringify(base.gradfunParams)) : JSON.parse(JSON.stringify(DEFAULT_GRADFUN_PARAMS)),
 		assRestyleTargets: Array.isArray(base.assRestyleTargets) ? [...base.assRestyleTargets] : ["full", "honorifics", "forced", "sdh", "commentary"],

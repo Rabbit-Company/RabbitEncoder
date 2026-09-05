@@ -83,6 +83,25 @@ export interface AutoDenoiseThresholds {
 }
 
 /**
+ * Which signal auto-denoise uses to classify scenes into light/medium/heavy:
+ *   - "noise"   : bit-plane noise reading (bitplanenoise=bitplane=4). Good for
+ *                 classic sensor/film grain; can under-score structured VFX
+ *                 texture overlays that are expensive but not "random".
+ *   - "bitrate" : each scene's source bitrate relative to the file's own
+ *                 median. Directly targets "this costs a lot of bits" instead
+ *                 of a noise proxy, at the cost of not knowing WHY a scene is
+ *                 expensive (grain vs. legitimate motion/detail).
+ */
+export type AutoDenoiseMetric = "noise" | "bitrate";
+
+/** One range of the denoise plan actually applied to a job's encode. */
+export interface AutoDenoiseAppliedRange {
+	start: number;
+	end: number;
+	level: "light" | "medium" | "heavy";
+}
+
+/**
  * Parameters for FFmpeg's nlmeans / nlmeans_opencl / nlmeans_vulkan filter.
  *
  *   s : denoising strength    [1.0 – 30.0]
@@ -132,7 +151,11 @@ export interface JobSettings {
 	crop: CropMode;
 	cropLimit: number;
 	denoise: DenoiseLevel;
+	/** Which signal auto-denoise uses to classify scenes. See AutoDenoiseMetric. */
+	autoDenoiseMetric: AutoDenoiseMetric;
 	autoDenoiseThresholds: AutoDenoiseThresholds;
+	/** Thresholds used when autoDenoiseMetric is "bitrate" (ratio vs. the file's own median bitrate, not 0-1). */
+	autoDenoiseBitrateThresholds: AutoDenoiseThresholds;
 	/** Filter parameters used for nlmeans at each level. */
 	nlmeansParams: NlmeansLevelParams;
 	/** Filter parameters used for gradfun at each level. */
@@ -358,6 +381,7 @@ export interface Job {
 	encodedVideoSize?: string;
 	encodedFileSize?: string;
 	replaceSource: boolean;
+	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 
 export interface LanguageDetector {
@@ -468,7 +492,8 @@ export interface NoiseSamplePoint {
 export interface NoiseScenePoint {
 	start: number;
 	end: number;
-	median: number;
+	/** Classifier value for the scene: peak bitplane-noise reading, or bitrate ratio vs. file median — see AutoDenoiseMetric. */
+	value: number;
 }
 
 export interface BitrateNoiseData {
@@ -489,7 +514,10 @@ export interface BitrateAnalysisResult {
 	durationSec: number;
 	bitrate: BitrateSamplePoint[];
 	noise: BitrateNoiseData | null;
+	/** Which classifier metric `noise`/`thresholds` reflect (mode "source" only). */
+	metric?: AutoDenoiseMetric;
 	thresholds?: AutoDenoiseThresholds;
+	appliedPlan?: AutoDenoiseAppliedRange[] | null;
 }
 
 export interface PreviewSampleVsFrame {

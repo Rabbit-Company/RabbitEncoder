@@ -4,7 +4,7 @@ USER root
 ENV DEBIAN_FRONTEND=noninteractive
 
 ARG SVTAV15FISH_REPO=https://github.com/5fish/SVT-AV1.git
-ARG SVTAV15FISH_REF=v2.3.260707
+ARG SVTAV15FISH_REF=v2.3.260829
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates \

@@ -3,12 +3,25 @@ import { readFileSync, existsSync, unlinkSync, mkdirSync, writeFileSync, rmSync 
 import { Logger } from "../core/logger";
 import { CancelledError, run } from "../core/process";
 import { formatNlmeansParams, isOpenClAvailable, isVulkanAvailable, defaultDeviceFor } from "./filters";
-import type { AutoDenoiseThresholds, DenoiseBackend, GpuBackend, NlmeansLevelParams } from "../core/types";
+import type { AutoDenoiseMetric, AutoDenoiseThresholds, DenoiseBackend, GpuBackend, NlmeansLevelParams } from "../core/types";
+import { sampleBitrateOverTime, type BitrateSample } from "./bitrate-sample";
 
 export const DEFAULT_AUTO_THRESHOLDS: AutoDenoiseThresholds = {
 	light: 0.5,
 	medium: 0.7,
 	heavy: 0.9,
+};
+
+/**
+ * Defaults for autoDenoiseMetric === "bitrate": ratios vs. the file's own
+ * median bitrate, not the 0-1 scale the noise metric uses. Unvalidated
+ * starting point — like the noise thresholds, calibrate per-library using the
+ * bitrate-analysis chart rather than trusting these blind.
+ */
+export const DEFAULT_BITRATE_THRESHOLDS: AutoDenoiseThresholds = {
+	light: 1.3,
+	medium: 1.8,
+	heavy: 2.5,
 };
 
 export interface DenoiseRange {
@@ -121,11 +134,11 @@ export interface NoiseSample {
 	y: number;
 }
 
-/** Per-scene median noise value, as used by the classifier. */
+/** Per-scene noise value (peak sample, not average) used by the classifier. */
 export interface SceneNoise {
 	start: number;
 	end: number;
-	median: number;
+	value: number;
 }
 
 export interface RawNoiseAnalysis {
@@ -137,6 +150,18 @@ const SAMPLE_EVERY_N_FRAMES = 12;
 const SCDET_THRESHOLD = 10;
 const SCENE_DETECT_HEIGHT = 480;
 const MIN_SCENE_DURATION = 1.0;
+
+/**
+ * Bit-plane index measured per sampled frame. Bit 4 only reliably escalates
+ * for genuinely heavy random noise/grain - lower bits are more sensitive but
+ * also fire on structured (non-random) VFX texture overlays that aren't good
+ * denoise candidates and would balloon file size across the whole library for
+ * little benefit. Kept to a single bit for that reason; per-title content
+ * that this still under-scores is better served by autoDenoiseMetric:
+ * "bitrate" than by chasing bit-plane sensitivity further.
+ */
+const NOISE_BITPLANES = [4];
+const BITPLANE_NOISE_FILTER = NOISE_BITPLANES.map((b) => `bitplanenoise=bitplane=${b}`).join(",");
 
 function buildDenoiseSegmentFilter(level: DenoiseRange["level"], backend: "opencl" | "vulkan", pixFmt: string, params: NlmeansLevelParams): string {
 	const formatted = formatNlmeansParams(params[level]);
@@ -247,7 +272,7 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 		// Pass 2 - noise sampling
 		if (code === 0) {
 			const noiseFilter =
-				`select='not(mod(n\\,${SAMPLE_EVERY_N_FRAMES}))',` + `bitplanenoise=bitplane=4,` + `metadata=mode=print:file='${escapeFilterPath(noiseLog)}'`;
+				`select='not(mod(n\\,${SAMPLE_EVERY_N_FRAMES}))',` + `${BITPLANE_NOISE_FILTER},` + `metadata=mode=print:file='${escapeFilterPath(noiseLog)}'`;
 
 			code = await spawnFfmpeg(["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", noiseFilter, "-an", "-sn", "-f", "null", "-"], "noise");
 		}
@@ -265,7 +290,7 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 			`[a]scale=-2:${SCENE_DETECT_HEIGHT},scdet=s=1:t=${SCDET_THRESHOLD},`,
 			`metadata=mode=print:file='${escapeFilterPath(scenesLog)}'[s];`,
 			`[b]select='not(mod(n\\,${SAMPLE_EVERY_N_FRAMES}))',`,
-			`bitplanenoise=bitplane=4,`,
+			`${BITPLANE_NOISE_FILTER},`,
 			`metadata=mode=print:file='${escapeFilterPath(noiseLog)}'[n]`,
 		].join("");
 
@@ -321,6 +346,33 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 }
 
 /**
+ * Run scene-cut detection alone (no noise sampling) - used by the "bitrate"
+ * metric, which needs cut boundaries but gets its per-scene value from
+ * `sampleBitrateOverTime` instead of `bitplanenoise`.
+ */
+export async function detectSceneCuts(inputPath: string, tempDir: string, signal?: AbortSignal): Promise<number[] | null> {
+	const scenesLog = join(tempDir, "denoise_scenes_br.log");
+	try {
+		if (existsSync(scenesLog)) unlinkSync(scenesLog);
+	} catch {}
+
+	const sceneFilter = `scale=-2:${SCENE_DETECT_HEIGHT},scdet=s=1:t=${SCDET_THRESHOLD},` + `metadata=mode=print:file='${escapeFilterPath(scenesLog)}'`;
+
+	const res = await run(["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", sceneFilter, "-an", "-sn", "-f", "null", "-"], { signal });
+	if (signal?.aborted) throw new CancelledError();
+	if (res.code !== 0) {
+		Logger.warn(`[auto-denoise] Scene-cut detection failed (exit ${res.code}): ${res.stderr.slice(-500)}`);
+		return null;
+	}
+
+	const cuts = parseSceneCuts(scenesLog);
+	try {
+		unlinkSync(scenesLog);
+	} catch {}
+	return cuts;
+}
+
+/**
  * Run the noise-scene analysis pass and classify the result into a denoise
  * plan using `thresholds`. Returns null if the analysis pass itself failed.
  */
@@ -328,20 +380,33 @@ export async function runAnalysisPass(
 	inputPath: string,
 	tempDir: string,
 	totalDuration: number,
+	metric: AutoDenoiseMetric,
 	thresholds: AutoDenoiseThresholds,
 	signal?: AbortSignal,
 ): Promise<DenoisePlan | null> {
-	const raw = await runNoiseSceneAnalysis(inputPath, tempDir, totalDuration, signal);
-	if (!raw) return null;
+	let plan: DenoisePlan;
 
-	const plan = buildPlan(raw.samples, raw.cuts, totalDuration, thresholds);
+	if (metric === "bitrate") {
+		const cuts = await detectSceneCuts(inputPath, tempDir, signal);
+		if (!cuts) return null;
+		const bitrate = await sampleBitrateOverTime(inputPath);
+		if (bitrate.length === 0) {
+			Logger.warn(`[auto-denoise] No packets found for bitrate metric, skipping auto denoise`);
+			return null;
+		}
+		plan = buildPlanFromBitrate(bitrate, cuts, totalDuration, thresholds);
+	} else {
+		const raw = await runNoiseSceneAnalysis(inputPath, tempDir, totalDuration, signal);
+		if (!raw) return null;
+		plan = buildPlan(raw.samples, raw.cuts, totalDuration, thresholds);
+	}
 
 	const totalDenoised = plan.reduce((s, r) => s + (r.end - r.start), 0);
 	const pct = totalDuration > 0 ? (100 * totalDenoised) / totalDuration : 0;
 	const counts = { light: 0, medium: 0, heavy: 0 };
 	for (const r of plan) counts[r.level]++;
 	Logger.info(
-		`[auto-denoise] Plan: ${plan.length} ranges ` +
+		`[auto-denoise] Plan (${metric}): ${plan.length} ranges ` +
 			`(${counts.light}×light + ${counts.medium}×medium + ${counts.heavy}×heavy), ` +
 			`${totalDenoised.toFixed(1)}s denoised (${pct.toFixed(1)}% of ${totalDuration.toFixed(1)}s)`,
 	);
@@ -638,10 +703,16 @@ export async function runSegmentedAutoDenoiseGpu(
 }
 
 /**
- * Walk scene-cut boundaries and compute the median noise value of the
- * samples falling in each scene. Shared by `buildPlan` (which classifies
- * each scene into a denoise level) and the on-demand bitrate/noise chart
- * (which just wants the median as a step-line series).
+ * Walk scene-cut boundaries and compute the peak noise value of the samples
+ * falling in each scene. Shared by `buildPlan` (which classifies each scene
+ * into a denoise level) and the on-demand bitrate/noise chart.
+ *
+ * Uses max rather than median/average: a scene is often a single held shot
+ * with a short noise burst (a flash, a grain overlay) in the middle. Averaging
+ * washes that burst out and the scene reads as clean even though the burst is
+ * exactly what spikes the encoded bitrate. Peaking per scene means some
+ * otherwise-calm scenes get denoised a bit more than strictly necessary, which
+ * is the safer failure mode than missing the burst entirely.
  */
 export function groupSamplesByScene(samples: NoiseSample[], cuts: number[], totalDuration: number): SceneNoise[] {
 	if (totalDuration <= 0) return [];
@@ -668,8 +739,8 @@ export function groupSamplesByScene(samples: NoiseSample[], cuts: number[], tota
 			probe++;
 		}
 
-		const sceneMedian = ys.length > 0 ? median(ys) : scenes.length > 0 ? scenes[scenes.length - 1]!.median : 0;
-		scenes.push({ start, end, median: sceneMedian });
+		const sceneValue = ys.length > 0 ? Math.max(...ys) : scenes.length > 0 ? scenes[scenes.length - 1]!.value : 0;
+		scenes.push({ start, end, value: sceneValue });
 	}
 
 	return scenes;
@@ -680,32 +751,97 @@ export function groupSamplesByScene(samples: NoiseSample[], cuts: number[], tota
  */
 export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration: number, thresholds: AutoDenoiseThresholds): DenoisePlan {
 	if (totalDuration <= 0) return [];
+	return classifyScenesToPlan(groupSamplesByScene(samples, cuts, totalDuration), thresholds);
+}
 
+/**
+ * Walk scene-cut boundaries and compute each scene's average bitrate
+ * relative to the file's own median bitrate. Mirrors `groupSamplesByScene`'s
+ * shape ({start,end,value}) so both metrics share `classifyScenesToPlan`.
+ *
+ * Unlike the noise metric (which peaks per scene to avoid diluting a short
+ * burst), this averages: bitrate IS the target signal here, not a proxy, so
+ * there's no dilution risk to guard against, and averaging is more stable.
+ */
+export function groupScenesByBitrate(bitrate: BitrateSample[], cuts: number[], totalDuration: number): SceneNoise[] {
+	if (totalDuration <= 0 || bitrate.length === 0) return [];
+
+	const baseline = median(bitrate.map((b) => b.kbps));
+
+	const sortedCuts = cuts
+		.slice()
+		.sort((a, b) => a - b)
+		.filter((c) => c > 0 && c < totalDuration);
+	const boundaries = [0, ...sortedCuts, totalDuration];
+
+	const scenes: SceneNoise[] = [];
+
+	let bIdx = 0;
+	for (let i = 0; i < boundaries.length - 1; i++) {
+		const start = boundaries[i]!;
+		const end = boundaries[i + 1]!;
+		if (end <= start) continue;
+
+		const kbpsInScene: number[] = [];
+		while (bIdx < bitrate.length && bitrate[bIdx]!.t < start) bIdx++;
+		let probe = bIdx;
+		while (probe < bitrate.length && bitrate[probe]!.t < end) {
+			kbpsInScene.push(bitrate[probe]!.kbps);
+			probe++;
+		}
+
+		const avgKbps = kbpsInScene.length > 0 ? kbpsInScene.reduce((s, v) => s + v, 0) / kbpsInScene.length : undefined;
+		const value = avgKbps !== undefined ? (baseline > 0 ? avgKbps / baseline : 0) : scenes.length > 0 ? scenes[scenes.length - 1]!.value : 0;
+		scenes.push({ start, end, value });
+	}
+
+	return scenes;
+}
+
+/**
+ * Build the per-scene plan from source bitrate and cut times. `thresholds`
+ * are ratios vs. the file's own median bitrate (see DEFAULT_BITRATE_THRESHOLDS),
+ * not the 0-1 scale the noise metric uses.
+ */
+export function buildPlanFromBitrate(bitrate: BitrateSample[], cuts: number[], totalDuration: number, thresholds: AutoDenoiseThresholds): DenoisePlan {
+	if (totalDuration <= 0) return [];
+	return classifyScenesToPlan(groupScenesByBitrate(bitrate, cuts, totalDuration), thresholds);
+}
+
+/**
+ * Classify each scene's value into a level and compact into a DenoisePlan.
+ * Shared tail for both metrics (noise peak / bitrate ratio) — everything past
+ * this point only cares about a {start,end,value} scene list, not where
+ * `value` came from.
+ */
+function classifyScenesToPlan(scenes: SceneNoise[], thresholds: AutoDenoiseThresholds): DenoisePlan {
 	type Scene = { start: number; end: number; level: "off" | "light" | "medium" | "heavy" };
-	const scenes: Scene[] = groupSamplesByScene(samples, cuts, totalDuration).map((s) => ({
+	const classified: Scene[] = scenes.map((s) => ({
 		start: s.start,
 		end: s.end,
-		level: classifyNoise(s.median, thresholds),
+		level: classifyNoise(s.value, thresholds),
 	}));
 
-	for (let i = 0; i < scenes.length; i++) {
-		const s = scenes[i]!;
+	// Fast cuts under MIN_SCENE_DURATION (common in AMV-style OP/ED montages)
+	// often don't carry enough samples for a reliable reading on their own.
+	// Never downgrade them: keep whatever their own samples showed and only
+	// ever raise it to match a noisier neighbor. A short noisy insert between
+	// two clean shots must not read as "off" just because the shots either
+	// side of it are clean, but a short scene that *did* catch real noise
+	// samples must not have that reading discarded either.
+	for (let i = 0; i < classified.length; i++) {
+		const s = classified[i]!;
 		if (s.end - s.start >= MIN_SCENE_DURATION) continue;
-		const prev = scenes[i - 1];
-		const next = scenes[i + 1];
-		if (prev && next) {
-			const prevLen = prev.end - prev.start;
-			const nextLen = next.end - next.start;
-			s.level = prevLen >= nextLen ? prev.level : next.level;
-		} else if (prev) {
-			s.level = prev.level;
-		} else if (next) {
-			s.level = next.level;
-		}
+		const prev = classified[i - 1];
+		const next = classified[i + 1];
+		let best = s.level;
+		if (prev && LEVEL_RANK[prev.level] > LEVEL_RANK[best]) best = prev.level;
+		if (next && LEVEL_RANK[next.level] > LEVEL_RANK[best]) best = next.level;
+		s.level = best;
 	}
 
 	const plan: DenoisePlan = [];
-	for (const s of scenes) {
+	for (const s of classified) {
 		if (s.level === "off") continue;
 		const last = plan[plan.length - 1];
 		if (last && last.level === s.level && Math.abs(last.end - s.start) < 0.01) {
@@ -718,6 +854,13 @@ export function buildPlan(samples: NoiseSample[], cuts: number[], totalDuration:
 	return plan;
 }
 
+function median(values: number[]): number {
+	if (values.length === 0) return 0;
+	const sorted = values.slice().sort((a, b) => a - b);
+	const n = sorted.length;
+	return n % 2 === 1 ? sorted[(n - 1) / 2]! : (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2;
+}
+
 function classifyNoise(value: number, t: AutoDenoiseThresholds): "off" | "light" | "medium" | "heavy" {
 	if (value < t.light) return "off";
 	if (value < t.medium) return "light";
@@ -725,13 +868,7 @@ function classifyNoise(value: number, t: AutoDenoiseThresholds): "off" | "light"
 	return "heavy";
 }
 
-function median(values: number[]): number {
-	const sorted = values.slice().sort((a, b) => a - b);
-	const n = sorted.length;
-	if (n === 0) return 0;
-	if (n % 2 === 1) return sorted[(n - 1) / 2]!;
-	return (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2;
-}
+const LEVEL_RANK: Record<"off" | "light" | "medium" | "heavy", number> = { off: 0, light: 1, medium: 2, heavy: 3 };
 
 function parseSceneCuts(path: string): number[] {
 	if (!existsSync(path)) return [];
@@ -750,12 +887,35 @@ function parseNoiseSamples(path: string): NoiseSample[] {
 	if (!existsSync(path)) return [];
 	const text = readFileSync(path, "utf8");
 	const samples: NoiseSample[] = [];
-	const re = /pts_time:(\S+)[^]*?lavfi\.bitplanenoise\.0\.4=(\S+)/g;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(text)) !== null) {
-		const t = parseFloat(m[1]!);
-		const y = parseFloat(m[2]!);
-		if (Number.isFinite(t) && Number.isFinite(y)) samples.push({ time: t, y });
+	// Each frame block looks like:
+	//   frame:N  pts:P  pts_time:T
+	//   lavfi.bitplanenoise.0.2=<Y, bit 2>
+	//   lavfi.bitplanenoise.1.2=<U, bit 2>
+	//   lavfi.bitplanenoise.2.2=<V, bit 2>
+	//   lavfi.bitplanenoise.0.4=<Y, bit 4>
+	//   ...
+	// One value per (plane, bit) pair measured - see NOISE_BITPLANES. Anime
+	// noise/color-grain is frequently chroma-heavy and reads far stronger on
+	// low-order bits than on bit 4 alone at light/moderate intensity, so a
+	// single plane/bit reading can miss exactly the parts that spike the
+	// encoded bitrate. Take the max across everything present (grayscale
+	// sources only ever emit plane 0).
+	const blocks = text.split(/(?=frame:)/g);
+	const planeRe = /lavfi\.bitplanenoise\.\d+\.\d+=(\S+)/g;
+	for (const block of blocks) {
+		const timeMatch = /pts_time:(\S+)/.exec(block);
+		if (!timeMatch) continue;
+		const t = parseFloat(timeMatch[1]!);
+		if (!Number.isFinite(t)) continue;
+
+		let y = -Infinity;
+		planeRe.lastIndex = 0;
+		let pm: RegExpExecArray | null;
+		while ((pm = planeRe.exec(block)) !== null) {
+			const v = parseFloat(pm[1]!);
+			if (Number.isFinite(v) && v > y) y = v;
+		}
+		if (y > -Infinity) samples.push({ time: t, y });
 	}
 	return samples;
 }

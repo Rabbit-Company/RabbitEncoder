@@ -7,7 +7,22 @@ import { probeFile } from "../pipeline/probe";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewAudio, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
-import { groupSamplesByScene, runNoiseSceneAnalysis } from "../video/auto-denoise";
+import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
+
+/**
+ * Completed bitrate-analysis results, keyed by `${jobId}:${mode}[:${metric}]`.
+ * The raw scene/bitrate data for a given (job, mode, metric) never changes -
+ * thresholds are applied client-side, so re-opening the modal should just
+ * show what was already computed instead of re-running ffmpeg. Cleared when
+ * a job is removed; otherwise lives for the server process's lifetime.
+ */
+const bitrateAnalysisCache = new Map<string, BitrateAnalysisResult>();
+
+function clearBitrateAnalysisCache(jobId: string): void {
+	for (const key of bitrateAnalysisCache.keys()) {
+		if (key === jobId || key.startsWith(`${jobId}:`)) bitrateAnalysisCache.delete(key);
+	}
+}
 
 export function registerJobRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/jobs", (c) => {
@@ -30,6 +45,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 	app.delete("/api/jobs/:id", (c) => {
 		const ok = removeJob(c.params.id!);
 		if (!ok) return c.json({ error: "Cannot remove active job" }, 400);
+		clearBitrateAnalysisCache(c.params.id!);
 		return c.json({ ok: true });
 	});
 
@@ -207,8 +223,15 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		const job = getJob(c.params.id!);
 		if (!job) return c.json({ error: "Job not found" }, 404);
 
+		const forceRefresh = c.query().get("refresh") === "1";
+		const signal = c.req.signal;
+
 		try {
 			if (job.status === "done") {
+				const cacheKey = `${job.id}:encoded`;
+				const cached = !forceRefresh && bitrateAnalysisCache.get(cacheKey);
+				if (cached) return c.json(cached);
+
 				if (!job.outputFilename) return c.json({ error: "Output file not available" }, 400);
 
 				const outPath = job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
@@ -217,8 +240,16 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 
 				const probe = await probeFile(outPath);
 				const bitrate = await sampleBitrateOverTime(outPath);
+				if (signal.aborted) return c.json({ error: "Cancelled" }, 499);
 
-				const result: BitrateAnalysisResult = { mode: "encoded", durationSec: probe.duration, bitrate, noise: null };
+				const result: BitrateAnalysisResult = {
+					mode: "encoded",
+					durationSec: probe.duration,
+					bitrate,
+					noise: null,
+					appliedPlan: job.autoDenoisePlan ?? null,
+				};
+				bitrateAnalysisCache.set(cacheKey, result);
 				return c.json(result);
 			}
 
@@ -226,19 +257,31 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 				return c.json({ error: "Source file no longer accessible" }, 400);
 			}
 
+			const metric = job.settings.autoDenoiseMetric;
+			const cacheKey = `${job.id}:source:${metric}`;
+			const cached = !forceRefresh && bitrateAnalysisCache.get(cacheKey);
+			if (cached) return c.json(cached);
+
 			const probe = job.probe ?? (await probeFile(job.inputPath));
 			const bitrate = await sampleBitrateOverTime(job.inputPath);
 
 			const tempDir = mkdtempSync(join(config.tempDir, "bitrate-analysis-"));
 			let noise: BitrateAnalysisResult["noise"] = null;
 			try {
-				const raw = await runNoiseSceneAnalysis(job.inputPath, tempDir, probe.duration);
-				if (raw) {
-					noise = {
-						samples: raw.samples.map((s) => ({ t: s.time, y: s.y })),
-						scenes: groupSamplesByScene(raw.samples, raw.cuts, probe.duration),
-						cuts: raw.cuts,
-					};
+				if (metric === "bitrate") {
+					const cuts = await detectSceneCuts(job.inputPath, tempDir, signal);
+					if (cuts) {
+						noise = { samples: [], scenes: groupScenesByBitrate(bitrate, cuts, probe.duration), cuts };
+					}
+				} else {
+					const raw = await runNoiseSceneAnalysis(job.inputPath, tempDir, probe.duration, signal);
+					if (raw) {
+						noise = {
+							samples: raw.samples.map((s) => ({ t: s.time, y: s.y })),
+							scenes: groupSamplesByScene(raw.samples, raw.cuts, probe.duration),
+							cuts: raw.cuts,
+						};
+					}
 				}
 			} finally {
 				try {
@@ -251,10 +294,13 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 				durationSec: probe.duration,
 				bitrate,
 				noise,
-				thresholds: job.settings.autoDenoiseThresholds,
+				metric,
+				thresholds: metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds,
 			};
+			bitrateAnalysisCache.set(cacheKey, result);
 			return c.json(result);
 		} catch (err: any) {
+			if (err?.name === "CancelledError" || signal.aborted) return c.json({ error: "Cancelled" }, 499);
 			return c.json({ error: `Bitrate analysis failed: ${err.message || err}` }, 500);
 		}
 	});

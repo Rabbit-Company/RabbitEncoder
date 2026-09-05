@@ -4,7 +4,7 @@ services:
       context: .
       args:
         SVTAV15FISH_REPO: https://github.com/5fish/SVT-AV1.git
-        SVTAV15FISH_REF: v2.3.260707
+        SVTAV15FISH_REF: v2.3.260829
     container_name: rabbit-svt-av1-5fish-builder
     volumes:
       - ./svt-av1-5fish-dist:/out

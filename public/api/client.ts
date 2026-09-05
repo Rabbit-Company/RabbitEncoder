@@ -1,5 +1,6 @@
 import Blake2b from "@rabbit-company/blake2b";
 import type {
+	AutoDenoiseMetric,
 	AutoDenoiseThresholds,
 	BitrateAnalysisResult,
 	FontAxis,
@@ -385,18 +386,23 @@ export async function reorderQueue(orderedIds: string[]): Promise<void> {
 	});
 }
 
-export async function fetchBitrateAnalysis(jobId: string): Promise<BitrateAnalysisResult & { error?: string }> {
-	const res = await authFetch(`${API}/api/jobs/${jobId}/bitrate-analysis`);
+export async function fetchBitrateAnalysis(
+	jobId: string,
+	opts: { signal?: AbortSignal; refresh?: boolean } = {},
+): Promise<BitrateAnalysisResult & { error?: string }> {
+	const qs = opts.refresh ? "?refresh=1" : "";
+	const res = await authFetch(`${API}/api/jobs/${jobId}/bitrate-analysis${qs}`, { signal: opts.signal });
 	const data = await res.json();
 	if (!res.ok) return { ...data, mode: "source", durationSec: 0, bitrate: [], noise: null, error: data?.error || `Request failed (${res.status})` };
 	return data;
 }
 
-export async function patchJobAutoThresholds(id: string, thresholds: AutoDenoiseThresholds): Promise<Job> {
+export async function patchJobAutoThresholds(id: string, metric: AutoDenoiseMetric, thresholds: AutoDenoiseThresholds): Promise<Job> {
+	const body = metric === "bitrate" ? { autoDenoiseBitrateThresholds: thresholds } : { autoDenoiseThresholds: thresholds };
 	const res = await authFetch(`${API}/api/jobs/${id}`, {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ autoDenoiseThresholds: thresholds }),
+		body: JSON.stringify(body),
 	});
 	return res.json();
 }

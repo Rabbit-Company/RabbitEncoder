@@ -240,7 +240,12 @@ export function renderGpuDevicePicker(container: HTMLElement, devices: GpuDevice
 	}
 }
 
-export function renderAutoThresholds(container: HTMLElement, thresholds: AutoDenoiseThresholds, onChange: (value: AutoDenoiseThresholds) => void): void {
+export function renderAutoThresholds(
+	container: HTMLElement,
+	thresholds: AutoDenoiseThresholds,
+	onChange: (value: AutoDenoiseThresholds) => void,
+	bounds: { min: number; max: number; step: number } = { min: 0, max: 1, step: 0.01 },
+): void {
 	container.innerHTML = "";
 	const wrap = document.createElement("div");
 	wrap.className = "auto-threshold-grid";
@@ -251,12 +256,12 @@ export function renderAutoThresholds(container: HTMLElement, thresholds: AutoDen
 		span.textContent = key;
 		const input = document.createElement("input");
 		input.type = "number";
-		input.step = "0.01";
-		input.min = "0";
-		input.max = "1";
+		input.step = String(bounds.step);
+		input.min = String(bounds.min);
+		input.max = String(bounds.max);
 		input.value = String(thresholds[key]);
 		input.onchange = () => {
-			const v = clampFloat(input.value, 0, 1);
+			const v = clampFloat(input.value, bounds.min, bounds.max);
 			thresholds[key] = v;
 			input.value = String(v);
 			onChange({ ...thresholds });

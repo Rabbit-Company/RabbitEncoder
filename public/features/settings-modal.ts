@@ -1,8 +1,15 @@
-import type { DenoiseBackend } from "../types";
+import type { AutoDenoiseMetric, DenoiseBackend } from "../types";
 import type { AdvancedTarget, SettingsCodePanelElement } from "../ui/models";
 import { decodeSettingsCodeRequest, fetchConfig, fetchOpenClDevices, fetchVulkanDevices, patchConfig, resetConfigRequest } from "../api/client";
 import { getCurrentSettings } from "../app/events";
-import { DEFAULT_AUTO_THRESHOLDS, DEFAULT_GRADFUN_PARAMS, DEFAULT_NLMEANS_PARAMS, DENOISE_BACKENDS } from "../config/options";
+import {
+	AUTO_DENOISE_METRICS,
+	DEFAULT_AUTO_THRESHOLDS,
+	DEFAULT_BITRATE_THRESHOLDS,
+	DEFAULT_GRADFUN_PARAMS,
+	DEFAULT_NLMEANS_PARAMS,
+	DENOISE_BACKENDS,
+} from "../config/options";
 import {
 	mountSettingsCodePanel,
 	renderAutoThresholds,
@@ -81,6 +88,10 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	if (!settings.autoDenoiseThresholds) {
 		settings.autoDenoiseThresholds = { ...DEFAULT_AUTO_THRESHOLDS };
 	}
+	if (!settings.autoDenoiseBitrateThresholds) {
+		settings.autoDenoiseBitrateThresholds = { ...DEFAULT_BITRATE_THRESHOLDS };
+	}
+	if (!settings.autoDenoiseMetric) settings.autoDenoiseMetric = "noise";
 	if (!settings.denoiseBackend) settings.denoiseBackend = "auto";
 	if (settings.gpuDevice === undefined || settings.gpuDevice === null) {
 		settings.gpuDevice = settings.denoiseBackend === "vulkan" ? "0" : "0.0";
@@ -124,7 +135,38 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 		};
 	}
 
-	renderAutoThresholds(byId("advanced-auto-thresholds"), settings.autoDenoiseThresholds, (v) => (settings.autoDenoiseThresholds = v));
+	const METRIC_HELP: Record<AutoDenoiseMetric, string> = {
+		noise: "Classifies scenes by peak bit-plane noise reading (0-1). Good for classic sensor/film grain.",
+		bitrate:
+			'Classifies scenes by their own bitrate as a multiple of the file\'s median. Targets "this costs a lot of bits" directly, regardless of why - better for structured VFX texture that reads as only moderately noisy but is still expensive to encode.',
+	};
+	const METRIC_BOUNDS: Record<AutoDenoiseMetric, { min: number; max: number; step: number }> = {
+		noise: { min: 0, max: 1, step: 0.01 },
+		bitrate: { min: 0, max: 20, step: 0.1 },
+	};
+
+	function renderThresholdsForMetric(): void {
+		const metric = settings!.autoDenoiseMetric;
+		byId("advanced-auto-denoise-metric-help").textContent = METRIC_HELP[metric];
+		byId("advanced-auto-thresholds-label").textContent = metric === "bitrate" ? "Auto Denoise Thresholds (x median bitrate)" : "Auto Denoise Thresholds (0-1)";
+		byId("advanced-auto-thresholds-hint").textContent = METRIC_HELP[metric];
+		const thresholds = metric === "bitrate" ? settings!.autoDenoiseBitrateThresholds : settings!.autoDenoiseThresholds;
+		renderAutoThresholds(
+			byId("advanced-auto-thresholds"),
+			thresholds,
+			(v) => {
+				if (metric === "bitrate") settings!.autoDenoiseBitrateThresholds = v;
+				else settings!.autoDenoiseThresholds = v;
+			},
+			METRIC_BOUNDS[metric],
+		);
+	}
+
+	renderRadioPills(byId("advanced-auto-denoise-metric"), AUTO_DENOISE_METRICS, settings.autoDenoiseMetric, (v) => {
+		settings!.autoDenoiseMetric = v;
+		renderThresholdsForMetric();
+	});
+	renderThresholdsForMetric();
 
 	renderNlmeansParamsEditor(byId("advanced-nlmeans-params"), settings.nlmeansParams, (v) => (settings.nlmeansParams = v));
 

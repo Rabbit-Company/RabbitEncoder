@@ -1,4 +1,4 @@
-import { DEFAULT_AUTO_THRESHOLDS } from "../video/auto-denoise";
+import { DEFAULT_AUTO_THRESHOLDS, DEFAULT_BITRATE_THRESHOLDS } from "../video/auto-denoise";
 import { DEFAULT_NLMEANS_PARAMS, DEFAULT_GRADFUN_PARAMS } from "../video/filters";
 import { Logger } from "./logger";
 import { run } from "./process";
@@ -34,7 +34,9 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	crop: "off",
 	cropLimit: 0.1,
 	denoise: "off",
+	autoDenoiseMetric: "noise",
 	autoDenoiseThresholds: DEFAULT_AUTO_THRESHOLDS,
+	autoDenoiseBitrateThresholds: DEFAULT_BITRATE_THRESHOLDS,
 	nlmeansParams: DEFAULT_NLMEANS_PARAMS,
 	gradfunParams: DEFAULT_GRADFUN_PARAMS,
 	denoiseBackend: "auto",

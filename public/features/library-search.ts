@@ -159,7 +159,9 @@ export function previewSettingsFingerprintFE(s: JobSettings): string {
 		skipBoosting: s.skipBoosting,
 		nlmeansParams: s.nlmeansParams,
 		gradfunParams: s.gradfunParams,
+		autoDenoiseMetric: s.autoDenoiseMetric,
 		autoDenoiseThresholds: s.autoDenoiseThresholds,
+		autoDenoiseBitrateThresholds: s.autoDenoiseBitrateThresholds,
 		vsFilters: s.vsFilters ?? [],
 	});
 }

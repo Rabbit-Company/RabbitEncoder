@@ -41,7 +41,9 @@ const BASELINE: JobSettings = {
 	quality: "medium",
 	finalSpeed: "slow",
 	denoise: "off",
+	autoDenoiseMetric: "noise",
 	autoDenoiseThresholds: { light: 0.5, medium: 0.7, heavy: 0.9 },
+	autoDenoiseBitrateThresholds: { light: 1.3, medium: 1.8, heavy: 2.5 },
 	nlmeansParams: {
 		light: { s: 1.0, p: 3, r: 7 },
 		medium: { s: 1.5, p: 3, r: 9 },
@@ -294,6 +296,9 @@ export function encodeSettingsCode(s: JobSettings): string {
 		const dn = new Section("dn");
 		dn.put("m", DENOISE_TO_CODE[s.denoise]);
 		if (s.denoise === "auto") {
+			if (s.autoDenoiseMetric !== BASELINE.autoDenoiseMetric) {
+				dn.put("mt", s.autoDenoiseMetric);
+			}
 			if (s.autoDenoiseThresholds.light !== BASELINE.autoDenoiseThresholds.light) {
 				dn.put("tl", s.autoDenoiseThresholds.light);
 			}
@@ -302,6 +307,15 @@ export function encodeSettingsCode(s: JobSettings): string {
 			}
 			if (s.autoDenoiseThresholds.heavy !== BASELINE.autoDenoiseThresholds.heavy) {
 				dn.put("th", s.autoDenoiseThresholds.heavy);
+			}
+			if (s.autoDenoiseBitrateThresholds.light !== BASELINE.autoDenoiseBitrateThresholds.light) {
+				dn.put("tbl", s.autoDenoiseBitrateThresholds.light);
+			}
+			if (s.autoDenoiseBitrateThresholds.medium !== BASELINE.autoDenoiseBitrateThresholds.medium) {
+				dn.put("tbm", s.autoDenoiseBitrateThresholds.medium);
+			}
+			if (s.autoDenoiseBitrateThresholds.heavy !== BASELINE.autoDenoiseBitrateThresholds.heavy) {
+				dn.put("tbh", s.autoDenoiseBitrateThresholds.heavy);
 			}
 
 			putNlmeansDiff(dn, "l", s.nlmeansParams.light, BASELINE.nlmeansParams.light);
@@ -648,10 +662,16 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 	if (mode === "off") return;
 
 	if (mode === "auto") {
+		if (kv.mt === "noise" || kv.mt === "bitrate") out.autoDenoiseMetric = kv.mt;
 		out.autoDenoiseThresholds = {
 			light: numOr(kv.tl, out.autoDenoiseThresholds.light),
 			medium: numOr(kv.tm, out.autoDenoiseThresholds.medium),
 			heavy: numOr(kv.th, out.autoDenoiseThresholds.heavy),
+		};
+		out.autoDenoiseBitrateThresholds = {
+			light: numOr(kv.tbl, out.autoDenoiseBitrateThresholds.light),
+			medium: numOr(kv.tbm, out.autoDenoiseBitrateThresholds.medium),
+			heavy: numOr(kv.tbh, out.autoDenoiseBitrateThresholds.heavy),
 		};
 		out.nlmeansParams = {
 			light: readNlmeans(kv, "l", out.nlmeansParams.light),

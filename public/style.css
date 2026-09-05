@@ -1717,6 +1717,24 @@ code {
 	color: var(--text-2);
 	margin: 0;
 }
+.bitrate-applied-legend {
+	display: flex;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+.bitrate-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.78rem;
+	color: var(--text-2);
+}
+.bitrate-legend-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: none;
+}
 .bitrate-stats {
 	display: flex;
 	gap: 20px;

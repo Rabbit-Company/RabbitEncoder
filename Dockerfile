@@ -57,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	opus-tools \
 	mkvtoolnix \
 	zstd \
-	p7zip-full \
+	7zip \
 	\
 	# OpenCL
 	ocl-icd-libopencl1 \
@@ -71,12 +71,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	\
 	# Common custom-FFmpeg runtime dependencies
 	libaom3 \
-	libaribb24-0 \
+	libaribb24-0t64 \
 	libass9 \
-	libbluray3 \
+	libbluray4 \
 	libbs2b0 \
 	libcaca0 \
-	libcdio19 \
 	libcdio-cdda2t64 \
 	libcdio-paranoia2t64 \
 	libchromaprint1 \
@@ -211,9 +210,9 @@ RUN mkdir -p /opt/binaries/x86_64_v2 /opt/binaries/x86_64_v3 /opt/binaries/x86_6
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v2/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v3/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v4/SVT-AV1-5FISH \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v2/ffmpeg.tar.zst \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v3/ffmpeg.tar.zst \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v4/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v2/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v3/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v4/ffmpeg.tar.zst \
 # Make encoder binaries executable
  && chmod +x \
 	/opt/binaries/language-detector \
