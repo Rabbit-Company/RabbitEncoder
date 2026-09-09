@@ -346,6 +346,7 @@ const GROUP_BLOCKLIST = new Set([
 	"signs_songs",
 	"signs_and_songs",
 	"sings_and_songs",
+	"only",
 	"dialogue",
 	"dialog",
 	"narrative",
@@ -733,6 +734,12 @@ function looksLikeGroupName(s: string): boolean {
 
 	// Reject pure language/tag words
 	if (isBlockedToken(trimmed)) return false;
+
+	// Reject multi-word descriptor phrases where every word is blocked
+	// individually (e.g. "Signs / Songs Only") - the single-token check above
+	// only catches exact matches, so a phrase built entirely out of blocked
+	// words would otherwise slip through as a "group name".
+	if (isAllLanguageWords(trimmed)) return false;
 
 	// Reject tokens that are just numbers
 	if (/^\d+$/.test(trimmed)) return false;
