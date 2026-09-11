@@ -8,14 +8,14 @@
 		"test": "bun test"
 	},
 	"devDependencies": {
-		"@types/bun": "^1.4.1"
+		"@types/bun": "^1.4.2"
 	},
 	"peerDependencies": {
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
 		"@rabbit-company/blake2b": "^2.1.0",
-		"@rabbit-company/web": "^0.18.2",
-		"@rabbit-company/web-middleware": "^0.18.2"
+		"@rabbit-company/web": "^0.19.0",
+		"@rabbit-company/web-middleware": "^0.19.0"
 	}
 }
