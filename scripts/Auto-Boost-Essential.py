@@ -833,6 +833,8 @@ def calculate_metric() -> None:
     global ssimu2
     if ssimu2 == "":
         try:
+				    if cut_source_clip.format.id != cut_encoded_clip.format.id:
+                cut_encoded_clip = core.resize.Bicubic(cut_encoded_clip, format=cut_source_clip.format.id)
             result = core.vszip.XPSNR(cut_source_clip, cut_encoded_clip, temporal=False, verbose=False)
         except:
             emit_json("error", message="vs-zip not found.")
