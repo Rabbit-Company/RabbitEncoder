@@ -830,16 +830,33 @@ def calculate_metric() -> None:
         cut_source_clip = source_clip
         cut_encoded_clip = encoded_clip
 
+    source_format = cut_source_clip.format
+    encoded_format = cut_encoded_clip.format
+    if source_format is None or encoded_format is None:
+        emit_json("error", message="Source and encoded clips must have constant pixel formats.")
+        if not json_stream:
+            console.print("[red]Source and encoded clips must have constant pixel formats.")
+        raise SystemExit(1)
+
+    if source_format.id != encoded_format.id:
+        try:
+            cut_encoded_clip = core.resize.Bicubic(cut_encoded_clip, format=source_format.id)
+        except Exception as error:
+            message = f"Error matching encoded clip format to source: {error}"
+            emit_json("error", message=message)
+            if not json_stream:
+                console.print(f"[red]{message}")
+            raise SystemExit(1)
+
     global ssimu2
     if ssimu2 == "":
         try:
-				    if cut_source_clip.format.id != cut_encoded_clip.format.id:
-                cut_encoded_clip = core.resize.Bicubic(cut_encoded_clip, format=cut_source_clip.format.id)
             result = core.vszip.XPSNR(cut_source_clip, cut_encoded_clip, temporal=False, verbose=False)
-        except:
-            emit_json("error", message="vs-zip not found.")
+        except Exception as error:
+            message = f"XPSNR calculation failed: {error}"
+            emit_json("error", message=message)
             if not json_stream:
-                console.print(f"[red]vs-zip not found. Check your installation.")
+                console.print(f"[red]{message}")
             raise SystemExit(1)
     elif ssimu2 == "gpu":
         try:
