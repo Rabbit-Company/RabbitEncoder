@@ -1,5 +1,5 @@
 import pkg from "../../package.json";
-import { dialogueStyleNames } from "./ass-classifier";
+import { restylableDialogueStyleNames } from "./ass-classifier";
 import type { SubtitleStyle } from "../core/types";
 
 export const ASS_SIGNATURE_KEY = "RabbitEncoder";
@@ -219,7 +219,7 @@ export function styleSrtAss(assText: string, style: SubtitleStyle): string {
  * nothing was modified).
  */
 export function restyleAssDialogueFont(assText: string, style: SubtitleStyle, restyleAppearance: boolean): string {
-	const dialogue = dialogueStyleNames(assText);
+	const dialogue = restylableDialogueStyleNames(assText);
 	if (dialogue.size === 0) return assText;
 
 	const { scaleX, scaleY } = playResScale(assText);

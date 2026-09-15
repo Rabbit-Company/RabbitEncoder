@@ -16,12 +16,14 @@ export function updatePauseUI() {
 		pauseIcon.style.display = "none";
 		resumeIcon.style.display = "";
 		label.textContent = "Continue";
+		btn.title = "Continue";
 		btn.classList.add("btn-paused");
 		banner.style.display = "";
 	} else {
 		pauseIcon.style.display = "";
 		resumeIcon.style.display = "none";
 		label.textContent = "Pause";
+		btn.title = "Pause";
 		btn.classList.remove("btn-paused");
 		banner.style.display = "none";
 	}

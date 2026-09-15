@@ -15,6 +15,8 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Queue system** processes files sequentially, with drag-and-drop reordering and pause/resume
 - **Preview encoding** generates configurable short samples spread across the source, with frame-aligned source/encode comparisons before committing the full job
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
+- **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio
+- **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
 - **Jellyfin / Sonarr integration** automatically cleans up `.nfo` and thumbnail files when replacing sources so metadata is regenerated
 - **Smart skip** already-encoded files (detected by `-{ORGANIZATION}` suffix) are recognized and skipped
 
@@ -47,7 +49,7 @@ Settings are configurable via environment variables in `docker-compose.yml`:
 | `TEMP_DIR`             | `/data/temp`                  | Temporary encode and preview files                               |
 | `LIBRARY_DIRS`         | empty                         | Comma-separated mounted library roots                            |
 | `FONTS_STOCK_DIR`      | `/app/fonts`                  | Seed font groups copied into the user dir on first start         |
-| `FONTS_USER_DIR`       | `/config/fonts`               | User font groups (read/write; the only directory scanned)        |
+| `FONTS_USER_DIR`       | `/config/fonts`               | User font groups (read/write, the only directory scanned)        |
 | `SYSTEM_FONTS_DIRS`    | `/system-fonts`               | Read-only host font dirs, browsable to import fonts into groups  |
 | `VS_PRESETS_STOCK_DIR` | `/app/vapoursynth/presets`    | Built-in VapourSynth preset directory                            |
 | `VS_PRESETS_USER_DIR`  | `/config/vapoursynth/presets` | User VapourSynth preset directory                                |
@@ -64,10 +66,10 @@ This means you can safely run Encode Folder on the same series multiple times (o
 
 For each file, the engine runs:
 
-1. **Probe** - Extract media information such as resolution, audio layout, frame rate, subtitle tracks, and HDR metadata.
-2. **Prepare** - Extract the primary video stream, run the configured VapourSynth passes, and apply the FFmpeg crop/downscale/denoise/deband chain.
-3. **Auto-Boost-Essential** - Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode.
-4. **Audio** - Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
+1. **Probe:** Extract media information such as resolution, audio layout, frame rate, subtitle tracks, and HDR metadata.
+2. **Prepare:** Extract the primary video stream, run the configured VapourSynth passes, and apply the FFmpeg crop/downscale/denoise/deband chain.
+3. **Auto-Boost-Essential:** Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode.
+4. **Audio:** Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
 5. **Subtitles and fonts**
    - Sort, filter, deduplicate, and rename subtitle tracks.
    - Optionally convert SRT subtitles to ASS.
@@ -77,8 +79,8 @@ For each file, the engine runs:
    - Remove unused source font attachments when enabled.
    - Preserve source fonts still referenced by surviving untouched styles or inline `\fn` overrides.
    - Use numbered aliases such as `Noto Sans 2` only when a retained source font already occupies the requested family name.
-6. **Mux** - Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV.
-7. **HDR** - Apply HDR10 metadata with `mkvpropedit` when required.
+6. **Mux:** Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV.
+7. **HDR:** Apply HDR10 metadata with `mkvpropedit` when required.
 
 ## Preview Encoding
 
@@ -87,6 +89,14 @@ Preview encoding creates configurable samples distributed across the source so s
 Each sample starts from an exact, lossless FFV1 video window rather than a stream-copied GOP fragment. This prevents keyframe preroll and timestamp offsets from causing source and encoded comparison images to land on different frames. The default is 6 samples, and both the sample count and duration can be changed through the dashboard or preview API.
 
 Intermediate VapourSynth and prepare-filter stills are also exposed when those stages are active.
+
+## Subtitle Repair / Remux
+
+Open **Repair** in the dashboard, select an encoded MKV and optionally its original source MKV, then inspect their subtitle tracks. The output plan can keep or remove target tracks, import source tracks, reorder them, edit names/languages and Matroska flags, and choose `zlib`, uncompressed, or the track's current compression. Text tracks can either be copied unchanged or processed with the current Rabbit ASS/SRT styling defaults.
+
+Repair jobs use MKVToolNix stream copying: video and audio codecs are verified before the result is accepted, and source/target duration mismatches are rejected. By default Rabbit writes a non-colliding `*.repaired.mkv` beside the encoded target. Replacing the target is opt-in and only happens atomically after the staged MKV passes verification.
+
+Use **Audit folder** to inspect every MKV directly inside a selected folder. Files are grouped as A, B, C, and so on by their ordered audio/subtitle track type, language, title, and flags. Group A is the majority layout. Outliers list their exact differences and open directly in the repair editor. Audits launched from a completed queue folder also pair each encode with its own original input, making missing source subtitles available for plain copying or Rabbit ASS/SRT processing without ever borrowing subtitle content from another episode.
 
 ## VapourSynth Filters
 
@@ -115,7 +125,7 @@ myfilter.json   # the manifest (id, levels, params, defaults)
 
 Both files must share the same stem. The `.vpy` script reads its input path from the `SRC` argument and any tunable parameter via `rabbit_vs.arg_int / arg_float / arg_str / arg_bool`. See [**Examples**](https://github.com/Rabbit-Company/RabbitEncoder/tree/main/vapoursynth/presets).
 
-User presets are namespaced as `user:<id>` and override nothing (stock and user presets coexist). After editing or adding presets, click **Reload presets** in the Advanced Settings panel (or `POST /api/vs-presets/reload`); no container restart is required.
+User presets are namespaced as `user:<id>` and override nothing (stock and user presets coexist). After editing or adding presets, click **Reload presets** in the Advanced Settings panel (or `POST /api/vs-presets/reload`). No container restart is required.
 
 ### Per-job behavior
 
@@ -127,7 +137,7 @@ Subtitles are styled per **font group**. A group is a folder under the user font
 directory (`/config/fonts`) containing one or more font files plus an optional
 `metadata.json`. A single group can supply different faces for different writing
 systems. For example a Latin-only face like Trebuchet MS together with a CJK
-face like Noto Sans JP - so one group can cover scripts no single font does.
+face like Noto Sans JP. This lets one group cover scripts that no single font does.
 
 `Noto Sans` and `Noto Serif` ship with Rabbit Encoder and are seeded into
 `/config/fonts` on first start if they are not already present, so they are
@@ -188,10 +198,10 @@ If you mount a host font directory read-only, those
 fonts become selectable in the import dropdown: pick a font, choose a writing
 system (Latin, Japanese, Cyrillic, ...) or type extra language keys, and click
 **Import** to copy it into the selected group with those `keys`. The host mount is
-never written to - import always copies into `/config/fonts`.
+never written to. Import always copies into `/config/fonts`.
 
 You can still edit a group's style from the dashboard ("Subtitle font & style..."),
-choosing a scope of "Group global" or a specific script/language; saving writes
+choosing a scope of "Group global" or a specific script/language. Saving writes
 back to the group's `metadata.json`. Click **Reload fonts** (or
 `POST /api/fonts/reload`) after hand-editing files on disk.
 
@@ -200,7 +210,7 @@ retained source font already uses the selected internal family name, Rabbit
 Encoder picks the first free numbered alias (`Noto Sans` → `Noto Sans 2` →
 `Noto Sans 3`), written consistently into the static font's internal metadata and
 the ASS styles it rewrites. The attachment **filename** is slugified
-(`Noto Sans 2` -> `noto_sans_2.ttf`); the internal family name keeps its spaces,
+(`Noto Sans 2` -> `noto_sans_2.ttf`). The internal family name keeps its spaces,
 so rendering is unaffected.
 
 With **Remove unused fonts** enabled, source attachments are kept only when
@@ -255,9 +265,14 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/jobs/:id/mediainfo`                   | Run `mediainfo` on the source file and return the report                       |
 | `GET`    | `/api/jobs/:id/bitrate-analysis`            | Bitrate + noise/bitrate-metric scene data, cached (`?refresh=1` to re-run)     |
 | `GET`    | `/api/jobs/:id/preview`                     | Get preview-encode state for a job (`idle`, running, or completed samples)     |
-| `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode; optional body configures sample count and duration     |
+| `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode. The optional body configures sample count and duration |
 | `DELETE` | `/api/jobs/:id/preview`                     | Cancel a running preview, or clear completed preview artifacts                 |
 | `GET`    | `/api/jobs/:id/preview/sample/:index/:kind` | Fetch source/encode clips, comparison PNGs, VS stills, or prepare-stage stills |
+| `GET`    | `/api/repair/inspect`                       | Inspect target/source MKV subtitle tracks for the repair editor                |
+| `GET`    | `/api/repair/roots`                         | List configured media roots for the repair file picker                         |
+| `GET`    | `/api/repair/browse`                        | Browse MKV files within an allowed repair-picker root                          |
+| `POST`   | `/api/repair/audit`                         | Group a folder or completed job outputs by audio/subtitle metadata             |
+| `POST`   | `/api/repair/jobs`                          | Validate and queue a subtitle-only stream-copy repair plan                     |
 | `GET`    | `/api/config`                               | Get default settings                                                           |
 | `PATCH`  | `/api/config`                               | Update default settings                                                        |
 | `POST`   | `/api/config/reset`                         | Reset default settings                                                         |
@@ -268,7 +283,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/library/browse`                       | Browse a library folder (`?path=/data/library/Animes`)                         |
 | `POST`   | `/api/library/encode`                       | Queue all videos in a folder for in-place encoding                             |
 | `GET`    | `/api/queue`                                | Get queue state (paused or running)                                            |
-| `POST`   | `/api/queue/pause`                          | Pause encoding - stops current encode, preserves queue                         |
+| `POST`   | `/api/queue/pause`                          | Pause encoding. Stops current encode and preserves the queue                   |
 | `POST`   | `/api/queue/resume`                         | Resume encoding from where it was paused                                       |
 | `GET`    | `/api/fonts`                                | List font groups and their faces                                               |
 | `POST`   | `/api/fonts/reload`                         | Rescan the user fonts directory and reload the registry                        |

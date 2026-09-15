@@ -21,7 +21,7 @@ export function classifySpeedup(x?: number | null): string {
 }
 
 export function fmtBytes(n?: number | null): string {
-	if (n == null) return "—";
+	if (n == null) return "N/A";
 	const u = ["B", "KiB", "MiB", "GiB", "TiB"];
 	let i = 0;
 	while (n >= 1024 && i < u.length - 1) {
@@ -31,7 +31,7 @@ export function fmtBytes(n?: number | null): string {
 	return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
 }
 export function fmtRate(bps?: number | null): string {
-	if (bps == null) return "—";
+	if (bps == null) return "N/A";
 	return `${fmtBytes(bps)}/s`;
 }
 export function pctClass(p?: number | null): "ok" | "warn" | "crit" {
@@ -64,8 +64,8 @@ export function renderSysBar(s: SystemStats): void {
 		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
 	</span>`;
 
-	const cpuTitle = `${s.cpuName ? s.cpuName + " · " : ""}${s.cpuCount} threads${s.loadAvg ? " · load " + s.loadAvg[0]?.toFixed(2) : ""}`;
-	html += sysPill("CPU", s.cpuUsagePercent == null ? "—" : `${Math.round(s.cpuUsagePercent)}%`, s.cpuUsagePercent, cpuTitle);
+	const cpuTitle = `${s.cpuName ? s.cpuName + ", " : ""}${s.cpuCount} threads${s.loadAvg ? ", load " + s.loadAvg[0]?.toFixed(2) : ""}`;
+	html += sysPill("CPU", s.cpuUsagePercent == null ? "N/A" : `${Math.round(s.cpuUsagePercent)}%`, s.cpuUsagePercent, cpuTitle);
 
 	if (s.mem) {
 		html += sysPill("RAM", `${Math.round(s.mem.usedPercent)}%`, s.mem.usedPercent, `${fmtBytes(s.mem.usedBytes)} / ${fmtBytes(s.mem.totalBytes)} used`);
@@ -75,11 +75,11 @@ export function renderSysBar(s: SystemStats): void {
 			"DISK",
 			`${Math.round(s.disk.usedPercent)}%`,
 			s.disk.usedPercent,
-			`${fmtBytes(s.disk.availableBytes)} free of ${fmtBytes(s.disk.totalBytes)} — ${s.disk.path}`,
+			`${fmtBytes(s.disk.availableBytes)} free of ${fmtBytes(s.disk.totalBytes)} (${s.disk.path})`,
 		);
 	}
 	if (s.gpu && s.gpu.utilizationPercent != null) {
-		const vram = s.gpu.memTotalBytes ? ` · VRAM ${fmtBytes(s.gpu.memUsedBytes)} / ${fmtBytes(s.gpu.memTotalBytes)}` : "";
+		const vram = s.gpu.memTotalBytes ? `, VRAM ${fmtBytes(s.gpu.memUsedBytes)} / ${fmtBytes(s.gpu.memTotalBytes)}` : "";
 		html += sysPill("GPU", `${Math.round(s.gpu.utilizationPercent)}%`, s.gpu.utilizationPercent, `${s.gpu.name || "GPU"}${vram}`);
 	}
 	if (s.net) {
@@ -133,9 +133,9 @@ export function renderBenchmarkResults(state: BenchmarkState): void {
 	const showVk = state.vulkanAvailable === true || vkMap.size > 0;
 
 	const cell = (entry: BenchmarkResult | undefined, fps: number | null | undefined): string => {
-		if (!entry) return `<td class="numeric cell-empty">—</td>`;
+		if (!entry) return `<td class="numeric cell-empty">N/A</td>`;
 		if (entry.error) return `<td class="numeric cell-failed" title="${escapeHtml(entry.error)}">failed</td>`;
-		if (fps === null || fps === undefined) return `<td class="numeric cell-empty">—</td>`;
+		if (fps === null || fps === undefined) return `<td class="numeric cell-empty">N/A</td>`;
 		const speed = entry.speed ? ` <span class="cell-empty">(${escapeHtml(entry.speed)})</span>` : "";
 		return `<td class="numeric">${fps.toFixed(2)}${speed}</td>`;
 	};
@@ -166,7 +166,7 @@ export function renderBenchmarkResults(state: BenchmarkState): void {
 			}
 
 			const best = vkSpeedup !== null && (oclSpeedup === null || vkSpeedup > oclSpeedup) ? vkSpeedup : oclSpeedup;
-			const speedupCell = best !== null ? `<td class="numeric ${classifySpeedup(best)}">${best.toFixed(2)}x</td>` : `<td class="numeric cell-empty">—</td>`;
+			const speedupCell = best !== null ? `<td class="numeric ${classifySpeedup(best)}">${best.toFixed(2)}x</td>` : `<td class="numeric cell-empty">N/A</td>`;
 
 			return `<tr>
 				<td class="level-cell">${level}</td>
@@ -199,11 +199,11 @@ export function renderBenchmarkResults(state: BenchmarkState): void {
 		let recHtml = "";
 
 		if (state.openclAvailable === false && state.vulkanAvailable === false) {
-			recHtml = `<div class="benchmark-recommendation meh">No GPU backend available — denoising will run on CPU.</div>`;
+			recHtml = `<div class="benchmark-recommendation meh">No GPU backend available. Denoising will run on CPU.</div>`;
 		} else if (vkAvg !== null && oclAvg !== null) {
 			const winnerSpeed = Math.max(vkAvg, oclAvg);
 			const cls = winnerSpeed >= 2 ? "good" : winnerSpeed >= 1.2 ? "meh" : "bad";
-			recHtml = `<div class="benchmark-recommendation ${cls}">Vulkan ${vkAvg.toFixed(1)}x · OpenCL ${oclAvg.toFixed(1)}x vs CPU.</div>`;
+			recHtml = `<div class="benchmark-recommendation ${cls}">Vulkan ${vkAvg.toFixed(1)}x, OpenCL ${oclAvg.toFixed(1)}x vs CPU.</div>`;
 		} else if (vkAvg !== null) {
 			const cls = vkAvg >= 2 ? "good" : vkAvg >= 1.2 ? "meh" : "bad";
 			recHtml = `<div class="benchmark-recommendation ${cls}">Vulkan is ${vkAvg.toFixed(1)}x faster than CPU.</div>`;
@@ -255,7 +255,7 @@ export function renderBenchmark(state: BenchmarkState): void {
 		const pct = state.totalSteps > 0 ? Math.min(100, (state.currentStep / state.totalSteps) * 100) : 0;
 		statusFill.style.width = `${pct}%`;
 		const elapsed = state.startedAt ? Date.now() - state.startedAt : 0;
-		statusMeta.textContent = `Elapsed ${formatElapsed(elapsed)} · ${state.size} · ${state.duration}s @ ${state.rate} fps`;
+		statusMeta.textContent = `Elapsed ${formatElapsed(elapsed)}, ${state.size}, ${state.duration}s @ ${state.rate} fps`;
 		runBtn.style.display = "none";
 		cancelBtn.style.display = "";
 		noteEl.textContent = "";
@@ -265,7 +265,7 @@ export function renderBenchmark(state: BenchmarkState): void {
 		statusStep.textContent = `${state.results.length} / ${state.totalSteps} runs`;
 		statusFill.style.width = "100%";
 		const elapsed = state.startedAt && state.completedAt ? state.completedAt - state.startedAt : 0;
-		statusMeta.textContent = `Total ${formatElapsed(elapsed)} · ${state.size} · ${state.duration}s @ ${state.rate} fps`;
+		statusMeta.textContent = `Total ${formatElapsed(elapsed)}, ${state.size}, ${state.duration}s @ ${state.rate} fps`;
 		runBtn.style.display = "";
 		runBtn.textContent = "Run Again";
 		cancelBtn.style.display = "none";

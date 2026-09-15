@@ -138,7 +138,7 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	const METRIC_HELP: Record<AutoDenoiseMetric, string> = {
 		noise: "Classifies scenes by peak bit-plane noise reading (0-1). Good for classic sensor/film grain.",
 		bitrate:
-			'Classifies scenes by their own bitrate as a multiple of the file\'s median. Targets "this costs a lot of bits" directly, regardless of why - better for structured VFX texture that reads as only moderately noisy but is still expensive to encode.',
+			'Classifies scenes by their own bitrate as a multiple of the file\'s median. Targets "this costs a lot of bits" directly, regardless of why. This is better for structured VFX texture that reads as only moderately noisy but is still expensive to encode.',
 	};
 	const METRIC_BOUNDS: Record<AutoDenoiseMetric, { min: number; max: number; step: number }> = {
 		noise: { min: 0, max: 1, step: 0.01 },

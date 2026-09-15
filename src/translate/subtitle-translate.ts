@@ -410,7 +410,7 @@ async function translateAss(content: string, opts: TranslateContentOptions): Pro
 	}
 
 	if (units.length === 0) {
-		Logger.info("[translate] ASS source has no translatable lines; emitting a copy");
+		Logger.info("[translate] ASS source has no translatable lines. Emitting a copy.");
 		return content;
 	}
 
@@ -536,9 +536,9 @@ export function planTargetLanguages(tracks: KeptSubDescriptor[], targetTags: str
 	if (options.forceSourceIndex != null) {
 		const forced = tracks.find((t) => t.index === options.forceSourceIndex);
 		if (!forced) {
-			skipped.push(`forced source track ${options.forceSourceIndex} not found — falling back to auto selection`);
+			skipped.push(`Forced source track ${options.forceSourceIndex} not found. Falling back to auto selection.`);
 		} else if (!TEXT_CODECS.has(forced.codec.toLowerCase())) {
-			skipped.push(`forced source track ${options.forceSourceIndex} is not text-based (${forced.codec}) — falling back to auto selection`);
+			skipped.push(`Forced source track ${options.forceSourceIndex} is not text-based (${forced.codec}). Falling back to auto selection.`);
 		} else {
 			source = forced;
 		}

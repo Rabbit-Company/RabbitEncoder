@@ -58,6 +58,30 @@ import { delegateClick } from "../ui/delegate";
 import { dispatchJobAction } from "../ui/job-actions";
 import { openFontGroupsModal, closeFontGroupsModal, closeFontGroupsModalIfOutside } from "../features/font-groups-modal";
 import { closeSubStyleModal, closeSubStyleModalIfOutside, openSubStyleModal, saveCurrentGroupStyle } from "../features/sub-style-modal";
+import {
+	closeRepair,
+	closeRepairIfOutside,
+	closeRepairPicker,
+	closeRepairPickerIfOutside,
+	chooseRepairPickerFile,
+	clearRepairSource,
+	filterRepairPicker,
+	handleRepairEditorInput,
+	handleRepairPickerClick,
+	handleRepairTrackMove,
+	inspectRepairPaths,
+	openRepair,
+	openRepairPicker,
+	queueRepair,
+} from "../features/repair";
+import {
+	closeRepairAudit,
+	closeRepairAuditIfOutside,
+	handleRepairAuditClick,
+	openRepairAuditJobs,
+	openRepairAuditPicker,
+	openSelectedAuditRepair,
+} from "../features/repair-audit";
 
 export function getCurrentSettings(): JobSettings | null {
 	if (appState.currentAdvancedTarget === "default") return window._tempDefaults ?? null;
@@ -66,6 +90,32 @@ export function getCurrentSettings(): JobSettings | null {
 }
 
 export function initEventListeners() {
+	byId("open-repair-audit-btn").addEventListener("click", openRepairAuditPicker);
+	byId("close-repair-audit-btn").addEventListener("click", closeRepairAudit);
+	byId("repair-audit-close-btn").addEventListener("click", closeRepairAudit);
+	byId("repair-audit-modal").addEventListener("click", closeRepairAuditIfOutside);
+	byId("repair-audit-pick-folder-btn").addEventListener("click", openRepairAuditPicker);
+	byId("repair-audit-files").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-open-btn").addEventListener("click", openSelectedAuditRepair);
+	byId("open-repair-btn").addEventListener("click", () => openRepair());
+	byId("close-repair-btn").addEventListener("click", closeRepair);
+	byId("repair-cancel-btn").addEventListener("click", closeRepair);
+	byId("repair-modal").addEventListener("click", closeRepairIfOutside);
+	byId("repair-inspect-btn").addEventListener("click", () => inspectRepairPaths());
+	byId("repair-queue-btn").addEventListener("click", queueRepair);
+	byId("repair-pick-target-btn").addEventListener("click", () => openRepairPicker("target"));
+	byId("repair-pick-source-btn").addEventListener("click", () => openRepairPicker("source"));
+	byId("repair-clear-source-btn").addEventListener("click", clearRepairSource);
+	byId("close-repair-picker-btn").addEventListener("click", closeRepairPicker);
+	byId("repair-picker-modal").addEventListener("click", closeRepairPickerIfOutside);
+	byId("repair-picker-content").addEventListener("click", handleRepairPickerClick);
+	byId("repair-picker-search").addEventListener("input", filterRepairPicker);
+	byId("repair-picker-choose-btn").addEventListener("click", chooseRepairPickerFile);
+	byId("repair-tracks").addEventListener("input", handleRepairEditorInput);
+	byId("repair-tracks").addEventListener("change", handleRepairEditorInput);
+	byId("repair-tracks").addEventListener("click", handleRepairTrackMove);
+	byId("repair-source-tracks").addEventListener("click", handleRepairTrackMove);
+
 	byId("open-settings-btn").addEventListener("click", openSettings);
 	byId("close-settings-btn").addEventListener("click", closeSettings);
 	byId("save-settings-btn").addEventListener("click", saveSettings);
@@ -148,6 +198,13 @@ export function initEventListeners() {
 	byId("jobs-list").addEventListener("click", (e) => {
 		const target = asElementTarget(e.target);
 		if (!target) return;
+		const auditFolderButton = target.closest<HTMLElement>(".btn-folder-audit");
+		if (auditFolderButton) {
+			e.stopPropagation();
+			const jobIds = (auditFolderButton.dataset.auditJobIds || "").split(",").filter(Boolean);
+			if (jobIds.length) void openRepairAuditJobs(jobIds, auditFolderButton.dataset.auditFolderLabel);
+			return;
+		}
 		const moveBtn = target.closest<HTMLElement>(".btn-move");
 		if (moveBtn) {
 			e.stopPropagation();
@@ -198,6 +255,7 @@ export function initEventListeners() {
 			"audio-preview": openAudioPreview,
 			mediainfo: openMediaInfo,
 			bitrate: openBitrateAnalysis,
+			repair: openRepair,
 		});
 	});
 

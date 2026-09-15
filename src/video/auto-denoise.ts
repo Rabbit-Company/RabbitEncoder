@@ -587,7 +587,7 @@ async function encodeSegment(
 			{ signal },
 		);
 		if (res.code !== 0) {
-			throw new Error(`Passthrough segment [${ss}–${to}] failed: ${res.stderr.slice(-500)}`);
+			throw new Error(`Passthrough segment [${ss} to ${to}] failed: ${res.stderr.slice(-500)}`);
 		}
 		return;
 	}
@@ -621,7 +621,7 @@ async function encodeSegment(
 	);
 
 	if (res.code !== 0) {
-		throw new Error(`Denoise segment [${seg.level} ${ss}–${to}] failed: ${res.stderr.slice(-500)}`);
+		throw new Error(`Denoise segment [${seg.level} ${ss} to ${to}] failed: ${res.stderr.slice(-500)}`);
 	}
 }
 
@@ -652,7 +652,7 @@ export async function runSegmentedAutoDenoiseGpu(
 
 	const segments = buildSegmentList(plan, totalDuration);
 	if (segments.length === 0) {
-		throw new Error("Segment list is empty; nothing to denoise");
+		throw new Error("Segment list is empty. Nothing to denoise.");
 	}
 
 	const sourceFmt = await probeStreamFormat(inputPath);
@@ -675,7 +675,7 @@ export async function runSegmentedAutoDenoiseGpu(
 			const seg = segments[i]!;
 			const segFile = join(segDir, `seg_${String(i).padStart(5, "0")}.mkv`);
 			const lvl = seg.level ?? "passthrough";
-			const label = `${lvl} ${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s`;
+			const label = `${lvl} ${seg.start.toFixed(1)} to ${seg.end.toFixed(1)}s`;
 
 			onProgress(i, segments.length, label);
 			Logger.debug(`[auto-denoise] Segment ${i + 1}/${segments.length}: ${label}`);

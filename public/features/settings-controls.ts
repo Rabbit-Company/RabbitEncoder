@@ -129,12 +129,12 @@ export function mountSettingsCodePanel(container: SettingsCodePanelElement | nul
 	const refresh = async () => {
 		const settings = opts.getSettings();
 		if (!settings) {
-			codeField.value = "—";
+			codeField.value = "N/A";
 			lastSerialized = null;
 			return;
 		}
 		lastSerialized = JSON.stringify(settings);
-		codeField.value = (await encodeSettingsCodeRequest(settings)) || "—";
+		codeField.value = (await encodeSettingsCodeRequest(settings)) || "N/A";
 	};
 
 	// Live-update the displayed code as other fields change. The edit callbacks
@@ -151,7 +151,7 @@ export function mountSettingsCodePanel(container: SettingsCodePanelElement | nul
 		const serialized = JSON.stringify(settings);
 		if (serialized === lastSerialized) return;
 		lastSerialized = serialized;
-		codeField.value = (await encodeSettingsCodeRequest(settings)) || "—";
+		codeField.value = (await encodeSettingsCodeRequest(settings)) || "N/A";
 	}, 500);
 
 	copyBtn.onclick = async () => {

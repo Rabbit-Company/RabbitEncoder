@@ -324,7 +324,7 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 
 		const sampleDir = join(baseDir, `sample_${String(i).padStart(2, "0")}`);
 		mkdirSync(sampleDir, { recursive: true });
-		const report = (d: string) => onUpdate({ progress: Math.round((i / stamps.length) * 1000) / 10, currentDetail: `Sample ${i + 1}/${stamps.length} — ${d}` });
+		const report = (d: string) => onUpdate({ progress: Math.round((i / stamps.length) * 1000) / 10, currentDetail: `Sample ${i + 1}/${stamps.length}: ${d}` });
 
 		try {
 			report("Cutting clip");

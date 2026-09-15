@@ -55,7 +55,7 @@ class VsRegistry {
 			const scriptPath = join(dir, `${stem}.vpy`);
 
 			if (!existsSync(scriptPath)) {
-				Logger.warn(`[vs] Manifest ${manifestPath} has no matching .vpy script — skipping`);
+				Logger.warn(`[vs] Manifest ${manifestPath} has no matching .vpy script. Skipping.`);
 				continue;
 			}
 
@@ -64,7 +64,7 @@ class VsRegistry {
 				const parsed = JSON.parse(raw);
 				const manifest = validateManifest(parsed, source, scriptPath, manifestPath);
 				if (this.presets.has(manifest.id)) {
-					Logger.warn(`[vs] Duplicate preset id ${manifest.id} — keeping first definition`);
+					Logger.warn(`[vs] Duplicate preset id ${manifest.id}. Keeping first definition.`);
 					continue;
 				}
 				this.presets.set(manifest.id, manifest);
@@ -589,6 +589,6 @@ async function readStderrLines(stream: ReadableStream<Uint8Array> | undefined | 
 }
 
 export function formatVsProgressDetail(presetName: string, level: string, current: number, total: number, fpsStr: string | null): string {
-	const base = `${presetName} (${level}) — ${fmtFrames(current, total)}`;
+	const base = `${presetName} (${level}): ${fmtFrames(current, total)}`;
 	return fpsStr ? `${base} @ ${fpsStr} fps` : base;
 }

@@ -288,6 +288,7 @@ export interface SubtitleStreamInfo {
 	isDefault?: boolean;
 	isHearingImpaired?: boolean;
 	isOriginal?: boolean;
+	signsSongsDetected?: boolean;
 }
 
 export interface ProbeResult {
@@ -335,7 +336,104 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
+export type JobKind = "encode" | "repair";
+export type RepairTrackSource = "target" | "source";
+export type RepairTrackMode = "copy" | "rabbit";
+export type RepairCompression = "preserve" | "none" | "zlib";
+
+export interface RepairSubtitleTrackPlan {
+	source: RepairTrackSource;
+	trackId: number;
+	mode: RepairTrackMode;
+	order: number;
+	title: string;
+	language: string;
+	compression: RepairCompression;
+	isDefault: boolean;
+	isForced: boolean;
+	isEnabled: boolean;
+	isHearingImpaired: boolean;
+	isOriginal: boolean;
+	isCommentary: boolean;
+}
+
+export interface RepairPlan {
+	targetPath: string;
+	sourcePath?: string;
+	replaceTarget: boolean;
+	tracks: RepairSubtitleTrackPlan[];
+}
+
+export interface RepairSubtitleTrack {
+	id: number;
+	codec: string;
+	codecId: string;
+	language: string;
+	title: string;
+	isDefault: boolean;
+	isForced: boolean;
+	isEnabled: boolean;
+	isHearingImpaired: boolean;
+	isOriginal: boolean;
+	isCommentary: boolean;
+	canRabbitProcess: boolean;
+	currentCompression: "none" | "zlib";
+}
+
+export interface RepairInspectionFile {
+	path: string;
+	filename: string;
+	durationSeconds: number;
+	subtitles: RepairSubtitleTrack[];
+}
+
+export interface RepairInspection {
+	target: RepairInspectionFile;
+	source?: RepairInspectionFile;
+}
+
+export interface RepairAuditTrack {
+	id: number;
+	type: "audio" | "subtitles";
+	codec: string;
+	language: string;
+	title: string;
+	isDefault: boolean;
+	isForced: boolean;
+	isEnabled: boolean;
+	isHearingImpaired: boolean;
+	isVisualImpaired: boolean;
+	isTextDescriptions: boolean;
+	isOriginal: boolean;
+	isCommentary: boolean;
+	compression: "none" | "zlib";
+}
+
+export interface RepairAuditFile {
+	path: string;
+	sourcePath?: string;
+	filename: string;
+	group: number;
+	groupLabel: string;
+	differences: string[];
+	tracks: RepairAuditTrack[];
+}
+
+export interface RepairAuditGroup {
+	group: number;
+	label: string;
+	count: number;
+	representativePath: string;
+}
+
+export interface RepairFolderAudit {
+	path?: string;
+	files: RepairAuditFile[];
+	groups: RepairAuditGroup[];
+}
+
 export interface Job {
+	kind?: JobKind;
 	id: string;
 	filename: string;
 	inputPath: string;
@@ -356,6 +454,7 @@ export interface Job {
 	encodedVideoSize?: string;
 	encodedFileSize?: string;
 	replaceSource: boolean;
+	repairPlan?: RepairPlan;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 

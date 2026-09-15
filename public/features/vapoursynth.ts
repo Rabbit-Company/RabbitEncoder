@@ -32,7 +32,7 @@ export function renderVsChainEditor(container: HTMLElement, settings: JobSetting
 		for (const p of presets) {
 			const opt = document.createElement("option");
 			opt.value = p.id;
-			opt.textContent = `${p.name}  ·  ${p.source}`;
+			opt.textContent = `${p.name} (${p.source})`;
 			select.appendChild(opt);
 		}
 		select.onchange = async () => {

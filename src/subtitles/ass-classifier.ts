@@ -25,6 +25,8 @@ interface AssEvent {
 interface ParsedAss {
 	styles: AssStyle[];
 	events: AssEvent[];
+	playResX: number;
+	playResY: number;
 }
 
 const NUM = (v: string | undefined, d: number): number => {
@@ -39,37 +41,64 @@ export function normalizeFontName(name: string): string {
 
 /** Style names the classifier considers dialogue (baseline + structurally similar). */
 export function dialogueStyleNames(assText: string): Set<string> {
-	const { styles, events } = parseAss(assText);
+	const { styles, events, playResX, playResY } = parseAss(assText);
 	const usage = new Map<string, number>();
 	const profiles = new Map<string, StyleProfile>();
 	for (const ev of events) {
+		if (!lineHasRenderableContent(ev.text)) continue;
 		usage.set(ev.style, (usage.get(ev.style) ?? 0) + 1);
-		let p = profiles.get(ev.style);
-		if (!p) {
-			p = { total: 0, signTag: 0, karaokeTag: 0 };
-			profiles.set(ev.style, p);
-		}
-		p.total++;
-		if (lineHasSignTags(ev.text)) p.signTag++;
-		if (lineHasKaraoke(ev.text)) p.karaokeTag++;
+		updateStyleProfile(profiles, ev);
 	}
-	const baseline = pickBaselineStyle(styles, usage);
+	const baseline = pickBaselineStyle(styles, usage, profiles, playResX, playResY);
 	const out = new Set<string>();
 	for (const s of styles) {
-		if (classifyStyle(s, baseline, profiles.get(s.name)) === "dialogue") out.add(s.name);
+		if ((usage.get(s.name) ?? 0) === 0) continue;
+		if (classifyStyle(s, baseline, profiles.get(s.name), playResX, playResY) === "dialogue") out.add(s.name);
 	}
 	return out;
+}
+
+/**
+ * Dialogue styles which are safe to rewrite as a whole. ASS styles are shared:
+ * changing one Style line also changes every sign/song event that references
+ * it. Fail closed when a meaningful share of a dialogue-classified style uses
+ * explicit typesetting, drawing, or karaoke. A few clip-based dialogue
+ * transitions are allowed; production fansubs use those on ordinary dialogue.
+ */
+export function restylableDialogueStyleNames(assText: string): Set<string> {
+	const dialogue = dialogueStyleNames(assText);
+	if (dialogue.size === 0) return dialogue;
+
+	const { events, playResX, playResY } = parseAss(assText);
+	const profiles = new Map<string, StyleProfile>();
+	for (const ev of events) {
+		if (!dialogue.has(ev.style) || !lineHasRenderableContent(ev.text)) continue;
+		updateStyleProfile(profiles, ev);
+	}
+	for (const style of dialogue) {
+		const profile = profiles.get(style);
+		if (!profile || profile.total === 0) continue;
+		const fracKara = profile.karaokeTag / profile.total;
+		const fracComplexSign = profile.nonPositionSignTag / profile.total;
+		const fracSign = profile.signTag / profile.total;
+		const fracPositioned = profile.positions.length / profile.total;
+		if (fracKara >= 0.2 || fracComplexSign >= 0.2 || fracSign >= 0.3 || (fracPositioned >= 0.2 && positionsLookTypeset(profile, playResX, playResY))) {
+			dialogue.delete(style);
+		}
+	}
+	return dialogue;
 }
 
 /** Fonts actually referenced by an ASS file: styles used by ≥1 event, plus inline \fn overrides. */
 export function extractUsedFonts(assText: string): Set<string> {
 	const { styles, events } = parseAss(assText);
-	const usedStyles = new Set(events.map((e) => e.style));
+	const renderedEvents = events.filter((e) => lineHasRenderableContent(e.text));
+	const usedStyles = new Set(renderedEvents.map((e) => e.style));
 	const fonts = new Set<string>();
 	for (const s of styles) {
 		if (usedStyles.has(s.name) && s.fontname) fonts.add(normalizeFontName(s.fontname));
 	}
-	for (const ev of events) {
+	for (const ev of renderedEvents) {
 		for (const m of ev.text.matchAll(/\\fn([^\\}]+)/g)) {
 			const f = m[1]!.trim();
 			if (f) fonts.add(normalizeFontName(f));
@@ -84,6 +113,8 @@ function parseAss(assText: string): ParsedAss {
 	let section = "";
 	let styleKeys: string[] = [];
 	let eventKeys: string[] = [];
+	let playResX = 0;
+	let playResY = 0;
 
 	for (const rawLine of assText.split(/\r?\n/)) {
 		const line = rawLine.trim();
@@ -95,6 +126,12 @@ function parseAss(assText: string): ParsedAss {
 		}
 
 		const lower = line.toLowerCase();
+		if (section === "script info") {
+			const mx = line.match(/^PlayResX\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+			if (mx) playResX = NUM(mx[1], 0);
+			const my = line.match(/^PlayResY\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
+			if (my) playResY = NUM(my[1], 0);
+		}
 
 		if (lower.startsWith("format:")) {
 			const keys = line
@@ -156,7 +193,7 @@ function parseAss(assText: string): ParsedAss {
 		}
 	}
 
-	return { styles, events };
+	return { styles, events, playResX, playResY };
 }
 
 const DIALOGUE_WORDS: ReadonlySet<string> = new Set([
@@ -309,6 +346,12 @@ function classifyStyleName(name: string): NameVerdict {
 // carries \pos.
 const STRONG_SIGN_TAG_RE = /\\(?:pos|move|clip|iclip|p[1-9]|org)\b/i;
 
+// Tags whose presence is strong typesetting evidence independently of where
+// the event is positioned. `pos` is considered separately so a small number of
+// intentionally positioned dialogue lines does not poison an otherwise normal
+// dialogue style.
+const NON_POSITION_SIGN_TAG_RE = /\\(?:move|clip|iclip|p[1-9]|org)\b/i;
+
 // Karaoke tags - an extremely strong per-line signal.
 const KARAOKE_TAG_RE = /\\k[fo]?\d+/i;
 
@@ -316,6 +359,16 @@ const KARAOKE_TAG_RE = /\\k[fo]?\d+/i;
 const DRAWING_TEXT_RE = /\bm\s+-?\d+\s+-?\d+\s+l\s+-?\d+/i;
 
 const OVERRIDE_BLOCK_RE = /\{[^}]*\}/g;
+
+/** Ignore empty/tag-only events: they render no glyphs and use no font. */
+function lineHasRenderableContent(text: string): boolean {
+	return (
+		text
+			.replace(OVERRIDE_BLOCK_RE, "")
+			.replace(/\\[Nnh]/g, "")
+			.trim().length > 0
+	);
+}
 
 function lineHasKaraoke(text: string): boolean {
 	return KARAOKE_TAG_RE.test(text);
@@ -325,6 +378,30 @@ function lineHasSignTags(text: string): boolean {
 	if (STRONG_SIGN_TAG_RE.test(text)) return true;
 	const stripped = text.replace(OVERRIDE_BLOCK_RE, "");
 	return DRAWING_TEXT_RE.test(stripped);
+}
+
+function lineHasNonPositionSignTags(text: string): boolean {
+	if (NON_POSITION_SIGN_TAG_RE.test(text)) return true;
+	const stripped = text.replace(OVERRIDE_BLOCK_RE, "");
+	return DRAWING_TEXT_RE.test(stripped);
+}
+
+interface AssPoint {
+	x: number;
+	y: number;
+}
+
+const ASS_COORD = "(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+))";
+const POS_RE = new RegExp(`\\\\pos\\(\\s*${ASS_COORD}\\s*,\\s*${ASS_COORD}\\s*\\)`, "i");
+const MOVE_RE = new RegExp(`\\\\move\\(\\s*${ASS_COORD}\\s*,\\s*${ASS_COORD}\\s*,\\s*${ASS_COORD}\\s*,\\s*${ASS_COORD}`, "i");
+
+/** Return the rendered destination of an explicit \pos/\move override. */
+function linePosition(text: string): AssPoint | null {
+	const pos = POS_RE.exec(text);
+	if (pos) return { x: NUM(pos[1], 0), y: NUM(pos[2], 0) };
+	const move = MOVE_RE.exec(text);
+	if (move) return { x: NUM(move[3], 0), y: NUM(move[4], 0) };
+	return null;
 }
 
 const COMMON_DIALOGUE_FONTS: ReadonlySet<string> = new Set([
@@ -364,7 +441,13 @@ function normalizeFont(name: string): string {
 	return name.trim().toLowerCase().replace(/^@/, "");
 }
 
-function pickBaselineStyle(styles: AssStyle[], usage: Map<string, number>): AssStyle | null {
+function pickBaselineStyle(
+	styles: AssStyle[],
+	usage: Map<string, number>,
+	profiles: Map<string, StyleProfile>,
+	playResX: number,
+	playResY: number,
+): AssStyle | null {
 	if (styles.length === 0) return null;
 
 	const candidates = styles.filter((s) => {
@@ -372,16 +455,25 @@ function pickBaselineStyle(styles: AssStyle[], usage: Map<string, number>): AssS
 		if (s.alignment !== 2 && s.alignment !== 8) return false;
 		if (s.borderStyle !== 1 && s.borderStyle !== 3) return false;
 		const { kind } = classifyStyleName(s.name);
-		return kind !== "sign" && kind !== "song";
+		if (kind === "sign" || kind === "song") return false;
+		return strongProfileVerdict(profiles.get(s.name), playResX, playResY) === null;
 	});
 
-	for (const preferred of ["main", "default"]) {
-		const hit = candidates.find((s) => s.name.trim().toLowerCase() === preferred);
-		if (hit) return hit;
-	}
-
 	if (candidates.length > 0) {
-		return candidates.reduce((best, s) => ((usage.get(s.name) ?? 0) > (usage.get(best.name) ?? 0) ? s : best));
+		const mostUsed = candidates.reduce((best, s) => ((usage.get(s.name) ?? 0) > (usage.get(best.name) ?? 0) ? s : best));
+		const mostUsedCount = usage.get(mostUsed.name) ?? 0;
+
+		// Aegisub files sometimes retain an almost-unused `Default` style while
+		// the real dialogue lives in a release-specific style such as
+		// `GJM_Main_1080p`. Prefer the conventional exact names only when their
+		// usage is substantial enough to be representative.
+		for (const preferred of ["main", "default"]) {
+			const hit = candidates.find((s) => s.name.trim().toLowerCase() === preferred);
+			const hitCount = hit ? (usage.get(hit.name) ?? 0) : 0;
+			if (hit && hitCount >= 5 && hitCount >= mostUsedCount * 0.25) return hit;
+		}
+
+		return mostUsed;
 	}
 
 	const used = styles.filter((s) => (usage.get(s.name) ?? 0) > 0);
@@ -421,13 +513,63 @@ function structurallySimilar(style: AssStyle, baseline: AssStyle, strict: boolea
 interface StyleProfile {
 	total: number;
 	signTag: number;
+	nonPositionSignTag: number;
 	karaokeTag: number;
+	positions: AssPoint[];
 }
 
-function classifyStyle(style: AssStyle, baseline: AssStyle | null, profile: StyleProfile | undefined): AssLineKind {
-	const { kind, strength } = classifyStyleName(style.name);
+function updateStyleProfile(profiles: Map<string, StyleProfile>, ev: AssEvent): void {
+	let p = profiles.get(ev.style);
+	if (!p) {
+		p = { total: 0, signTag: 0, nonPositionSignTag: 0, karaokeTag: 0, positions: [] };
+		profiles.set(ev.style, p);
+	}
+	p.total++;
+	if (lineHasSignTags(ev.text)) p.signTag++;
+	if (lineHasNonPositionSignTags(ev.text)) p.nonPositionSignTag++;
+	if (lineHasKaraoke(ev.text)) p.karaokeTag++;
+	const position = linePosition(ev.text);
+	if (position) p.positions.push(position);
+}
 
+function positionsLookTypeset(profile: StyleProfile, playResX: number, playResY: number): boolean {
+	if (profile.positions.length < 2 || playResX <= 0 || playResY <= 0) return false;
+
+	const xs = profile.positions.map((p) => p.x / playResX);
+	const ys = profile.positions.map((p) => p.y / playResY);
+	const xSpread = Math.max(...xs) - Math.min(...xs);
+	const ySpread = Math.max(...ys) - Math.min(...ys);
+	const outsideDialogueBands = xs.filter((x, i) => {
+		const y = ys[i]!;
+		const horizontallyCentred = x >= 0.2 && x <= 0.8;
+		const inTopOrBottomBand = y <= 0.22 || y >= 0.78;
+		return !horizontallyCentred || !inTopOrBottomBand;
+	}).length;
+
+	return xSpread >= 0.25 || ySpread >= 0.2 || outsideDialogueBands / profile.positions.length >= 0.5;
+}
+
+function strongProfileVerdict(profile: StyleProfile | undefined, playResX: number, playResY: number): AssLineKind | null {
+	if (!profile || profile.total === 0) return null;
+	const fracKara = profile.karaokeTag / profile.total;
+	const fracComplexSign = profile.nonPositionSignTag / profile.total;
+	const fracSign = profile.signTag / profile.total;
+	const fracPositioned = profile.positions.length / profile.total;
+
+	// These checks intentionally run before style-name and baseline acceptance:
+	// a sign-only script often calls its only style `Default`.
+	if (fracKara >= 0.8) return "song";
+	if (fracComplexSign >= 0.5) return "sign";
+	if (fracSign >= 0.8) return "sign";
+	if (fracPositioned >= 0.5 && positionsLookTypeset(profile, playResX, playResY)) return "sign";
+	return null;
+}
+
+function classifyStyle(style: AssStyle, baseline: AssStyle | null, profile: StyleProfile | undefined, playResX: number, playResY: number): AssLineKind {
+	const { kind, strength } = classifyStyleName(style.name);
 	if (kind === "song") return "song";
+	const strongProfile = strongProfileVerdict(profile, playResX, playResY);
+	if (strongProfile !== null) return strongProfile;
 
 	if (kind === "sign") {
 		if (strength === "weak" && baseline !== null && structurallySimilar(style, baseline, true)) {
@@ -465,31 +607,26 @@ function classifyStyle(style: AssStyle, baseline: AssStyle | null, profile: Styl
 }
 
 export function classifyAssLines(assText: string): ClassifiedAssLine[] {
-	const { styles, events } = parseAss(assText);
+	const { styles, events, playResX, playResY } = parseAss(assText);
 
 	const usage = new Map<string, number>();
 	const profiles = new Map<string, StyleProfile>();
 	for (const ev of events) {
+		if (!lineHasRenderableContent(ev.text)) continue;
 		usage.set(ev.style, (usage.get(ev.style) ?? 0) + 1);
-		let p = profiles.get(ev.style);
-		if (!p) {
-			p = { total: 0, signTag: 0, karaokeTag: 0 };
-			profiles.set(ev.style, p);
-		}
-		p.total++;
-		if (lineHasSignTags(ev.text)) p.signTag++;
-		if (lineHasKaraoke(ev.text)) p.karaokeTag++;
+		updateStyleProfile(profiles, ev);
 	}
 
-	const baseline = pickBaselineStyle(styles, usage);
+	const baseline = pickBaselineStyle(styles, usage, profiles, playResX, playResY);
 
 	const styleKinds = new Map<string, AssLineKind>();
 	for (const s of styles) {
-		styleKinds.set(s.name, classifyStyle(s, baseline, profiles.get(s.name)));
+		styleKinds.set(s.name, classifyStyle(s, baseline, profiles.get(s.name), playResX, playResY));
 	}
 
 	const result: ClassifiedAssLine[] = [];
 	for (const ev of events) {
+		if (!lineHasRenderableContent(ev.text)) continue;
 		let kind = styleKinds.get(ev.style);
 		if (kind === undefined) {
 			// Event references an undeclared style - fall back to name-only.

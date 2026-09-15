@@ -129,7 +129,7 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 
 	const autoOpt = document.createElement("option");
 	autoOpt.value = "auto";
-	autoOpt.textContent = "Auto — first full text-based track";
+	autoOpt.textContent = "Auto (first full text-based track)";
 	autoOpt.selected = settings.translateSourceTrack == null || settings.translateSourceTrack === "auto";
 	select.appendChild(autoOpt);
 
@@ -144,7 +144,7 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 				const o = document.createElement("option");
 				o.value = String(t.index);
 				const label = t.title || t.trackType;
-				o.textContent = `${t.flag} ${t.language} — ${label} (${t.codec.toUpperCase()})${t.isText ? "" : " — image-based"}`;
+				o.textContent = `${t.flag} ${t.language}: ${label} (${t.codec.toUpperCase()})${t.isText ? "" : " (image-based)"}`;
 				o.disabled = !t.isText;
 				if (settings.translateSourceTrack === t.index) o.selected = true;
 				select.appendChild(o);
@@ -152,16 +152,16 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 			if (typeof settings.translateSourceTrack === "number" && !tracks.some((t) => t.index === settings.translateSourceTrack)) {
 				const o = document.createElement("option");
 				o.value = String(settings.translateSourceTrack);
-				o.textContent = `Track ${settings.translateSourceTrack} (no longer present — will fall back to Auto)`;
+				o.textContent = `Track ${settings.translateSourceTrack} (no longer present, will fall back to Auto)`;
 				o.selected = true;
 				select.appendChild(o);
 			}
-			hint.textContent = "Languages shown are the container's labels; the analysis pass may relabel mislabeled tracks at run time.";
+			hint.textContent = "Languages shown are the container's labels. The analysis pass may relabel mislabeled tracks at run time.";
 		} catch (err) {
-			hint.textContent = `Could not load track list (${(err as Error).message}) — Auto will be used.`;
+			hint.textContent = `Could not load track list (${(err as Error).message}). Auto will be used.`;
 		}
 	} else {
-		hint.textContent = "Defaults always start on Auto; pick a specific track in each job's settings.";
+		hint.textContent = "Defaults always start on Auto. Pick a specific track in each job's settings.";
 	}
 
 	select.onchange = () => {
@@ -501,7 +501,7 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		});
 		testBtn.disabled = false;
 		if (r.ok) {
-			testResult.textContent = `✓ OK - sample (${r.target}): "${r.sample}"`;
+			testResult.textContent = `✓ OK. Sample (${r.target}): "${r.sample}"`;
 			testResult.classList.add("ok");
 		} else {
 			testResult.textContent = `✗ ${r.error}`;

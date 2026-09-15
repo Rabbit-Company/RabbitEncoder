@@ -95,7 +95,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 
 		const subtitleStreams: SubtitleStreamInfo[] = probe.subtitleStreams ?? [];
 		if (subtitleStreams.length === 0) {
-			throw new Error("No subtitle streams found — nothing to translate from");
+			throw new Error("No subtitle streams found. Nothing to translate from.");
 		}
 
 		setStep(T_ANALYZE, { progress: 30, detail: `Analyzing ${subtitleStreams.length} subtitle track(s)` });
@@ -126,9 +126,9 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 		if (typeof pick === "number") {
 			const stream = subtitleStreams.find((s) => s.index === pick);
 			if (!stream) {
-				Logger.warn(`[translate-only] Selected source track ${pick} not found — falling back to auto selection`);
+				Logger.warn(`[translate-only] Selected source track ${pick} not found. Falling back to auto selection.`);
 			} else if (!isTextSubtitleCodec(stream.codec)) {
-				throw new Error(`Selected source subtitle track ${pick} is image-based (${stream.codec}) and cannot be translated — pick a text-based track`);
+				throw new Error(`Selected source subtitle track ${pick} is image-based (${stream.codec}) and cannot be translated. Pick a text-based track.`);
 			} else {
 				forceSourceIndex = pick;
 			}
@@ -178,7 +178,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 
 		if (translated.length === 0) {
 			if (job.replaceSource) {
-				setStep(T_MUX, { status: "done", progress: 100, detail: "Nothing to translate — source unchanged" });
+				setStep(T_MUX, { status: "done", progress: 100, detail: "Nothing to translate. Source unchanged." });
 				updateJob({
 					status: "done",
 					currentStage: "Complete",
@@ -193,7 +193,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 				return;
 			}
 
-			setStep(T_MUX, { progress: 50, detail: "Nothing to translate — moving to output" });
+			setStep(T_MUX, { progress: 50, detail: "Nothing to translate. Moving to output." });
 			outputPath = await finalizeOutput(job, config, job.inputPath, job.filename, signal);
 		} else {
 			const finalOutput = join(tempDir, "final.mkv");

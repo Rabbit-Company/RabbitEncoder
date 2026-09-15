@@ -13,7 +13,7 @@
 				<div class="header-left">
 					<div class="header-text">
 						<h1>Rabbit Encoder <span id="title-version" class="subtitle"></span></h1>
-						<span class="subtitle">AV1 · Opus · Auto-Boost-Essential</span>
+						<span class="subtitle">AV1, Opus, Auto-Boost-Essential</span>
 					</div>
 				</div>
 				<div class="header-right">
@@ -39,6 +39,20 @@
 							<path d="M3.34 19a10 10 0 1 1 17.32 0" />
 						</svg>
 						Benchmark
+					</button>
+					<button title="Compare track metadata across an MKV folder" class="btn btn-ghost" id="open-repair-audit-btn">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+							<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+							<circle cx="15" cy="14" r="3" />
+							<path d="m17.3 16.3 2.2 2.2" />
+						</svg>
+						Audit folder
+					</button>
+					<button title="Repair or remux subtitles without re-encoding video" class="btn btn-ghost" id="open-repair-btn">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M14.7 6.3a4 4 0 0 0-5-5L7.4 3.6l3 3-3.8 3.8-3-3-2.3 2.3a4 4 0 0 0 5 5l7.9 7.9a2.1 2.1 0 0 0 3-3z" />
+						</svg>
+						Repair
 					</button>
 					<button title="Import a downloaded bitrate-analysis.json" class="btn btn-ghost" id="import-bitrate-analysis-btn">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -75,7 +89,7 @@
 						<rect x="6" y="4" width="4" height="16" rx="1" />
 						<rect x="14" y="4" width="4" height="16" rx="1" />
 					</svg>
-					<span>Encoding paused - jobs will wait in the queue until you press Continue</span>
+					<span>Encoding is paused. Jobs will wait in the queue until you press Continue.</span>
 				</div>
 				<div id="empty-state" class="empty-state"></div>
 				<div id="jobs-list" class="jobs-list" style="display: none"></div>
@@ -688,8 +702,8 @@
 							<label>NLMeans Parameters</label>
 							<div id="advanced-nlmeans-params"></div>
 							<div class="lang-filter-hint">
-								<code>s</code> = strength [1.0 – 30.0], <code>p</code> = patch size (odd) [1 – 99], <code>r</code> = research size (odd) [1 – 99]. Larger values
-								denoise more aggressively but cost more time.
+								<code>s</code> = strength [1.0 to 30.0], <code>p</code> = patch size (odd) [1 to 99], <code>r</code> = research size (odd) [1 to 99]. Larger
+								values denoise more aggressively but cost more time.
 							</div>
 						</div>
 
@@ -697,14 +711,14 @@
 						<div class="setting-group">
 							<label>Gradfun (Deband) Parameters</label>
 							<div id="advanced-gradfun-params"></div>
-							<div class="lang-filter-hint"><code>strength</code> = max change per pixel [0.51 – 64], <code>radius</code> = neighbourhood size [8 – 32].</div>
+							<div class="lang-filter-hint"><code>strength</code> = max change per pixel [0.51 to 64], <code>radius</code> = neighbourhood size [8 to 32].</div>
 						</div>
 
 						<div class="setting-group">
 							<label>VapourSynth Filters</label>
 							<div id="advanced-vs-chain"></div>
 							<div class="lang-filter-hint">
-								Each filter runs as its own pass before the FFmpeg filter chain. VapourSynth filters are CPU-bound and slower than FFmpeg filters – expect
+								Each filter runs as its own pass before the FFmpeg filter chain. VapourSynth filters are CPU-bound and slower than FFmpeg filters. Expect
 								noticeably longer prepare times.
 							</div>
 							<button class="btn btn-ghost" id="vs-reload-btn" type="button">Reload presets</button>
@@ -756,11 +770,11 @@
 						<div class="benchmark-hardware" id="benchmark-hardware">
 							<div class="benchmark-hardware-row">
 								<span class="benchmark-hardware-label">CPU</span>
-								<span class="benchmark-hardware-value" id="benchmark-cpu-name">—</span>
+								<span class="benchmark-hardware-value" id="benchmark-cpu-name">Not available</span>
 							</div>
 							<div class="benchmark-hardware-row">
 								<span class="benchmark-hardware-label">GPU</span>
-								<span class="benchmark-hardware-value" id="benchmark-gpu-name">—</span>
+								<span class="benchmark-hardware-value" id="benchmark-gpu-name">Not available</span>
 							</div>
 						</div>
 
@@ -783,6 +797,137 @@
 						<span class="modal-note" id="benchmark-note"></span>
 						<button class="btn btn-ghost" id="benchmark-cancel-btn" style="display: none">Cancel</button>
 						<button class="btn btn-primary" id="benchmark-run-btn">Run Benchmark</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Subtitle Repair / Remux Modal -->
+			<div id="repair-modal" class="modal-overlay" style="display: none">
+				<div class="modal repair-modal">
+					<div class="modal-header">
+						<div>
+							<h2>Repair / Remux Subtitles</h2>
+							<div class="repair-subtitle">Video and audio are copied unchanged. A separate repaired MKV is created by default.</div>
+						</div>
+						<button class="btn-close" id="close-repair-btn">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div class="repair-paths">
+							<div class="repair-file-choice">
+								<span class="repair-file-label">Encoded target</span>
+								<div id="repair-target-selection" class="repair-file-selection"></div>
+								<button class="btn btn-ghost" type="button" id="repair-pick-target-btn">Choose target…</button>
+							</div>
+							<div class="repair-file-choice">
+								<span class="repair-file-label">Original source <small>optional</small></span>
+								<div id="repair-source-selection" class="repair-file-selection"></div>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="repair-pick-source-btn">Choose source…</button>
+									<button class="btn btn-ghost" type="button" id="repair-clear-source-btn" style="display: none">Clear</button>
+								</div>
+							</div>
+						</div>
+						<div class="repair-path-actions">
+							<button class="btn btn-ghost" id="repair-inspect-btn" disabled>Inspect selected files</button>
+							<span>Choose files from Rabbit's input, output, or configured library folders.</span>
+						</div>
+						<div id="repair-error" class="sub-preview-error" style="display: none"></div>
+						<div id="repair-editor" style="display: none">
+							<div class="repair-track-transfer">
+								<section class="repair-transfer-pane repair-source-pane">
+									<div class="repair-editor-header">
+										<div>
+											<h3>Original source subtitles</h3>
+											<p>Every subtitle track available in the source. Add the tracks you want to the repaired encode.</p>
+										</div>
+										<div class="repair-transfer-actions">
+											<span id="repair-source-count" class="repair-track-count"></span>
+											<button id="repair-add-all-btn" class="btn btn-ghost btn-sm" type="button" data-repair-add-all>Add all →</button>
+										</div>
+									</div>
+									<div id="repair-source-tracks" class="repair-tracks repair-source-tracks"></div>
+								</section>
+								<div class="repair-transfer-arrow" aria-hidden="true">→</div>
+								<section class="repair-transfer-pane repair-output-pane">
+									<div class="repair-editor-header">
+										<div>
+											<h3>Repaired encode subtitles</h3>
+											<p>The final subtitle tracks and order. Edit metadata, processing, compression, and flags here.</p>
+										</div>
+										<span id="repair-output-count" class="repair-track-count"></span>
+									</div>
+									<div id="repair-tracks" class="repair-tracks"></div>
+								</section>
+							</div>
+							<label class="repair-replace">
+								<input type="checkbox" id="repair-replace-target" />
+								<span
+									><strong>Replace encoded target after verification</strong
+									><small
+										>Off creates <code>name.repaired.mkv</code> next to it. Turn this on only when you want the verified result to replace the target
+										atomically.</small
+									></span
+								>
+							</label>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-ghost" id="repair-cancel-btn">Cancel</button>
+						<button class="btn btn-primary" id="repair-queue-btn" disabled>Queue repair</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Repair File Picker Modal -->
+			<div id="repair-picker-modal" class="modal-overlay repair-picker-overlay" style="display: none">
+				<div class="modal library-modal">
+					<div class="modal-header">
+						<h2 id="repair-picker-title">Choose MKV file</h2>
+						<button class="btn-close" id="close-repair-picker-btn">&times;</button>
+					</div>
+					<div class="modal-body" style="padding: 0">
+						<div class="library-searchbar">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="11" cy="11" r="8" />
+								<line x1="21" y1="21" x2="16.65" y2="16.65" />
+							</svg>
+							<input id="repair-picker-search" type="text" class="library-search-input" placeholder="Filter loaded MKV files…" autocomplete="off" />
+						</div>
+						<div id="repair-picker-error" class="sub-preview-error" style="display: none"></div>
+						<div id="repair-picker-content" class="library-content"></div>
+					</div>
+					<div class="modal-footer">
+						<span class="modal-note repair-picker-note" id="repair-picker-note">Select one MKV file</span>
+						<button class="btn btn-primary" id="repair-picker-choose-btn" disabled>Use selected file</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Folder Track Metadata Audit Modal -->
+			<div id="repair-audit-modal" class="modal-overlay" style="display: none">
+				<div class="modal repair-audit-modal">
+					<div class="modal-header">
+						<div>
+							<h2>MKV Track Metadata Audit</h2>
+							<div id="repair-audit-title-note" class="repair-subtitle"></div>
+						</div>
+						<button class="btn-close" id="close-repair-audit-btn">&times;</button>
+					</div>
+					<div class="modal-body repair-audit-body">
+						<div class="repair-audit-toolbar">
+							<div id="repair-audit-summary" class="repair-audit-summary"></div>
+							<button class="btn btn-ghost" id="repair-audit-pick-folder-btn" type="button">Choose another folder…</button>
+						</div>
+						<div id="repair-audit-groups" class="repair-audit-groups"></div>
+						<div class="repair-audit-layout">
+							<div id="repair-audit-files" class="repair-audit-files"></div>
+							<div id="repair-audit-details" class="repair-audit-details"></div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<span class="modal-note">Group A is the majority ordered audio/subtitle layout. Compression is shown but does not create a separate group.</span>
+						<button class="btn btn-ghost" id="repair-audit-close-btn">Close</button>
+						<button class="btn btn-primary" id="repair-audit-open-btn" disabled>Open repair editor</button>
 					</div>
 				</div>
 			</div>
@@ -964,7 +1109,7 @@
 					<div class="preview-fullscreen-header">
 						<div>
 							<h2 id="preview-fullscreen-title">Preview sample</h2>
-							<span class="preview-fullscreen-subtitle">Click or ← → / Space to step through views · Esc to close</span>
+							<span class="preview-fullscreen-subtitle">Click or use ← → / Space to step through views. Press Esc to close.</span>
 						</div>
 						<button class="btn-close" id="close-preview-fullscreen-btn" aria-label="Close fullscreen preview">&times;</button>
 					</div>

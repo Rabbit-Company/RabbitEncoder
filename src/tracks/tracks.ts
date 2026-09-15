@@ -67,7 +67,7 @@ export function filterIgnoredTracks<T extends WithTitle>(streams: T[], keyword: 
 	const re = new RegExp(escapeRegex(kw), "i");
 	return streams.filter((s) => {
 		if (s.title && re.test(s.title)) {
-			Logger.info(`[${logTag}] Track ${s.index} dropped — title contains "${kw}": ${JSON.stringify(s.title)}`);
+			Logger.info(`[${logTag}] Track ${s.index} dropped. Title contains "${kw}": ${JSON.stringify(s.title)}`);
 			return false;
 		}
 		return true;
@@ -89,14 +89,14 @@ export function normalizeLanguageCode(input: string | undefined): string {
 export function sanitizeLanguageTag(lang: unknown, ctx?: string): string {
 	if (typeof lang !== "string") {
 		if (lang != null) {
-			Logger.warn(`[mux] Non-string language value ${JSON.stringify(lang)}${ctx ? ` (${ctx})` : ""} — falling back to "und"`);
+			Logger.warn(`[mux] Non-string language value ${JSON.stringify(lang)}${ctx ? ` (${ctx})` : ""}. Falling back to "und".`);
 		}
 		return "und";
 	}
 	const tag = lang.trim();
 	if (!tag) return "und";
 	if (/^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(tag)) return tag;
-	Logger.warn(`[mux] Invalid language tag ${JSON.stringify(tag)}${ctx ? ` (${ctx})` : ""} — falling back to "und"`);
+	Logger.warn(`[mux] Invalid language tag ${JSON.stringify(tag)}${ctx ? ` (${ctx})` : ""}. Falling back to "und".`);
 	return "und";
 }
 
@@ -307,6 +307,12 @@ const SUB_SDH_PATTERN = /\b(sdh|cc|closed\s*captions?|hearing\s*impaired|descrip
 const SUB_COMMENTARY_PATTERN = /\b(commentary|director'?s?\s+commentary|staff\s+commentary|cast\s+commentary|audio\s+commentary)\b/i;
 const SUB_HONORIFICS_PATTERN = /\b(honorifics?|honours?|honourifics?|\bhon\b)\b/i;
 const SUB_STORYBOARD_PATTERN = /\bstoryboard/i;
+const SUB_FULL_PATTERN = /\b(full(?:\s+(?:subtitles?|subs?|dubtitles?))?|dialog(?:ue)?(?:\s+(?:subtitles?|subs?))?)\b/i;
+
+/** True when the source title explicitly identifies a complete dialogue track. */
+export function hasExplicitFullSubtitleTitle(title: string | undefined): boolean {
+	return SUB_FULL_PATTERN.test(title || "");
+}
 
 export function detectSubtitleTrackType(stream: SubtitleStreamInfo): SubtitleTrackType {
 	const title = stream.title || "";
@@ -316,6 +322,9 @@ export function detectSubtitleTrackType(stream: SubtitleStreamInfo): SubtitleTra
 	if (SUB_SDH_PATTERN.test(title)) return "sdh";
 	if (SUB_FORCED_PATTERN.test(title)) return "forced";
 	if (SUB_STORYBOARD_PATTERN.test(title)) return "storyboard";
+	// Explicit source metadata outranks container disposition flags and content
+	// inference. In particular, never downgrade "Full Subtitles" to forced.
+	if (hasExplicitFullSubtitleTitle(title)) return "full";
 
 	if (stream.isHearingImpaired) return "sdh";
 	if (stream.isForced) return "forced";
@@ -1206,13 +1215,20 @@ export function deduplicateSubtitleStreams(streams: SubtitleStreamInfo[], option
 	const kept: SubtitleStreamInfo[] = [];
 
 	for (const stream of streams) {
+		// A heuristic classification must never become a reason to discard a
+		// source track. Keep inferred Signs & Songs tracks independently; an
+		// explicit forced track may carry the same language/type key.
+		if (stream.signsSongsDetected) {
+			kept.push(stream);
+			continue;
+		}
 		const langGroup = normalizeLanguageGroup(stream.language);
 		const type = detectSubtitleTrackType(stream);
 		const fmt = isTextSubtitleCodec(stream.codec) ? "t" : "p";
 		const key = acrossFormat ? `${langGroup}:${type}` : `${langGroup}:${type}:${fmt}`;
 
 		if (seen.has(key)) {
-			Logger.info(`[subtitle] Dedup: dropping track ${stream.index} (${stream.language || "und"}:${type}) — already kept a better candidate`);
+			Logger.info(`[subtitle] Dedup: dropping track ${stream.index} (${stream.language || "und"}:${type}). Already kept a better candidate.`);
 			continue;
 		}
 		seen.add(key);
@@ -1644,14 +1660,14 @@ export async function analyzeSubtitleStreams(
 		if (analysis?.assStyles) {
 			const { signStyleLines, totalLines } = analysis.assStyles;
 			if (totalLines >= 5 && signStyleLines / totalLines >= 0.8) {
-				Logger.info(`[subtitle] Track ${stream.index}: skipping language detection — ${signStyleLines}/${totalLines} sign/fx lines would confuse detector`);
+				Logger.info(`[subtitle] Track ${stream.index}: skipping language detection. ${signStyleLines}/${totalLines} sign/fx lines would confuse the detector.`);
 				continue;
 			}
 		}
 
 		if (isMalay(stream.language)) {
 			Logger.info(
-				`[subtitle] Track ${stream.index}: skipping language detection — Malay/Indonesian are too similar to distinguish reliably, trusting "${stream.language}"`,
+				`[subtitle] Track ${stream.index}: skipping language detection. Malay and Indonesian are too similar to distinguish reliably, so Rabbit trusts "${stream.language}".`,
 			);
 			stream.language = "msa";
 			continue;
@@ -1659,7 +1675,7 @@ export async function analyzeSubtitleStreams(
 
 		if (isIndonesian(stream.language)) {
 			Logger.info(
-				`[subtitle] Track ${stream.index}: skipping language detection — Malay/Indonesian are too similar to distinguish reliably, trusting "${stream.language}"`,
+				`[subtitle] Track ${stream.index}: skipping language detection. Malay and Indonesian are too similar to distinguish reliably, so Rabbit trusts "${stream.language}".`,
 			);
 			stream.language = "ind";
 			continue;
@@ -1670,17 +1686,17 @@ export async function analyzeSubtitleStreams(
 		const origIsKnown = origLangLower !== "" && origLangLower !== "und";
 		if (origIsKnown && dialogueLineCount < MIN_LINES_FOR_LANG_DETECTION) {
 			Logger.info(
-				`[subtitle] Track ${stream.index}: skipping language detection — only ${dialogueLineCount} dialogue lines, trusting declared "${stream.language}"`,
+				`[subtitle] Track ${stream.index}: skipping language detection. Only ${dialogueLineCount} dialogue lines were found, so Rabbit trusts declared "${stream.language}".`,
 			);
 			continue;
 		}
 
 		if (langDetect === "disabled") {
-			Logger.info(`[subtitle] Track ${stream.index}: language detector disabled — keeping declared "${stream.language || "und"}"`);
+			Logger.info(`[subtitle] Track ${stream.index}: language detector disabled. Keeping declared "${stream.language || "und"}".`);
 			continue;
 		}
 		if (langDetect === "und-only" && origIsKnown) {
-			Logger.info(`[subtitle] Track ${stream.index}: language detector in "only if undefined" mode — keeping declared "${stream.language}"`);
+			Logger.info(`[subtitle] Track ${stream.index}: language detector in "only if undefined" mode. Keeping declared "${stream.language}".`);
 			continue;
 		}
 
@@ -1701,7 +1717,7 @@ export async function analyzeSubtitleStreams(
 		if (confidence < langDetectConfidence) {
 			Logger.info(
 				`[subtitle] Track ${stream.index}: language-detector confidence too low ` +
-					`(${(confidence * 100).toFixed(1)}% < ${(langDetectConfidence * 100).toFixed(1)}%) — keeping "${origLang}"`,
+					`(${(confidence * 100).toFixed(1)}% < ${(langDetectConfidence * 100).toFixed(1)}%). Keeping "${origLang}".`,
 			);
 			continue;
 		}
@@ -1710,7 +1726,7 @@ export async function analyzeSubtitleStreams(
 
 		Logger[changed ? "warn" : "info"](
 			`[subtitle] Track ${stream.index}: language-detector → ${result.detected.language} ` +
-				`[${langCode}], ${(confidence * 100).toFixed(1)}% confidence — ` +
+				`[${langCode}], ${(confidence * 100).toFixed(1)}% confidence. ` +
 				`${changed ? "relabeling" : "confirmed"} from "${origLang}"`,
 		);
 
@@ -1731,7 +1747,7 @@ export async function analyzeSubtitleStreams(
 		if (!hasFullEnglishSubs && hasJapaneseSubs) {
 			const hasAnyEnglish = streams.some((s) => isEnglish(s.language));
 			const reason = hasAnyEnglish ? "Only Signs & Songs English tracks found" : "No English tracks found (including after language detection)";
-			Logger.warn(`[subtitle] ${reason} but Japanese tracks exist — assuming mislabeled, relabeling Japanese to English`);
+			Logger.warn(`[subtitle] ${reason} but Japanese tracks exist. Assuming they are mislabeled and relabeling Japanese to English.`);
 			for (const s of streams) {
 				if (isJapanese(s.language)) {
 					s.language = "en";
@@ -1742,8 +1758,23 @@ export async function analyzeSubtitleStreams(
 
 	// Step 4: ASS style-based Signs & Songs
 	if (detectSignsSongs) {
+		// If the source already provides a Signs & Songs track for a language,
+		// there is no benefit in guessing that another track is also forced. This
+		// avoids collapsing a real Full + Signs pair into two forced tracks.
+		const knownForcedLanguages = new Set(
+			streams.filter((s) => detectSubtitleTrackType(s) === "forced" && !s.signsSongsDetected).map((s) => normalizeLanguageGroup(s.language)),
+		);
+
 		for (const stream of streams) {
 			if (detectSubtitleTrackType(stream) !== "full") continue;
+			if (hasExplicitFullSubtitleTitle(stream.title)) {
+				Logger.info(`[subtitle] Track ${stream.index}: keeping Full. Source title explicitly identifies a full subtitle track.`);
+				continue;
+			}
+			if (knownForcedLanguages.has(normalizeLanguageGroup(stream.language))) {
+				Logger.info(`[subtitle] Track ${stream.index}: keeping Full. A Signs & Songs track already exists for this language.`);
+				continue;
+			}
 
 			const analysis = contentCache.get(stream.index);
 			if (!analysis?.assStyles) continue;
@@ -1751,9 +1782,10 @@ export async function analyzeSubtitleStreams(
 			const { signStyleLines, dialogueStyleLines, totalLines } = analysis.assStyles;
 			if (totalLines >= 5 && signStyleLines / totalLines >= signsSongsStyleRatio && dialogueStyleLines < 50) {
 				Logger.warn(
-					`[subtitle] Track ${stream.index}: ${signStyleLines}/${totalLines} lines use sign/typeset ` + `ASS styles — reclassifying as Signs & Songs`,
+					`[subtitle] Track ${stream.index}: ${signStyleLines}/${totalLines} lines use sign/typeset ` + `ASS styles. Reclassifying as Signs & Songs.`,
 				);
 				stream.isForced = true;
+				stream.signsSongsDetected = true;
 			}
 		}
 
@@ -1770,9 +1802,10 @@ export async function analyzeSubtitleStreams(
 			for (const [streamIndex, lineCount] of lineCounts) {
 				if (maxLines > 0 && lineCount > 0 && lineCount <= maxLines * signsSongsLineRatio && lineCount < 100) {
 					const stream = streams.find((s) => s.index === streamIndex);
-					if (stream) {
-						Logger.warn(`[subtitle] Track ${streamIndex}: only ${lineCount} lines vs ${maxLines} ` + `in largest full track — reclassifying as Signs & Songs`);
+					if (stream && !hasExplicitFullSubtitleTitle(stream.title) && !knownForcedLanguages.has(normalizeLanguageGroup(stream.language))) {
+						Logger.warn(`[subtitle] Track ${streamIndex}: only ${lineCount} lines vs ${maxLines} ` + `in largest full track. Reclassifying as Signs & Songs.`);
 						stream.isForced = true;
+						stream.signsSongsDetected = true;
 					}
 				}
 			}
@@ -1789,7 +1822,7 @@ export async function analyzeSubtitleStreams(
 			if (!analysis) continue;
 
 			if (analysis.sdhRatio >= sdhRatioThreshold && analysis.dialogueLineCount >= sdhMinLines) {
-				Logger.warn(`[subtitle] Track ${stream.index}: ${(analysis.sdhRatio * 100).toFixed(0)}% SDH markers — reclassifying as SDH`);
+				Logger.warn(`[subtitle] Track ${stream.index}: ${(analysis.sdhRatio * 100).toFixed(0)}% SDH markers. Reclassifying as SDH.`);
 				stream.isHearingImpaired = true;
 			}
 		}
@@ -1817,7 +1850,7 @@ export async function analyzeSubtitleStreams(
 			}
 
 			if (maxHonStream && maxHon >= honorificsMinCount && (minHon === 0 || maxHon >= minHon * honorificsRatio)) {
-				Logger.warn(`[subtitle] Track ${maxHonStream.index}: ${maxHon} honorific suffixes ` + `(vs ${minHon} in others) — reclassifying as Honorifics`);
+				Logger.warn(`[subtitle] Track ${maxHonStream.index}: ${maxHon} honorific suffixes ` + `(vs ${minHon} in others). Reclassifying as Honorifics.`);
 				const existingTitle = maxHonStream.title || "";
 				if (!SUB_HONORIFICS_PATTERN.test(existingTitle)) {
 					maxHonStream.title = existingTitle ? `${existingTitle} [Honorifics]` : "Honorifics";

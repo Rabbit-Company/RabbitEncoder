@@ -65,7 +65,7 @@ export function renderLibrarySearchResults(nodes: LibraryNode[]): void {
 	const scopeName = libraryScopeName();
 	const header = `<div class="library-search-scope">${
 		scopeName ? `In <strong>${escapeHtml(scopeName)}</strong>` : "Library folders"
-	} · ${nodes.length} match${nodes.length !== 1 ? "es" : ""}</div>`;
+	}: ${nodes.length} match${nodes.length !== 1 ? "es" : ""}</div>`;
 
 	if (nodes.length === 0) {
 		content.innerHTML = header + `<div class="library-empty">No matches in this folder</div>`;
@@ -86,7 +86,7 @@ export function renderLibrarySearchResults(nodes: LibraryNode[]): void {
 						${renderCheckbox(node.path, state.checked, state.indeterminate)}
 						<svg class="tree-icon tree-icon-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
 						<span class="tree-name" data-action="search-open" data-path="${escapeHtml(node.path)}" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
-						<span class="tree-meta">${meta.join(" · ")}</span>
+						<span class="tree-meta">${meta.join(", ")}</span>
 					</div>
 				</div>`;
 		} else {
@@ -101,7 +101,7 @@ export function renderLibrarySearchResults(nodes: LibraryNode[]): void {
 						${cb}
 						<svg class="tree-icon tree-icon-file" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
 						<span class="tree-name tree-name-file" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
-						<span class="tree-meta">${meta.join(" · ")}</span>
+						<span class="tree-meta">${meta.join(", ")}</span>
 					</div>
 				</div>`;
 		}

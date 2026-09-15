@@ -88,7 +88,7 @@ function fmtFramesWithFps(current: number, total: number, startedAt: number | un
 	const base = fmtFrames(current, total);
 	const fps = computeFps(current, startedAt);
 	const fpsStr = fps ? ` (${fps} fps)` : "";
-	const estStr = estVideoSize && estTotalSize ? ` — Video: ~${estVideoSize} · Total: ~${estTotalSize}` : "";
+	const estStr = estVideoSize && estTotalSize ? ` (Video: ~${estVideoSize}, Total: ~${estTotalSize})` : "";
 	return `${base}${fpsStr}${estStr}`;
 }
 
@@ -420,7 +420,7 @@ export async function encodeJob(
 				const passBaseProgress = (i / activeVsEntries.length) * 4.5;
 				const passShare = 4.5 / activeVsEntries.length;
 
-				setStep(S_PREPARE, { progress: passBaseProgress, detail: `${label} — ${fmtFrames(0, totalFrames)}` });
+				setStep(S_PREPARE, { progress: passBaseProgress, detail: `${label}: ${fmtFrames(0, totalFrames)}` });
 				Logger.info(`[prepare] VS pass ${i + 1}/${activeVsEntries.length}: ${manifest.id} level=${entry.level}`);
 
 				await runVsPass({
@@ -496,7 +496,7 @@ export async function encodeJob(
 			checkCancelled();
 
 			const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
-			setStep(S_PREPARE, { progress: 5, detail: `${prepareFilter.label} — ${fmtFrames(0, totalFrames)}` });
+			setStep(S_PREPARE, { progress: 5, detail: `${prepareFilter.label}: ${fmtFrames(0, totalFrames)}` });
 			Logger.debug(`[prepare] Applying filters: ${prepareFilter.filter} (${totalFrames} frames)`);
 
 			const filteredVideo = join(tempDir, "source_video_filtered.mkv");
@@ -554,7 +554,7 @@ export async function encodeJob(
 										const fpsStr = fps ? ` (${fps} fps)` : "";
 										setStep(S_PREPARE, {
 											progress: 5 + pct2(current, totalFrames) * 0.95,
-											detail: `${prepareFilter.label} — ${fmtFrames(current, totalFrames)}${fpsStr}`,
+											detail: `${prepareFilter.label}: ${fmtFrames(current, totalFrames)}${fpsStr}`,
 										});
 									}
 								} else if (part.trim()) {
@@ -608,7 +608,7 @@ export async function encodeJob(
 				(i, n, label) => {
 					setStep(S_PREPARE, {
 						progress: 5 + (95 * i) / n,
-						detail: `Auto denoise GPU — segment ${i}/${n} (${label})`,
+						detail: `Auto denoise GPU, segment ${i}/${n} (${label})`,
 					});
 				},
 				signal,
@@ -728,7 +728,7 @@ export async function encodeJob(
 		const encodeVideo = async (): Promise<void> => {
 			if (skipVideoEncode) {
 				for (const si of [S_FAST, S_METRICS, S_SCENES, S_ZONES, S_FINAL]) {
-					setStep(si, { status: "done", progress: 100, detail: "Skipped — video encoding off" });
+					setStep(si, { status: "done", progress: 100, detail: "Skipped because video encoding is off" });
 				}
 			}
 
@@ -958,7 +958,7 @@ export async function encodeJob(
 					// DIRECT ENCODE
 					// ABE-only steps don't apply (mark them skipped)
 					for (const si of [S_FAST, S_METRICS, S_SCENES, S_ZONES]) {
-						setStep(si, { status: "done", progress: 100, detail: `Skipped — ${enc.label}` });
+						setStep(si, { status: "done", progress: 100, detail: `Skipped: ${enc.label}` });
 					}
 
 					setStep(S_FINAL, { status: "active", progress: 0 });
@@ -1137,7 +1137,7 @@ export async function encodeJob(
 			} else {
 				// FFV1 prepared video is the final video track.
 				videoMkv = preparedVideo;
-				setStep(S_FINAL, { status: "done", progress: 100, detail: "Skipped — video encoding off" });
+				setStep(S_FINAL, { status: "done", progress: 100, detail: "Skipped because video encoding is off" });
 			}
 		};
 
@@ -1197,7 +1197,7 @@ export async function encodeJob(
 				setStep(S_AUDIO, {
 					status: "done",
 					progress: 100,
-					detail: "Skipped — audio copied from source",
+					detail: "Skipped because audio was copied from source",
 				});
 			} else if (audioStreams.length === 0) {
 				setStep(S_AUDIO, { status: "done", progress: 100, detail: "No audio streams" });
@@ -1257,7 +1257,7 @@ export async function encodeJob(
 						}
 
 						audioJobs.push({ index: i, flacFile, opusFile, bitrate, copy: true });
-						Logger.info(`[audio] Stream ${i} already Opus @ ~${Math.round(sourceKbps)}kbps (<= ${bitrate}kbps target) — copying without re-encode`);
+						Logger.info(`[audio] Stream ${i} already Opus @ ~${Math.round(sourceKbps)}kbps (<= ${bitrate}kbps target). Copying without re-encode.`);
 
 						setStep(S_AUDIO, {
 							progress: 5 + Math.round(((i + 1) / audioStreams.length) * 35),
@@ -1475,7 +1475,7 @@ export async function encodeJob(
 			setStep(S_SUBS, { status: "active", progress: Math.max(steps[S_SUBS]!.progress, 10), detail: "Planning subtitle tracks" });
 
 			if (skipSubtitleProcessing) {
-				setStep(S_SUBS, { status: "done", progress: 100, detail: "Skipped — subtitles copied from source" });
+				setStep(S_SUBS, { status: "done", progress: 100, detail: "Skipped because subtitles were copied from source" });
 				return;
 			}
 			if (subtitleStreams.length === 0) {
@@ -1708,7 +1708,7 @@ export async function encodeJob(
 							for (const name of sourceNames) occupiedFontNames.add(name);
 						} else {
 							effectiveRemoveUnusedFonts = false;
-							Logger.warn("[fonts] Source font collision scan failed; preserving source attachments and using best-effort numbering");
+							Logger.warn("[fonts] Source font collision scan failed. Preserving source attachments and using best-effort numbering.");
 						}
 					}
 
@@ -1865,12 +1865,12 @@ export async function encodeJob(
 		mkvArgs.push("--original-flag", `0:${probe.videoOriginalFlag ? "1" : "0"}`);
 
 		if (!encodedDims) {
-			Logger.warn("[mux] Could not probe encoded dimensions — leaving display dimensions unset (players will assume square pixels)");
+			Logger.warn("[mux] Could not probe encoded dimensions. Leaving display dimensions unset (players will assume square pixels).");
 		} else {
 			const sar = resolveSourceSar(probe);
 			const disp = computeDisplayDimensions(encodedDims.width, encodedDims.height, sar);
 			if (!isPlausibleDar(disp.width, disp.height)) {
-				Logger.warn(`[mux] Implausible DAR from source SAR ${sar.num}:${sar.den} — falling back to square pixels`);
+				Logger.warn(`[mux] Implausible DAR from source SAR ${sar.num}:${sar.den}. Falling back to square pixels.`);
 				mkvArgs.push("--display-dimensions", `0:${encodedDims.width}x${encodedDims.height}`);
 			} else {
 				mkvArgs.push("--display-dimensions", `0:${disp.width}x${disp.height}`);
@@ -1964,7 +1964,7 @@ export async function encodeJob(
 				Logger.info("[subtitle] No subtitle streams found");
 			}
 		} else {
-			Logger.info("[subtitle] subtitleProcessing=copy — including source subs verbatim via mkvmerge passthrough");
+			Logger.info("[subtitle] subtitleProcessing=copy. Including source subtitles verbatim via mkvmerge passthrough.");
 		}
 
 		for (const face of resolvedFaces.values()) {

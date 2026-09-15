@@ -118,7 +118,7 @@ function renderGroupBar(): void {
 		setStatus("Renaming…");
 		const r = await renameFontGroup(current, trimmed);
 		if (!r.ok) return setStatus(r.error || "Rename failed");
-		setStatus(`Renamed to "${trimmed}"` + (r.updatedReferences ? ` · repointed ${r.updatedReferences} setting(s)` : ""));
+		setStatus(`Renamed to "${trimmed}"` + (r.updatedReferences ? `. Updated ${r.updatedReferences} setting(s).` : ""));
 		if (state) state.selected = trimmed;
 		await refresh();
 	};
@@ -246,7 +246,7 @@ function renderImport(): void {
 	for (const f of state!.systemFonts) {
 		const o = document.createElement("option");
 		o.value = f.path;
-		o.textContent = `${f.family} — ${f.fileName}`;
+		o.textContent = `${f.family} (${f.fileName})`;
 		fontSel.appendChild(o);
 	}
 

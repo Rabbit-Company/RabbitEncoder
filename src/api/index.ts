@@ -9,6 +9,7 @@ import { registerBenchmarkRoutes } from "./benchmark";
 import { registerLibraryRoutes } from "./library";
 import { registerFontRoutes } from "./fonts";
 import { registerVsPresetRoutes } from "./vs-presets";
+import { registerRepairRoutes } from "./repair";
 import type { AppConfig } from "../core/types";
 
 export function registerApiRoutes(app: Web, config: AppConfig): void {
@@ -22,4 +23,5 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerLibraryRoutes(app, config);
 	registerFontRoutes(app, config);
 	registerVsPresetRoutes(app);
+	registerRepairRoutes(app, config);
 }

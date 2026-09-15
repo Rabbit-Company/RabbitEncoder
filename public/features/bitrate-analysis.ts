@@ -145,7 +145,7 @@ export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boole
 	const job = jobs.find((j) => j.id === jobId);
 	if (!job) return;
 
-	byId("bitrate-modal-title").textContent = `Bitrate Analysis — ${job.filename}`;
+	byId("bitrate-modal-title").textContent = `Bitrate Analysis: ${job.filename}`;
 	resetModalChrome();
 	currentJobFilename = job.filename;
 
@@ -164,7 +164,7 @@ export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boole
 		}
 
 		if (data.bitrate.length === 0 && !data.noise) {
-			byId("bitrate-error").textContent = "No packets found — the file may be empty or unreadable.";
+			byId("bitrate-error").textContent = "No packets found. The file may be empty or unreadable.";
 			byId("bitrate-error").style.display = "";
 			return;
 		}
@@ -199,7 +199,7 @@ export async function openBitrateAnalysisImport(file: File): Promise<void> {
 	currentIsImported = true;
 
 	const label = file.name.replace(/\.bitrate-analysis\.json$/i, "").replace(/\.json$/i, "");
-	byId("bitrate-modal-title").textContent = `Bitrate Analysis — ${label} (imported)`;
+	byId("bitrate-modal-title").textContent = `Bitrate Analysis: ${label} (imported)`;
 	resetModalChrome();
 
 	try {

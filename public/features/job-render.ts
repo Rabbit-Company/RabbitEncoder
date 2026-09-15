@@ -87,7 +87,7 @@ export function renderStepTime(step: JobStep): string {
 		if (elapsed === null) return "";
 		let timeStr = formatDurationShort(elapsed);
 		if (eta !== null) {
-			timeStr += ` · ~${formatDurationShort(eta)} left`;
+			timeStr += `, ~${formatDurationShort(eta)} left`;
 		}
 		return `<span class="step-time step-time-active">${timeStr}</span>`;
 	}
@@ -99,7 +99,7 @@ export async function openSubtitlePreview(jobId: string): Promise<void> {
 	const job = jobs.find((j) => j.id === jobId);
 	if (!job) return;
 
-	byId("sub-preview-title").textContent = `Subtitles — ${job.filename}`;
+	byId("sub-preview-title").textContent = `Subtitles: ${job.filename}`;
 	byId("sub-preview-loading").style.display = "";
 	byId("sub-preview-error").style.display = "none";
 	byId("sub-preview-content").style.display = "none";
@@ -129,7 +129,7 @@ export async function openMediaInfo(jobId: string): Promise<void> {
 	const job = jobs.find((j) => j.id === jobId);
 	if (!job) return;
 
-	byId("mediainfo-title").textContent = `Media Info — ${job.filename}`;
+	byId("mediainfo-title").textContent = `Media Info: ${job.filename}`;
 	byId("mediainfo-loading").style.display = "";
 	byId("mediainfo-error").style.display = "none";
 	byId("mediainfo-content").style.display = "none";
@@ -165,7 +165,7 @@ export async function openAudioPreview(jobId: string): Promise<void> {
 	const job = jobs.find((j) => j.id === jobId);
 	if (!job) return;
 
-	byId("audio-preview-title").textContent = `Audio — ${job.filename}`;
+	byId("audio-preview-title").textContent = `Audio: ${job.filename}`;
 	byId("audio-preview-loading").style.display = "";
 	byId("audio-preview-error").style.display = "none";
 	byId("audio-preview-content").style.display = "none";
@@ -222,7 +222,7 @@ export function formatBitrate(raw?: number | null): string {
 }
 
 export function formatBitrate2(kbps?: number | null): string {
-	if (!kbps) return "—";
+	if (!kbps) return "N/A";
 
 	if (kbps >= 1000) {
 		return `${(kbps / 1000).toFixed(2)} Mbps`;
@@ -255,7 +255,7 @@ export function renderAudioTrack(track: AudioPreviewTrack, isOutput: boolean, op
 				<span class="sub-track-flag">${track.flag}</span>
 				<span class="sub-track-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
 				<span class="sub-track-lang">${escapeHtml(track.language)}</span>
-				<span class="sub-track-codec">${escapeHtml(track.codec)}${bitrate ? " · " + bitrate : ""}</span>
+				<span class="sub-track-codec">${escapeHtml(track.codec)}${bitrate ? ", " + bitrate : ""}</span>
 			</div>
 			<div class="sub-track-badges">${badges.join("")}</div>
 		</div>`;
@@ -334,7 +334,7 @@ export function renderSteps(steps?: JobStep[]): string {
 
 	const stepsHtml = steps
 		.map((step) => {
-			const statusIcon = step.status === "done" ? "✓" : step.status === "active" ? "›" : step.status === "error" ? "✗" : "·";
+			const statusIcon = step.status === "done" ? "✓" : step.status === "active" ? "›" : step.status === "error" ? "✗" : "○";
 
 			const statusClass = `step-${step.status}`;
 			const pctStr = step.status === "active" ? `${step.progress.toFixed(2)}%` : step.status === "done" ? "100%" : "";
@@ -377,23 +377,24 @@ export function renderJobCard(job: Job): string {
 		if (job.probe.isHDR) meta += `<span>HDR</span>`;
 		if (job.probe.duration) meta += `<span>${formatDuration(job.probe.duration * 1000)}</span>`;
 	}
-	if (job.settings.videoEncode !== "off")
-		meta += `<span>${job.settings.quality} · ${job.settings.finalSpeed}${job.settings.downscale ? " · ↓1080p" : ""}</span>`;
-	if (job.settings.skipBoosting) meta += `<span>No Boost</span>`;
-	if (job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
-	if (job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
-	if (job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
+	if (job.kind === "repair") meta += `<span>Subtitle repair, video and audio stream copy</span>`;
+	if (job.kind !== "repair" && job.settings.videoEncode !== "off")
+		meta += `<span>${job.settings.quality}, ${job.settings.finalSpeed}${job.settings.downscale ? ", ↓1080p" : ""}</span>`;
+	if (job.kind !== "repair" && job.settings.skipBoosting) meta += `<span>No Boost</span>`;
+	if (job.kind !== "repair" && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
+	if (job.kind !== "repair" && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
+	if (job.kind !== "repair" && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
 
 	const stepsHtml = active || done || err ? renderSteps(job.steps) : "";
 
 	let result = "";
 	if (done) {
-		const elapsed = job.finishedAt && job.startedAt ? formatDuration(job.finishedAt - job.startedAt) : "—";
+		const elapsed = job.finishedAt && job.startedAt ? formatDuration(job.finishedAt - job.startedAt) : "N/A";
 		result = `
       <div class="job-result">
-        <span>Size: ${job.encodedFileSize || "—"}</span>
+		<span>Size: ${job.encodedFileSize || "N/A"}</span>
         <span>Time: ${elapsed}</span>
-        <span>Output: ${job.outputFilename || "—"}</span>
+		<span>Output: ${job.outputFilename || "N/A"}</span>
       </div>`;
 	}
 
@@ -433,8 +434,21 @@ export function renderJobCard(job: Job): string {
     </svg>
   </button>`;
 
+	const repairBtn = `<button class="btn-icon" title="Repair or remux subtitles" data-id="${job.id}" data-action="repair">
+		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			<path d="M14.7 6.3a4 4 0 0 0-5-5L7.4 3.6l3 3-3.8 3.8-3-3-2.3 2.3a4 4 0 0 0 5 5l7.9 7.9a2.1 2.1 0 0 0 3-3z"/>
+		</svg>
+	</button>`;
+
 	let actions = "";
-	if (job.status === "queued") {
+	if (job.status === "queued" && job.kind === "repair") {
+		actions = `
+		<div class="move-buttons" data-move-type="file" data-move-job="${job.id}">
+			<button class="btn-icon btn-move" title="Move up" data-action="move-up"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg></button>
+			<button class="btn-icon btn-move" title="Move down" data-action="move-down"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+		</div>
+		<button class="btn-icon" title="Remove" data-id="${job.id}" data-action="remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+	} else if (job.status === "queued") {
 		actions = `
       <div class="move-buttons" data-move-type="file" data-move-job="${job.id}">
         <button class="btn-icon btn-move" title="Move up" data-action="move-up">
@@ -455,6 +469,12 @@ export function renderJobCard(job: Job): string {
       <button class="btn-icon" title="Remove" data-id="${job.id}" data-action="remove">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>`;
+	} else if (active && job.kind === "repair") {
+		actions = `
+			${infoBtn}
+			<button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+			</button>`;
 	} else if (active) {
 		actions = `
 			${infoBtn}
@@ -465,6 +485,11 @@ export function renderJobCard(job: Job): string {
       <button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       </button>`;
+	} else if (err && job.kind === "repair") {
+		actions = `
+			${repairBtn}
+			<button class="btn-icon" title="Retry" data-id="${job.id}" data-action="retry"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+			<button class="btn-icon" title="Remove" data-id="${job.id}" data-action="remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
 	} else if (err) {
 		actions = `
 			${infoBtn}
@@ -480,7 +505,8 @@ export function renderJobCard(job: Job): string {
       </button>`;
 	} else if (done) {
 		actions = `
-			${bitrateBtn}
+			${job.kind === "repair" ? "" : bitrateBtn}
+			${repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;
@@ -677,7 +703,7 @@ export function renderFolderTimeEstimate(node: FolderTreeNode): string {
 
 	if (parts.length === 0) return `<div class="folder-time-estimate folder-time-pending">Estimated after 1st encode</div>`;
 
-	return `<div class="folder-time-estimate">${parts.join(" · ")}</div>`;
+	return `<div class="folder-time-estimate">${parts.join(", ")}</div>`;
 }
 
 export function renderFolderStats(stats: FolderStats): string {
@@ -712,10 +738,20 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	const stats = computeFolderStats(node);
 	const hasActive = folderHasActive(node);
 	const allDone = stats.total > 0 && stats.done === stats.total;
+	const auditJobIds = allDone
+		? collectAllJobs(node)
+				.filter((job) => job.status === "done" && !!job.outputFilename)
+				.map((job) => job.id)
+		: [];
 
 	const chevronSvg = `<svg class="folder-chevron ${isExpanded ? "expanded" : ""}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 	const folderIconSvg = `<svg class="folder-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+	const auditButton = auditJobIds.length
+		? `<button class="btn-icon btn-folder-audit" type="button" title="Audit MKV track metadata in this completed folder" data-audit-job-ids="${escapeHtml(auditJobIds.join(","))}" data-audit-folder-label="${escapeHtml(node.name)}">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+		</button>`
+		: "";
 
 	let html = `
     <div class="folder-node ${hasActive ? "folder-active" : ""} ${allDone ? "folder-done" : ""}" style="--depth:${depth}">
@@ -724,6 +760,7 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 					${chevronSvg}
 					${folderIconSvg}
 					<span class="folder-name">${escapeHtml(node.name)}</span>
+					${auditButton}
 					<div class="move-buttons" data-move-type="folder" data-move-path="${escapeHtml(node.fullPath)}">
 						<button class="btn-icon btn-move" title="Move up" data-action="move-up">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>

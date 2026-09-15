@@ -441,7 +441,7 @@ export async function detectCrop(inputPath: string, limit: number, signal?: Abor
 		union = union ? unionRects(union, rect) : rect;
 
 		if (isFullFrameCrop(union, frame)) {
-			Logger.info(`[crop] Window at ${win.start.toFixed(0)}s reached full frame — no bars, skipping crop`);
+			Logger.info(`[crop] Window at ${win.start.toFixed(0)}s reached full frame. No bars found, skipping crop.`);
 			return null;
 		}
 	}
@@ -454,7 +454,7 @@ export async function detectCrop(inputPath: string, limit: number, signal?: Abor
 		if (keptRatio < MIN_KEPT_AREA_RATIO) {
 			Logger.warn(
 				`[crop] Detected crop ${union.w}x${union.h}+${union.x}+${union.y} keeps only ` +
-					`${Math.round(keptRatio * 100)}% of ${frame.width}x${frame.height} — ` +
+					`${Math.round(keptRatio * 100)}% of ${frame.width}x${frame.height}. ` +
 					`likely dark scenes or a title card, skipping crop`,
 			);
 			return null;
@@ -535,7 +535,7 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 			cropFilter = buildCropFilter(cropRect);
 			cropLabel = `Cropping to ${cropRect.w}x${cropRect.h}`;
 		} else {
-			Logger.info(`[crop] No bars detected at ${input.sourceWidth}x${input.sourceHeight} — skipping crop step`);
+			Logger.info(`[crop] No bars detected at ${input.sourceWidth}x${input.sourceHeight}. Skipping crop step.`);
 		}
 	}
 

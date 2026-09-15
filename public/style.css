@@ -1118,15 +1118,8 @@ code {
 	}
 }
 
-@media (max-width: 800px) {
-	.header {
-		padding: 12px 16px;
-	}
-
-	.header-text > .subtitle {
-		display: none;
-	}
-
+/* The header has more actions now; collapse labels before the controls crowd the title. */
+@media (max-width: 1280px) {
 	.header-right {
 		gap: 4px;
 	}
@@ -1135,6 +1128,21 @@ code {
 		font-size: 0;
 		gap: 0;
 		padding: 7px 9px;
+		white-space: nowrap;
+	}
+
+	.header-right .btn > svg {
+		flex: none;
+	}
+}
+
+@media (max-width: 800px) {
+	.header {
+		padding: 12px 16px;
+	}
+
+	.header-text > .subtitle {
+		display: none;
 	}
 
 	.queue-paused-banner {
@@ -1652,7 +1660,637 @@ code {
 	background: var(--accent-glow);
 }
 
+/* Subtitle repair / remux */
+.repair-modal {
+	width: min(1120px, calc(100vw - 32px));
+}
+
+.repair-subtitle {
+	font-size: 0.72rem;
+	color: var(--text-2);
+	margin-top: 4px;
+}
+
+.repair-paths {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+}
+
+.repair-track-fields label {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 0.7rem;
+	font-weight: 600;
+	color: var(--text-2);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.repair-input {
+	width: 100%;
+	box-sizing: border-box;
+	background: var(--bg-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	color: var(--text-0);
+	font-family: var(--font-mono);
+	font-size: 0.76rem;
+	padding: 9px 10px;
+	outline: none;
+}
+
+.repair-input:focus {
+	border-color: var(--accent);
+}
+
+.repair-file-choice {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	min-width: 0;
+	padding: 13px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+.repair-file-label {
+	font-size: 0.7rem;
+	font-weight: 600;
+	color: var(--text-1);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+
+.repair-file-label small {
+	font-weight: 400;
+	color: var(--text-2);
+}
+
+.repair-file-selection {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	min-width: 0;
+	min-height: 36px;
+	justify-content: center;
+}
+
+.repair-file-name {
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.repair-file-folder,
+.repair-file-empty {
+	font-family: var(--font-mono);
+	font-size: 0.67rem;
+	color: var(--text-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.repair-file-buttons {
+	display: flex;
+	gap: 6px;
+}
+
+.repair-picker-overlay {
+	z-index: 230;
+}
+
+.repair-picker-file {
+	cursor: pointer;
+}
+
+.repair-picker-folder-result .tree-row {
+	cursor: pointer;
+}
+
+#repair-picker-content .tree-folder .tree-name,
+#repair-picker-content .tree-icon-folder {
+	font-style: normal;
+}
+
+.repair-picker-file.is-selected > .tree-row {
+	background: var(--accent-glow);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+#repair-picker-content .tree-folder.is-selected > .tree-row {
+	background: var(--accent-glow);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.repair-picker-use-folder {
+	margin-left: auto;
+}
+
+.repair-picker-file.is-folder-context {
+	cursor: default;
+	opacity: 0.62;
+}
+
+.repair-picker-note {
+	max-width: 70%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.repair-picker-search-result .tree-row {
+	padding-left: 16px !important;
+}
+
+#repair-picker-error {
+	margin: 10px 14px 0;
+}
+
+.repair-path-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 0.72rem;
+	color: var(--text-2);
+}
+
+.repair-track-transfer {
+	display: grid;
+	grid-template-columns: minmax(260px, 0.72fr) 28px minmax(0, 1.28fr);
+	gap: 12px;
+	align-items: start;
+}
+
+.repair-transfer-pane {
+	min-width: 0;
+}
+
+.repair-editor-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.repair-editor-header h3 {
+	font-size: 0.82rem;
+	margin: 0 0 4px;
+}
+
+.repair-editor-header p {
+	font-size: 0.73rem;
+	color: var(--text-2);
+	margin: 0 0 12px;
+}
+
+.repair-track-count {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	color: var(--text-2);
+	white-space: nowrap;
+}
+
+.repair-transfer-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 6px;
+}
+
+.repair-transfer-arrow {
+	align-self: center;
+	color: var(--text-2);
+	font-size: 1.25rem;
+	text-align: center;
+}
+
+.repair-tracks {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: min(52vh, 560px);
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+.repair-track {
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	padding: 10px 12px;
+	transition:
+		opacity 0.15s,
+		border-color 0.15s;
+}
+
+.repair-track-head {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	margin-bottom: 9px;
+}
+
+.repair-flag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 0.7rem;
+	color: var(--text-1);
+}
+
+.repair-source-track {
+	padding: 11px 12px;
+}
+
+.repair-source-track .repair-track-head {
+	margin-bottom: 7px;
+}
+
+.repair-add-track {
+	margin-left: auto;
+}
+
+.repair-source-title {
+	font-size: 0.76rem;
+	font-weight: 600;
+	color: var(--text-0);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.repair-source-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin-top: 8px;
+}
+
+.repair-source-meta span {
+	padding: 2px 6px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-family: var(--font-mono);
+	font-size: 0.62rem;
+	color: var(--text-2);
+}
+
+.repair-remove-track {
+	color: var(--red);
+}
+
+.repair-codec {
+	font-family: var(--font-mono);
+	font-size: 0.67rem;
+	color: var(--text-2);
+}
+
+.repair-order {
+	display: flex;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.repair-track-fields {
+	display: grid;
+	grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.55fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
+	gap: 8px;
+}
+
+.repair-track-fields .select-input {
+	width: 100%;
+	min-height: 34px;
+}
+
+.repair-flags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 10px;
+}
+
+.repair-replace {
+	display: flex;
+	align-items: flex-start;
+	gap: 9px;
+	margin-top: 14px;
+	padding: 11px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	font-size: 0.76rem;
+}
+
+.repair-replace span {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.repair-replace small,
+.repair-empty {
+	color: var(--text-2);
+	font-size: 0.7rem;
+}
+
+.repair-empty {
+	padding: 18px;
+	text-align: center;
+	border: 1px dashed var(--border);
+	border-radius: var(--radius-sm);
+}
+
+.repair-empty-success {
+	color: var(--green);
+}
+
+/* Folder-wide MKV metadata audit */
+.repair-audit-modal {
+	width: min(1180px, calc(100vw - 32px));
+}
+
+.repair-audit-body {
+	gap: 12px;
+}
+
+.repair-audit-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.repair-audit-summary,
+.repair-audit-groups {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.repair-audit-summary > span,
+.repair-audit-group-summary {
+	font-size: 0.7rem;
+	color: var(--text-1);
+	padding: 5px 8px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: 999px;
+}
+
+.repair-audit-summary .has-outliers,
+.repair-audit-error {
+	color: var(--amber);
+}
+
+.repair-audit-summary .all-matching,
+.repair-audit-match {
+	color: var(--green);
+}
+
+.repair-audit-group-summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.repair-audit-group-badge {
+	display: inline-grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	flex: none;
+	border-radius: 7px;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	font-weight: 700;
+	color: var(--text-1);
+	background: var(--bg-3);
+	border: 1px solid currentColor;
+}
+
+.repair-audit-group-1 {
+	color: #f59e0b;
+	background: rgba(245, 158, 11, 0.1);
+}
+.repair-audit-group-2 {
+	color: #ef4444;
+	background: rgba(239, 68, 68, 0.1);
+}
+.repair-audit-group-3 {
+	color: #a855f7;
+	background: rgba(168, 85, 247, 0.1);
+}
+.repair-audit-group-4 {
+	color: #06b6d4;
+	background: rgba(6, 182, 212, 0.1);
+}
+.repair-audit-group-5 {
+	color: #ec4899;
+	background: rgba(236, 72, 153, 0.1);
+}
+.repair-audit-group-6 {
+	color: #84cc16;
+	background: rgba(132, 204, 22, 0.1);
+}
+.repair-audit-group-7 {
+	color: #f97316;
+	background: rgba(249, 115, 22, 0.1);
+}
+.repair-audit-group-8 {
+	color: #3b82f6;
+	background: rgba(59, 130, 246, 0.1);
+}
+
+.repair-audit-layout {
+	display: grid;
+	grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.2fr);
+	gap: 12px;
+	min-height: 430px;
+}
+
+.repair-audit-files,
+.repair-audit-details {
+	max-height: min(58vh, 620px);
+	overflow-y: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--bg-0);
+}
+
+.repair-audit-files {
+	display: flex;
+	flex-direction: column;
+	padding: 6px;
+	gap: 4px;
+}
+
+.repair-audit-file {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	padding: 8px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-0);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.repair-audit-file:hover,
+.repair-audit-file.is-selected {
+	background: var(--bg-2);
+	border-color: var(--border);
+}
+
+.repair-audit-file.is-selected {
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.repair-audit-file-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	gap: 3px;
+}
+
+.repair-audit-file-text strong,
+.repair-audit-file-text small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.repair-audit-file-text strong {
+	font-size: 0.75rem;
+}
+
+.repair-audit-file-text small {
+	font-size: 0.65rem;
+	color: var(--text-2);
+}
+
+.repair-audit-track-total {
+	margin-left: auto;
+	font-family: var(--font-mono);
+	font-size: 0.66rem;
+	color: var(--text-2);
+}
+
+.repair-audit-details {
+	padding: 12px;
+}
+
+.repair-audit-detail-head,
+.repair-audit-detail-head > div {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+}
+
+.repair-audit-detail-head {
+	justify-content: space-between;
+	padding-bottom: 11px;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.repair-audit-detail-head strong {
+	font-size: 0.8rem;
+}
+
+.repair-audit-detail-head small {
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	color: var(--text-2);
+}
+
+.repair-audit-differences,
+.repair-audit-match {
+	margin: 10px 0;
+	padding: 9px 10px;
+	border-radius: var(--radius-sm);
+	background: var(--bg-2);
+	font-size: 0.7rem;
+}
+
+.repair-audit-differences {
+	color: var(--amber);
+	border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.repair-audit-differences ul {
+	margin: 6px 0 0;
+	padding-left: 18px;
+}
+
+.repair-audit-tracks {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.repair-audit-track {
+	padding: 9px 10px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+.repair-audit-track-main,
+.repair-audit-track-meta {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.repair-audit-track-main strong {
+	font-size: 0.73rem;
+}
+
+.repair-audit-track-meta {
+	margin-top: 7px;
+}
+
+.repair-audit-track-meta span {
+	padding: 2px 6px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-family: var(--font-mono);
+	font-size: 0.61rem;
+	color: var(--text-2);
+}
+
 /* Responsive: stack columns on narrow screens */
+@media (max-width: 900px) {
+	.repair-track-transfer {
+		grid-template-columns: 1fr;
+	}
+	.repair-transfer-arrow {
+		transform: rotate(90deg);
+		padding: 0;
+	}
+	.repair-audit-layout {
+		grid-template-columns: 1fr;
+		min-height: 0;
+	}
+	.repair-audit-files,
+	.repair-audit-details {
+		max-height: 40vh;
+	}
+}
+
 @media (max-width: 640px) {
 	#sub-preview-content,
 	#audio-preview-content {
@@ -1662,6 +2300,17 @@ code {
 		transform: rotate(90deg);
 		padding: 0;
 		text-align: center;
+	}
+	.repair-paths,
+	.repair-track-fields {
+		grid-template-columns: 1fr;
+	}
+	.repair-track-head {
+		flex-wrap: wrap;
+	}
+	.repair-order {
+		width: 100%;
+		margin-left: 0;
 	}
 }
 

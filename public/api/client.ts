@@ -8,11 +8,14 @@ import type {
 	Job,
 	JobSettings,
 	PreviewState,
+	RepairFolderAudit,
+	RepairInspection,
+	RepairPlan,
 	StyleAppearance,
 	VsFilterEntry,
 	VsPresetManifest,
 } from "../types";
-import type { BenchmarkState, FetchOptions, GpuDevice, SystemStats } from "../ui/models";
+import type { BenchmarkState, FetchOptions, GpuDevice, LibraryEntry, SystemStats } from "../ui/models";
 import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
 import { buttonById, byId, inputById } from "../shared/dom";
@@ -132,6 +135,54 @@ export async function fetchVulkanDevices(): Promise<GpuDevice[]> {
 export async function fetchJobs(): Promise<Job[]> {
 	const res = await authFetch(`${API}/api/jobs`);
 	return res.json();
+}
+
+export async function fetchRepairInspection(options: { jobId?: string; targetPath?: string; sourcePath?: string }): Promise<RepairInspection> {
+	const query = new URLSearchParams();
+	if (options.jobId) query.set("jobId", options.jobId);
+	if (options.targetPath) query.set("targetPath", options.targetPath);
+	if (options.sourcePath) query.set("sourcePath", options.sourcePath);
+	const response = await authFetch(`${API}/api/repair/inspect?${query}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not inspect repair files");
+	return data;
+}
+
+export async function fetchRepairFolderAudit(options: { path?: string; jobIds?: string[] }): Promise<RepairFolderAudit> {
+	const response = await authFetch(`${API}/api/repair/audit`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not audit MKV folder");
+	return data;
+}
+
+export async function fetchRepairRoots(): Promise<{ path: string; name: string }[]> {
+	const response = await authFetch(`${API}/api/repair/roots`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not load media folders");
+	return data.roots || [];
+}
+
+export async function fetchRepairBrowse(path: string): Promise<LibraryEntry[]> {
+	const query = new URLSearchParams({ path });
+	const response = await authFetch(`${API}/api/repair/browse?${query}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not browse media folder");
+	return data.entries || [];
+}
+
+export async function createRepairJob(plan: RepairPlan): Promise<Job> {
+	const response = await authFetch(`${API}/api/repair/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(plan),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not create repair job");
+	return data;
 }
 
 export async function fetchConfig(): Promise<JobSettings> {

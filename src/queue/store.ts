@@ -11,6 +11,7 @@ import {
 	type AudioEncodeMode,
 	type SubtitleProcessingMode,
 	type EncoderId,
+	type RepairPlan,
 } from "../core/types";
 import { encodeJob, CancelledError } from "../pipeline/encoder";
 import { isAlreadyEncoded } from "./library";
@@ -27,6 +28,7 @@ import { normalizeVsFilterChain } from "../video/vs-filters";
 import { getDefaultJobSettings } from "../core/config";
 import { isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
+import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 
 const jobs = new Map<string, Job>();
 let paused = false;
@@ -407,6 +409,35 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 	return job;
 }
 
+export function addRepairJob(rawPlan: RepairPlan): Job {
+	const repairPlan = sanitizeRepairPlan(rawPlan);
+	for (const existing of jobs.values()) {
+		if (existing.kind === "repair" && existing.inputPath === repairPlan.targetPath && existing.status !== "error" && existing.status !== "done")
+			return existing;
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "repair",
+		filename: `Repair: ${basename(repairPlan.targetPath)}`,
+		inputPath: repairPlan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: "Waiting in queue",
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		repairPlan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
 export function scanLibraryFolder(folderPath: string): { added: number; skipped: number; alreadyEncoded: number } {
 	let added = 0;
 	let skipped = 0;
@@ -603,7 +634,9 @@ async function processQueue() {
 	};
 
 	try {
-		if (next.settings.subtitleProcessing === "translate") {
+		if (next.kind === "repair") {
+			await runRepairJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {
 			await encodeJob(next, appConfig, updateFn, controller.signal);

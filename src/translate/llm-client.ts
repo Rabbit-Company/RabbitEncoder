@@ -168,7 +168,7 @@ export async function chatComplete(prompt: string, opts: LlmChatOptions): Promis
 				const err = new Error(friendlyHttpError(opts.provider, res.status, bodyMsg));
 				if (isRetryable(res.status) && attempt < MAX_ATTEMPTS - 1) {
 					lastError = err;
-					Logger.warn(`[translate] ${err.message} — retrying (${attempt + 1}/${MAX_ATTEMPTS - 1})`);
+					Logger.warn(`[translate] ${err.message}. Retrying (${attempt + 1}/${MAX_ATTEMPTS - 1}).`);
 					await sleep(RETRY_DELAYS_MS[attempt] ?? 3_000, opts.signal);
 					continue;
 				}
@@ -182,7 +182,7 @@ export async function chatComplete(prompt: string, opts: LlmChatOptions): Promis
 			if (opts.signal?.aborted || controller.signal.aborted) throw err;
 			lastError = err as Error;
 			if (attempt < MAX_ATTEMPTS - 1) {
-				Logger.warn(`[translate] ${label} request failed (${lastError.message}) — retrying`);
+				Logger.warn(`[translate] ${label} request failed (${lastError.message}). Retrying.`);
 				await sleep(RETRY_DELAYS_MS[attempt] ?? 3_000, opts.signal);
 				continue;
 			}

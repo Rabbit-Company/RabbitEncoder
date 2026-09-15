@@ -115,6 +115,27 @@ describe("restyleAssDialogueFont — scope of changes", () => {
 		expect(restyleAssDialogueFont(noDialogue, sampleStyle, true)).toBe(noDialogue);
 	});
 
+	it("does not touch a sign-only track whose misleading style is named Default", () => {
+		const signs = buildAss({
+			playResX: 1920,
+			playResY: 1080,
+			events: [
+				"Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\pos(100,100)}SHOP",
+				"Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0,0,0,,{\\pos(1500,250)}STATION",
+			],
+		});
+
+		expect(restyleAssDialogueFont(signs, sampleStyle, true)).toBe(signs);
+	});
+
+	it("does not rewrite an ambiguous style shared by dialogue and karaoke", () => {
+		const shared = buildAss({
+			events: ["Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello", "Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0,0,0,,{\\k20}Song"],
+		});
+
+		expect(restyleAssDialogueFont(shared, sampleStyle, true)).toBe(shared);
+	});
+
 	it("preserves doubled PlayRes — it does NOT rewrite PlayRes (would move signs)", () => {
 		const out = restyleAssDialogueFont(ass4k(), sampleStyle, true);
 		expect(getScriptInfo(out, "PlayResX")).toBe("3840");

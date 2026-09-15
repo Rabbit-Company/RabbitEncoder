@@ -267,7 +267,7 @@ export function renderTreeFolder(node: LibraryNode, checked: boolean, indetermin
 					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
 				</svg>
 				<span class="tree-name" data-action="expand" data-path="${escapeHtml(node.path)}" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
-				<span class="tree-meta">${metaParts.join(" · ")}</span>
+				<span class="tree-meta">${metaParts.join(", ")}</span>
 			</div>
 			${childrenHtml}
 		</div>`;
@@ -290,7 +290,7 @@ export function renderTreeFile(node: LibraryNode, indent: number): string {
 					<rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
 				</svg>
 				<span class="tree-name tree-name-file" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</span>
-				<span class="tree-meta">${metaParts.join(" · ")}</span>
+				<span class="tree-meta">${metaParts.join(", ")}</span>
 			</div>
 		</div>`;
 }
@@ -386,7 +386,7 @@ export async function handleLibraryEncode() {
 		if (result.skipped > 0) parts.push(`${result.skipped} already queued`);
 		if (result.alreadyEncoded > 0) parts.push(`${result.alreadyEncoded} already encoded`);
 		if (parts.length === 0) parts.push("No video files found to encode");
-		note.textContent = parts.join(" · ");
+		note.textContent = parts.join(", ");
 
 		if (result.added > 0) {
 			closeLibrary();

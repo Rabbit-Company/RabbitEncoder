@@ -204,7 +204,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	const sourceIndex = plan.productions[0]!.sourceIndex;
 	const sourceStream = subtitleStreams.find((s) => s.index === sourceIndex);
 	if (!sourceStream || !isTextSubtitleCodec(sourceStream.codec)) {
-		Logger.warn("[translate] Source track is missing or not text-based; skipping translation");
+		Logger.warn("[translate] Source track is missing or not text-based. Skipping translation.");
 		return [];
 	}
 

@@ -92,9 +92,9 @@ export const SUBTITLE_FORMAT_PRIORITY_OPTIONS = ["text-first", "picture-first"] 
 
 export const PIPELINE_PRESET_HELP: Record<PipelinePreset, string> = {
 	full: "Denoise, AV1, Opus, full subtitle pipeline.",
-	prepare: "Run denoise & VS only; pass audio/subs/video through (FFV1). For GPU-only servers.",
+	prepare: "Run denoise and VS only. Pass audio, subtitles, and video through (FFV1). For GPU-only servers.",
 	translate:
-		"Only add missing subtitle languages via AI translation. Video, audio, existing subtitles, chapters and fonts are copied 1:1; the output keeps its original filename.",
+		"Only add missing subtitle languages via AI translation. Video, audio, existing subtitles, chapters, and fonts are copied 1:1. The output keeps its original filename.",
 	custom: "Configure each pipeline stage individually below.",
 };
 

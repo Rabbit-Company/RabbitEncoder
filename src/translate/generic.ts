@@ -221,7 +221,7 @@ export function parseGenericResponse(content: string, count: number): (string | 
 		// declaring the batch unusable.
 		try {
 			parsed = JSON.parse(repairJsonEscapes(json));
-			Logger.warn("[translate] Model emitted invalid JSON escapes (raw \\N?); repaired and parsed successfully");
+			Logger.warn("[translate] Model emitted invalid JSON escapes (raw \\N?). Repaired and parsed successfully.");
 		} catch {
 			return out;
 		}

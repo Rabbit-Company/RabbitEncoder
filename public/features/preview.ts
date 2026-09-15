@@ -36,7 +36,7 @@ export async function openPreviewModal(jobId: string): Promise<void> {
 
 	appState.currentPreviewSettingsFingerprint = previewSettingsFingerprintFE(job.settings);
 
-	byId("preview-modal-title").textContent = `Preview Encode — ${job.filename}`;
+	byId("preview-modal-title").textContent = `Preview Encode: ${job.filename}`;
 	byId("preview-modal").style.display = "";
 
 	await refreshPreviewModal();
@@ -114,7 +114,7 @@ export function renderPreviewSummary(samples: PreviewSample[]): void {
 		<div class="preview-summary-grid">
 			<div class="preview-summary-row">
 				<span class="meta-label">Likely range</span>
-				<span class="meta-value">${humanFileSize(minProjected)} - ${humanFileSize(maxProjected)}</span>
+				<span class="meta-value">${humanFileSize(minProjected)} to ${humanFileSize(maxProjected)}</span>
 			</div>
 			<div class="preview-summary-row">
 				<span class="meta-label">Avg bitrate</span>
@@ -122,7 +122,7 @@ export function renderPreviewSummary(samples: PreviewSample[]): void {
 			</div>
 			<div class="preview-summary-row">
 				<span class="meta-label">Based on</span>
-				<span class="meta-value">${count} clip${count === 1 ? "" : "s"} · ${totalSampledSec}s sampled</span>
+				<span class="meta-value">${count} clip${count === 1 ? "" : "s"}, ${totalSampledSec}s sampled</span>
 			</div>
 		</div>`;
 }
@@ -220,11 +220,11 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 		card._viewIdx = 0;
 
 		const ts = formatTimestamp(sample.timestampSec);
-		const projected = sample.projectedTotalHuman || "—";
-		const sizeStr = sample.encodedSizeHuman || "—";
+		const projected = sample.projectedTotalHuman || "N/A";
+		const sizeStr = sample.encodedSizeHuman || "N/A";
 		const bitrate = formatBitrate2(sample.encodedBitrateKbps);
 
-		const hint = views.length > 2 ? `Click — ${views.length} views` : "Click to toggle";
+		const hint = views.length > 2 ? `Click to cycle through ${views.length} views` : "Click to toggle";
 
 		card.innerHTML = `
 			<div class="preview-sample-image" data-action="toggle">
@@ -238,7 +238,7 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 			</div>
 			<div class="preview-sample-meta">
 				<div class="preview-sample-meta-row">
-					<span class="meta-label">Sample ${sample.index + 1} · ${ts}</span>
+					<span class="meta-label">Sample ${sample.index + 1}, ${ts}</span>
 					<span class="meta-value">${bitrate}</span>
 				</div>
 				<div class="preview-sample-meta-row">

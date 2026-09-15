@@ -1,4 +1,4 @@
-export type JobAction = "edit" | "remove" | "dismiss" | "retry" | "cancel" | "preview" | "sub-preview" | "audio-preview" | "mediainfo" | "bitrate";
+export type JobAction = "edit" | "remove" | "dismiss" | "retry" | "cancel" | "preview" | "sub-preview" | "audio-preview" | "mediainfo" | "bitrate" | "repair";
 
 export interface JobActionHandlers {
 	edit(id: string): void | Promise<void>;
@@ -11,6 +11,7 @@ export interface JobActionHandlers {
 	"audio-preview"(id: string): void | Promise<void>;
 	mediainfo(id: string): void | Promise<void>;
 	bitrate(id: string): void | Promise<void>;
+	repair(id: string): void | Promise<void>;
 }
 
 export function dispatchJobAction(action: string | undefined, id: string | undefined, handlers: JobActionHandlers): void {
@@ -20,5 +21,5 @@ export function dispatchJobAction(action: string | undefined, id: string | undef
 }
 
 function isJobAction(action: string): action is JobAction {
-	return ["edit", "remove", "dismiss", "retry", "cancel", "preview", "sub-preview", "audio-preview", "mediainfo", "bitrate"].includes(action);
+	return ["edit", "remove", "dismiss", "retry", "cancel", "preview", "sub-preview", "audio-preview", "mediainfo", "bitrate", "repair"].includes(action);
 }
