@@ -112,7 +112,7 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	selectedPath = "";
 	byId("repair-audit-modal").style.display = "";
 	byId("repair-audit-title-note").textContent = label || options.path || "Completed encoding folder";
-	byId("repair-audit-summary").innerHTML = '<span class="library-loading">Inspecting MKV metadata…</span>';
+	byId("repair-audit-summary").innerHTML = '<span class="library-loading">Inspecting MKV metadata...</span>';
 	byId("repair-audit-groups").innerHTML = "";
 	byId("repair-audit-files").innerHTML = "";
 	byId("repair-audit-details").innerHTML = "";

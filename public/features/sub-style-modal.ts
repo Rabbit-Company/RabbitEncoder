@@ -182,7 +182,7 @@ export function openSubStyleModal(target: AdvancedTarget): void {
 	state = { settings, label, style: {}, overrides: {}, scope: "", keys: [], fonts: [], dirty: false };
 
 	byId("sub-style-modal-title").textContent = "Font group & style";
-	byId("sub-style-status").textContent = "Loading…";
+	byId("sub-style-status").textContent = "Loading...";
 	renderFontDropdown(byId("sub-style-font"), label, [], () => {});
 
 	fetchFonts().then((fonts) => {
@@ -199,7 +199,7 @@ export function openSubStyleModal(target: AdvancedTarget): void {
 
 export async function saveCurrentGroupStyle(): Promise<void> {
 	if (!state) return;
-	byId("sub-style-status").textContent = "Saving…";
+	byId("sub-style-status").textContent = "Saving...";
 	const ok = await saveGroupStyle(state.label, { style: state.style, overrides: state.overrides });
 	byId("sub-style-status").textContent = ok ? "Saved" : "Save failed";
 	if (ok) {

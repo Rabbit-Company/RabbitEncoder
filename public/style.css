@@ -1665,6 +1665,109 @@ code {
 	width: min(1120px, calc(100vw - 32px));
 }
 
+.subtitle-editor-modal {
+	width: min(1080px, calc(100vw - 32px));
+}
+.subtitle-editor-file-row,
+.subtitle-editor-navigation {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+.subtitle-editor-file-row span {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	font-size: 0.8rem;
+	color: var(--text-2);
+}
+.subtitle-editor-file-row button,
+.subtitle-editor-navigation button {
+	flex-shrink: 0;
+}
+#subtitle-editor-video {
+	display: block;
+	width: 100%;
+	max-height: 42vh;
+	background: #000;
+	border-radius: 8px;
+	margin-bottom: 14px;
+}
+#subtitle-editor-controls {
+	border: 0;
+	padding: 0;
+	margin: 0;
+	min-width: 0;
+}
+#subtitle-editor-controls label {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+	font-size: 0.75rem;
+	color: var(--text-2);
+}
+.subtitle-editor-track-row,
+.subtitle-editor-times {
+	display: grid;
+	grid-template-columns: 2fr 1fr;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+.subtitle-editor-times {
+	grid-template-columns: 1fr 1fr;
+	margin-top: 10px;
+}
+.subtitle-editor-loop-settings {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 12px;
+	margin: 12px 0;
+}
+.subtitle-editor-navigation {
+	margin-top: 14px;
+}
+.subtitle-editor-navigation select {
+	flex: 1;
+	min-width: 0;
+}
+#subtitle-editor-text {
+	width: 100%;
+	resize: vertical;
+	font-family: inherit;
+}
+#subtitle-editor-format-hint {
+	margin: 8px 0;
+}
+#subtitle-editor-status {
+	margin-top: 14px;
+}
+.subtitle-editor-output {
+	font-size: 0.8rem;
+	overflow-wrap: anywhere;
+	color: var(--accent);
+}
+@media (max-width: 640px) {
+	.subtitle-editor-loop-settings,
+	.subtitle-editor-track-row,
+	.subtitle-editor-times {
+		grid-template-columns: 1fr 1fr;
+	}
+	.subtitle-editor-track-row {
+		grid-template-columns: 1fr;
+	}
+	.subtitle-editor-file-row {
+		flex-wrap: wrap;
+	}
+	.subtitle-editor-navigation {
+		gap: 5px;
+	}
+	.subtitle-editor-navigation button {
+		padding-inline: 7px;
+	}
+}
+
 .repair-subtitle {
 	font-size: 0.72rem;
 	color: var(--text-2);

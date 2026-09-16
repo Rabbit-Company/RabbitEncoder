@@ -250,7 +250,7 @@ export function renderBenchmark(state: BenchmarkState): void {
 
 	if (state.status === "running") {
 		statusEl.style.display = "";
-		statusLabel.textContent = state.currentLabel || "Running…";
+		statusLabel.textContent = state.currentLabel || "Running...";
 		statusStep.textContent = state.totalSteps > 0 ? `Step ${state.currentStep} / ${state.totalSteps}` : "";
 		const pct = state.totalSteps > 0 ? Math.min(100, (state.currentStep / state.totalSteps) * 100) : 0;
 		statusFill.style.width = `${pct}%`;
@@ -346,7 +346,7 @@ export async function handleBenchmarkRun() {
 	const runBtn = buttonById("benchmark-run-btn");
 	const noteEl = byId("benchmark-note");
 	runBtn.disabled = true;
-	runBtn.textContent = "Starting…";
+	runBtn.textContent = "Starting...";
 	noteEl.textContent = "";
 	try {
 		const result = await startBenchmarkRun();

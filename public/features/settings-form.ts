@@ -137,7 +137,7 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 	hint.className = "lang-filter-hint";
 
 	if (prefix === "job" && appState.currentEditJobId) {
-		hint.textContent = "Loading tracks…";
+		hint.textContent = "Loading tracks...";
 		try {
 			const tracks = await fetchJobSubtitleTracks(appState.currentEditJobId);
 			for (const t of tracks) {
@@ -490,7 +490,7 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 	const testResult = el("translate-test-result");
 	testBtn.addEventListener("click", async () => {
 		testBtn.disabled = true;
-		testResult.textContent = "Testing…";
+		testResult.textContent = "Testing...";
 		testResult.className = "test-result";
 		const r = await testTranslateConnection({
 			provider: settings.translateProvider ?? "openai",

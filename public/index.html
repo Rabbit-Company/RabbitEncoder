@@ -54,6 +54,13 @@
 						</svg>
 						Repair
 					</button>
+					<button title="Edit subtitle cues and timing with a looping video preview" class="btn btn-ghost" id="open-subtitle-editor-btn">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<rect x="2" y="4" width="20" height="16" rx="2" />
+							<path d="M6 12h4m4 0h4M6 16h12" />
+						</svg>
+						Subtitle editor
+					</button>
 					<button title="Import a downloaded bitrate-analysis.json" class="btn btn-ghost" id="import-bitrate-analysis-btn">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -363,8 +370,8 @@
 									<div class="toggle-group" id="default-ass-restyle-targets"></div>
 								</div>
 								<div class="setting-group">
-									<button class="btn btn-ghost" type="button" id="default-open-sub-style-btn">Subtitle font &amp; style…</button>
-									<button class="btn btn-ghost" type="button" id="default-open-font-groups-btn">Manage font groups…</button>
+									<button class="btn btn-ghost" type="button" id="default-open-sub-style-btn">Subtitle font &amp; style...</button>
+									<button class="btn btn-ghost" type="button" id="default-open-font-groups-btn">Manage font groups...</button>
 								</div>
 							</div>
 						</details>
@@ -633,8 +640,8 @@
 									<div class="toggle-group" id="job-ass-restyle-targets"></div>
 								</div>
 								<div class="setting-group">
-									<button class="btn btn-ghost" type="button" id="job-open-sub-style-btn">Subtitle font &amp; style…</button>
-									<button class="btn btn-ghost" type="button" id="job-open-font-groups-btn">Manage font groups…</button>
+									<button class="btn btn-ghost" type="button" id="job-open-sub-style-btn">Subtitle font &amp; style...</button>
+									<button class="btn btn-ghost" type="button" id="job-open-font-groups-btn">Manage font groups...</button>
 								</div>
 							</div>
 						</details>
@@ -743,7 +750,7 @@
 								<circle cx="11" cy="11" r="8" />
 								<line x1="21" y1="21" x2="16.65" y2="16.65" />
 							</svg>
-							<input id="library-search" type="text" class="library-search-input" placeholder="Search library folders…" autocomplete="off" />
+							<input id="library-search" type="text" class="library-search-input" placeholder="Search library folders..." autocomplete="off" />
 							<button id="library-search-clear" class="library-search-clear" title="Clear" style="display: none">&times;</button>
 						</div>
 						<div id="library-content" class="library-content"></div>
@@ -802,6 +809,82 @@
 			</div>
 
 			<!-- Subtitle Repair / Remux Modal -->
+			<div id="subtitle-editor-modal" class="modal-overlay" style="display: none">
+				<div class="modal subtitle-editor-modal">
+					<div class="modal-header">
+						<div>
+							<h2>Subtitle editor</h2>
+							<div class="repair-subtitle">Preview each cue in a loop, adjust timing, and edit text.</div>
+						</div>
+						<button class="btn-close" id="subtitle-editor-close" aria-label="Close subtitle editor">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div class="subtitle-editor-file-row">
+							<span id="subtitle-editor-file">Choose an MKV file to begin.</span><button class="btn btn-ghost" id="subtitle-editor-pick">Choose MKV...</button>
+						</div>
+						<div id="subtitle-editor-error" class="sub-preview-error" role="alert" style="display: none"></div>
+						<div id="subtitle-editor-workspace" style="display: none">
+							<video id="subtitle-editor-video" controls loop playsinline preload="auto" aria-label="Looping subtitle preview"></video>
+							<fieldset id="subtitle-editor-controls">
+								<div class="subtitle-editor-track-row">
+									<label>Subtitle track<select class="select-input" id="subtitle-editor-track"></select></label>
+									<label
+										>Track offset (ms)<input class="repair-input" id="subtitle-editor-offset" type="number" value="0" step="10" min="-86400000" max="86400000"
+									/></label>
+								</div>
+								<p id="subtitle-editor-format-hint" class="repair-subtitle"></p>
+								<p class="repair-subtitle">
+									Positive offsets show subtitles later. Negative offsets show them earlier. The offset applies to every cue in this track.
+								</p>
+								<div id="subtitle-editor-cue-fields" style="display: none">
+									<div class="subtitle-editor-navigation">
+										<button class="btn btn-ghost" id="subtitle-editor-previous">← Previous</button
+										><select class="select-input" id="subtitle-editor-cues" aria-label="Select subtitle cue"></select
+										><button class="btn btn-ghost" id="subtitle-editor-next">Next →</button>
+									</div>
+									<div id="subtitle-editor-cue-label" class="repair-subtitle"></div>
+									<div class="subtitle-editor-times">
+										<label
+											>Cue start (seconds, before offset)<input
+												class="repair-input"
+												type="number"
+												id="subtitle-editor-cue-start"
+												min="0"
+												max="86400"
+												step="0.01" /></label
+										><label
+											>Cue end (seconds, before offset)<input class="repair-input" type="number" id="subtitle-editor-cue-end" min="0" max="86400" step="0.01"
+										/></label>
+									</div>
+									<label
+										>Subtitle text<textarea class="repair-input" id="subtitle-editor-text" rows="3" maxlength="100000" spellcheck="false"></textarea>
+									</label>
+									<div class="subtitle-editor-loop-settings">
+										<label
+											>Seconds before cue<input class="repair-input" type="number" id="subtitle-editor-before" min="0" max="60" step="0.5" value="3"
+										/></label>
+										<label
+											>Seconds after cue<input class="repair-input" type="number" id="subtitle-editor-after" min="0" max="60" step="0.5" value="3"
+										/></label>
+										<label>Loop start (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-start" min="0" step="0.1" /></label>
+										<label
+											>Loop duration (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-duration" min="0.1" max="120" step="0.1"
+										/></label>
+									</div>
+									<button class="btn btn-ghost btn-sm" id="subtitle-editor-cue-loop">Reset loop around cue</button>
+								</div>
+							</fieldset>
+						</div>
+						<p id="subtitle-editor-status" class="repair-subtitle" role="status" aria-live="polite"></p>
+						<p id="subtitle-editor-output" class="subtitle-editor-output"></p>
+					</div>
+					<div class="modal-footer">
+						<span class="modal-note">Save creates a separate *.subtitles-edited.mkv next to the source.</span
+						><button class="btn btn-primary" id="subtitle-editor-save" disabled>Save edited MKV</button>
+					</div>
+				</div>
+			</div>
+
 			<div id="repair-modal" class="modal-overlay" style="display: none">
 				<div class="modal repair-modal">
 					<div class="modal-header">
@@ -816,13 +899,13 @@
 							<div class="repair-file-choice">
 								<span class="repair-file-label">Encoded target</span>
 								<div id="repair-target-selection" class="repair-file-selection"></div>
-								<button class="btn btn-ghost" type="button" id="repair-pick-target-btn">Choose target…</button>
+								<button class="btn btn-ghost" type="button" id="repair-pick-target-btn">Choose target...</button>
 							</div>
 							<div class="repair-file-choice">
 								<span class="repair-file-label">Original source <small>optional</small></span>
 								<div id="repair-source-selection" class="repair-file-selection"></div>
 								<div class="repair-file-buttons">
-									<button class="btn btn-ghost" type="button" id="repair-pick-source-btn">Choose source…</button>
+									<button class="btn btn-ghost" type="button" id="repair-pick-source-btn">Choose source...</button>
 									<button class="btn btn-ghost" type="button" id="repair-clear-source-btn" style="display: none">Clear</button>
 								</div>
 							</div>
@@ -891,7 +974,7 @@
 								<circle cx="11" cy="11" r="8" />
 								<line x1="21" y1="21" x2="16.65" y2="16.65" />
 							</svg>
-							<input id="repair-picker-search" type="text" class="library-search-input" placeholder="Filter loaded MKV files…" autocomplete="off" />
+							<input id="repair-picker-search" type="text" class="library-search-input" placeholder="Filter loaded MKV files..." autocomplete="off" />
 						</div>
 						<div id="repair-picker-error" class="sub-preview-error" style="display: none"></div>
 						<div id="repair-picker-content" class="library-content"></div>
@@ -916,7 +999,7 @@
 					<div class="modal-body repair-audit-body">
 						<div class="repair-audit-toolbar">
 							<div id="repair-audit-summary" class="repair-audit-summary"></div>
-							<button class="btn btn-ghost" id="repair-audit-pick-folder-btn" type="button">Choose another folder…</button>
+							<button class="btn btn-ghost" id="repair-audit-pick-folder-btn" type="button">Choose another folder...</button>
 						</div>
 						<div id="repair-audit-groups" class="repair-audit-groups"></div>
 						<div class="repair-audit-layout">
@@ -940,7 +1023,7 @@
 						<button class="btn-close" id="close-mediainfo-btn">&times;</button>
 					</div>
 					<div class="modal-body">
-						<div id="mediainfo-loading" class="sub-preview-loading">Reading metadata…</div>
+						<div id="mediainfo-loading" class="sub-preview-loading">Reading metadata...</div>
 						<div id="mediainfo-error" class="sub-preview-error" style="display: none"></div>
 						<pre id="mediainfo-content" class="mediainfo-content" style="display: none"></pre>
 					</div>
@@ -958,7 +1041,7 @@
 						<button class="btn-close" id="close-bitrate-modal-btn">&times;</button>
 					</div>
 					<div class="modal-body">
-						<div id="bitrate-loading" class="sub-preview-loading">Analyzing…</div>
+						<div id="bitrate-loading" class="sub-preview-loading">Analyzing...</div>
 						<div id="bitrate-error" class="sub-preview-error" style="display: none"></div>
 						<div id="bitrate-content" style="display: none">
 							<div class="bitrate-toolbar">
@@ -1001,7 +1084,7 @@
 						<button class="btn-close" id="close-audio-preview-btn">&times;</button>
 					</div>
 					<div class="modal-body" id="audio-preview-body">
-						<div id="audio-preview-loading" class="sub-preview-loading">Loading audio tracks…</div>
+						<div id="audio-preview-loading" class="sub-preview-loading">Loading audio tracks...</div>
 						<div id="audio-preview-error" class="sub-preview-error" style="display: none"></div>
 						<div id="audio-preview-content" style="display: none">
 							<div class="sub-preview-section">
@@ -1026,7 +1109,7 @@
 						<button class="btn-close" id="close-subtitle-preview-btn">&times;</button>
 					</div>
 					<div class="modal-body" id="sub-preview-body">
-						<div id="sub-preview-loading" class="sub-preview-loading">Analyzing subtitles…</div>
+						<div id="sub-preview-loading" class="sub-preview-loading">Analyzing subtitles...</div>
 						<div id="sub-preview-error" class="sub-preview-error" style="display: none"></div>
 						<div id="sub-preview-content" style="display: none">
 							<div class="sub-preview-section">
@@ -1080,7 +1163,7 @@
 
 						<div id="preview-status" class="preview-status" style="display: none">
 							<div class="preview-status-row">
-								<span class="preview-status-label" id="preview-status-label">Starting…</span>
+								<span class="preview-status-label" id="preview-status-label">Starting...</span>
 								<span class="preview-status-pct" id="preview-status-pct">0%</span>
 							</div>
 							<div class="preview-progress">
@@ -1114,7 +1197,7 @@
 						<button class="btn-close" id="close-preview-fullscreen-btn" aria-label="Close fullscreen preview">&times;</button>
 					</div>
 					<div id="preview-fullscreen-stage" class="preview-fullscreen-stage">
-						<div id="preview-fullscreen-loading" class="preview-img-loading">Loading…</div>
+						<div id="preview-fullscreen-loading" class="preview-img-loading">Loading...</div>
 						<img id="preview-fullscreen-img" alt="Fullscreen preview sample" style="display: none" />
 						<span id="preview-fullscreen-tag" class="preview-sample-tag is-source">Source</span>
 						<span class="preview-fullscreen-hint">Click to toggle</span>

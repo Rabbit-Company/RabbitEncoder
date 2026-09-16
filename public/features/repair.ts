@@ -18,7 +18,7 @@ let sourceTracks: EditableTrack[] = [];
 let selectedTargetPath = "";
 let selectedSourcePath = "";
 
-type PickerPurpose = "target" | "source" | "folder";
+type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -31,6 +31,7 @@ let pickerSelectedPath = "";
 let pickerRoots: string[] = [];
 const pickerNodes = new Map<string, PickerNode>();
 let pickerFolderCallback: ((path: string) => void | Promise<void>) | null = null;
+let pickerFileCallback: ((path: string) => void | Promise<void>) | null = null;
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -204,7 +205,7 @@ export async function inspectRepairPaths(jobId?: string): Promise<void> {
 	setError("");
 	const button = buttonById("repair-inspect-btn");
 	button.disabled = true;
-	button.textContent = "Inspecting…";
+	button.textContent = "Inspecting...";
 	byId("repair-editor").style.display = "none";
 	try {
 		const data = await fetchRepairInspection(
@@ -287,7 +288,7 @@ function renderPickerNode(node: PickerNode): string {
 		</div>`;
 	}
 	let children = "";
-	if (node.loading) children = `<div class="tree-loading" style="padding-left:${node.depth * 24 + 56}px">Loading…</div>`;
+	if (node.loading) children = `<div class="tree-loading" style="padding-left:${node.depth * 24 + 56}px">Loading...</div>`;
 	else if (node.expanded && node.children) {
 		children = node.children
 			.map((path) => pickerNodes.get(path))
@@ -415,10 +416,16 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 	pickerNodes.clear();
 	inputById("repair-picker-search").value = "";
 	byId("repair-picker-title").textContent =
-		purpose === "target" ? "Choose encoded target" : purpose === "source" ? "Choose original subtitle source" : "Choose folder to audit";
-	inputById("repair-picker-search").placeholder = purpose === "folder" ? "Filter loaded folders…" : "Filter loaded folders and MKV files…";
+		purpose === "target"
+			? "Choose encoded target"
+			: purpose === "source"
+				? "Choose original subtitle source"
+				: purpose === "subtitle-editor"
+					? "Choose MKV to edit subtitles"
+					: "Choose folder to audit";
+	inputById("repair-picker-search").placeholder = purpose === "folder" ? "Filter loaded folders..." : "Filter loaded folders and MKV files...";
 	byId("repair-picker-error").style.display = "none";
-	byId("repair-picker-content").innerHTML = '<div class="library-loading">Loading media folders…</div>';
+	byId("repair-picker-content").innerHTML = '<div class="library-loading">Loading media folders...</div>';
 	byId("repair-picker-modal").style.display = "";
 	try {
 		const roots = await fetchRepairRoots();
@@ -446,8 +453,14 @@ export function openRepairFolderPicker(onChoose: (path: string) => void | Promis
 	void openRepairPicker("folder");
 }
 
+export function openSubtitleFilePicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("subtitle-editor");
+}
+
 export function closeRepairPicker(): void {
 	byId("repair-picker-modal").style.display = "none";
+	pickerFileCallback = null;
 }
 
 export function closeRepairPickerIfOutside(event: MouseEvent): void {
@@ -475,6 +488,12 @@ export function filterRepairPicker(): void {
 
 export function chooseRepairPickerFile(): void {
 	if (!pickerSelectedPath) return;
+	if (pickerPurpose === "subtitle-editor") {
+		const callback = pickerFileCallback;
+		closeRepairPicker();
+		if (callback) void callback(pickerSelectedPath);
+		return;
+	}
 	if (pickerPurpose === "folder") {
 		const callback = pickerFolderCallback;
 		pickerFolderCallback = null;
@@ -553,7 +572,7 @@ export async function queueRepair(): Promise<void> {
 	setError("");
 	const button = buttonById("repair-queue-btn");
 	button.disabled = true;
-	button.textContent = "Queueing…";
+	button.textContent = "Queueing...";
 	try {
 		const tracks = editableTracks.map(({ codec: _codec, canRabbitProcess: _canProcess, currentCompression: _currentCompression, ...track }, order) => ({
 			...track,

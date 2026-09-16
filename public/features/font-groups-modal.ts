@@ -67,7 +67,7 @@ function renderGroupBar(): void {
 	createBtn.onclick = async () => {
 		const name = newInput.value.trim();
 		if (!name) return;
-		setStatus("Creating…");
+		setStatus("Creating...");
 		const r = await createFontGroup(name);
 		if (!r.ok) return setStatus(r.error || "Create failed");
 		setStatus(`Created "${name}"`);
@@ -115,7 +115,7 @@ function renderGroupBar(): void {
 		if (next === null) return;
 		const trimmed = next.trim();
 		if (!trimmed || trimmed === current) return;
-		setStatus("Renaming…");
+		setStatus("Renaming...");
 		const r = await renameFontGroup(current, trimmed);
 		if (!r.ok) return setStatus(r.error || "Rename failed");
 		setStatus(`Renamed to "${trimmed}"` + (r.updatedReferences ? `. Updated ${r.updatedReferences} setting(s).` : ""));
@@ -129,7 +129,7 @@ function renderGroupBar(): void {
 	deleteBtn.onclick = async () => {
 		const current = state!.selected;
 		if (!window.confirm(`Delete font group "${current}"?\n\nSeeded groups (Noto Sans / Noto Serif) reappear on next restart.`)) return;
-		setStatus("Deleting…");
+		setStatus("Deleting...");
 		const r = await deleteFontGroup(current);
 		if (!r.ok) return setStatus(r.error || "Delete failed");
 		setStatus(`Deleted "${current}"`);
@@ -188,7 +188,7 @@ function renderFaces(): void {
 				.split(",")
 				.map((k) => k.trim())
 				.filter(Boolean);
-			setStatus("Saving keys…");
+			setStatus("Saving keys...");
 			const r = await updateFontFace(state!.selected, face.fileName, keys);
 			if (!r.ok) return setStatus(r.error || "Save failed");
 			setStatus("Keys saved");
@@ -200,7 +200,7 @@ function renderFaces(): void {
 		delBtn.textContent = "Remove";
 		delBtn.onclick = async () => {
 			if (!window.confirm(`Remove "${face.fileName}" from "${state!.selected}"?`)) return;
-			setStatus("Removing…");
+			setStatus("Removing...");
 			const r = await deleteFontFace(state!.selected, face.fileName);
 			if (!r.ok) return setStatus(r.error || "Remove failed");
 			setStatus("Removed");
@@ -276,7 +276,7 @@ function renderImport(): void {
 				.map((k) => k.trim())
 				.filter(Boolean),
 		];
-		setStatus("Importing…");
+		setStatus("Importing...");
 		const r = await importFontFace(state!.selected, source, keys);
 		if (!r.ok) return setStatus(r.error || "Import failed");
 		setStatus(`Imported as ${r.fileName}`);
@@ -290,7 +290,7 @@ function renderImport(): void {
 
 export async function openFontGroupsModal(): Promise<void> {
 	byId("font-groups-modal").style.display = "";
-	setStatus("Loading…");
+	setStatus("Loading...");
 	await refresh(false);
 	setStatus("");
 }

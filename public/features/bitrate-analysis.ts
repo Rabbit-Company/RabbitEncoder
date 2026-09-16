@@ -592,7 +592,7 @@ export async function handleBitrateSaveThresholds(): Promise<void> {
 	const btn = buttonById("bitrate-save-btn");
 	const prevText = btn.textContent || "Save to job";
 	btn.disabled = true;
-	btn.textContent = "Saving…";
+	btn.textContent = "Saving...";
 	try {
 		await patchJobAutoThresholds(currentJobId, currentMetric, currentThresholds);
 		btn.textContent = "Saved";

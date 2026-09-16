@@ -27,7 +27,7 @@ export function renderVsChainEditor(container: HTMLElement, settings: JobSetting
 		const select = document.createElement("select");
 		const placeholder = document.createElement("option");
 		placeholder.value = "";
-		placeholder.textContent = "+ Add filter…";
+		placeholder.textContent = "+ Add filter...";
 		select.appendChild(placeholder);
 		for (const p of presets) {
 			const opt = document.createElement("option");

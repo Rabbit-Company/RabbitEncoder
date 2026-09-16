@@ -1,4 +1,5 @@
 import type { JobSettings } from "../types";
+import { initSubtitleEditor } from "../features/subtitle-editor";
 import type { PreviewArtifactKind, PreviewSampleCard } from "../ui/models";
 import { cancelJob, handleLogin, logout, reloadVsPresets } from "../api/client";
 import {
@@ -90,6 +91,7 @@ export function getCurrentSettings(): JobSettings | null {
 }
 
 export function initEventListeners() {
+	initSubtitleEditor();
 	byId("open-repair-audit-btn").addEventListener("click", openRepairAuditPicker);
 	byId("close-repair-audit-btn").addEventListener("click", closeRepairAudit);
 	byId("repair-audit-close-btn").addEventListener("click", closeRepairAudit);

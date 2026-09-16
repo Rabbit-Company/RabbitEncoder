@@ -698,7 +698,7 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 		jobId,
 		status: "running",
 		progress: 0,
-		currentDetail: "Starting…",
+		currentDetail: "Starting...",
 		samples: [],
 		settingsFingerprint: previewSettingsFingerprint(job.settings),
 		sampleCount: opts.sampleCount,

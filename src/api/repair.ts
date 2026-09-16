@@ -15,7 +15,7 @@ function allowedRoots(config: AppConfig): string[] {
 	return [config.inputDir, config.outputDir, ...config.libraryDirs].filter((root) => existsSync(root)).map((root) => realpathSync(root));
 }
 
-function resolveAllowedMkv(raw: unknown, config: AppConfig, label: string): string {
+export function resolveAllowedMkv(raw: unknown, config: AppConfig, label: string): string {
 	if (typeof raw !== "string" || !raw.trim()) throw new Error(`${label} path is required`);
 	const candidate = resolve(raw.trim());
 	if (!existsSync(candidate) || !statSync(candidate).isFile()) throw new Error(`${label} file does not exist`);

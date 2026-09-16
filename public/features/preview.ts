@@ -152,7 +152,7 @@ export function renderPreviewState(state: PreviewState): void {
 	if (isRunning) {
 		statusEl.style.display = "";
 		const pct = (state.progress || 0).toFixed(1);
-		byId("preview-status-label").textContent = state.currentDetail || "Encoding…";
+		byId("preview-status-label").textContent = state.currentDetail || "Encoding...";
 		byId("preview-status-pct").textContent = `${pct}%`;
 		byId("preview-progress-fill").style.width = `${pct}%`;
 		byId("preview-status-detail").textContent = `${state.samples?.length || 0} of ${state.sampleCount} samples done`;
@@ -228,7 +228,7 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 
 		card.innerHTML = `
 			<div class="preview-sample-image" data-action="toggle">
-				<div class="preview-img-loading">Loading…</div>
+				<div class="preview-img-loading">Loading...</div>
 				<img alt="Preview sample ${sample.index + 1}" style="display: none">
 				<span class="preview-sample-tag is-source">Source</span>
 				<button class="preview-fullscreen-btn" type="button" title="View fullscreen" aria-label="View preview sample fullscreen" data-action="fullscreen">
@@ -363,7 +363,7 @@ export async function openPreviewFullscreen(card: PreviewSampleCard | null): Pro
 	title.textContent = `Preview sample ${idx + 1}`;
 	img.style.display = "none";
 	loading.style.display = "";
-	loading.textContent = "Loading…";
+	loading.textContent = "Loading...";
 	modal.style.display = "";
 
 	try {
@@ -408,7 +408,7 @@ export async function handlePreviewRun() {
 	if (!appState.currentPreviewJobId) return;
 	const runBtn = buttonById("preview-run-btn");
 	runBtn.disabled = true;
-	runBtn.textContent = "Starting…";
+	runBtn.textContent = "Starting...";
 	clearPreviewBlobCache();
 	const samplesEl = byId("preview-samples");
 	if (samplesEl) samplesEl.dataset.renderedKey = "";

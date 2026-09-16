@@ -16,6 +16,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Preview encoding** generates configurable short samples spread across the source, with frame-aligned source/encode comparisons before committing the full job
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
 - **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio
+- **Subtitle editor** browse MKVs, navigate and edit SRT/ASS/SSA cues, and preview timing changes in an audible video loop (three seconds before and after each cue by default). Adjust track offsets and loop boundaries. Bitmap PGS/VobSub/DVB subtitles use track delays. Save a separate `*.subtitles-edited.mkv` with video and audio copied unchanged.
 - **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
 - **Jellyfin / Sonarr integration** automatically cleans up `.nfo` and thumbnail files when replacing sources so metadata is regenerated
 - **Smart skip** already-encoded files (detected by `-{ORGANIZATION}` suffix) are recognized and skipped
