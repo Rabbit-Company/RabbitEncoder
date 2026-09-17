@@ -432,6 +432,18 @@ export interface RepairFolderAudit {
 	groups: RepairAuditGroup[];
 }
 
+export type RepairAuditSubtitleMetadata = Pick<
+	RepairSubtitleTrackPlan,
+	"title" | "language" | "isDefault" | "isForced" | "isEnabled" | "isHearingImpaired" | "isOriginal" | "isCommentary"
+>;
+
+export interface RepairAuditGroupEdit {
+	paths: string[];
+	expectedTracks: RepairAuditTrack[];
+	subtitles: RepairAuditSubtitleMetadata[];
+	replaceTarget: boolean;
+}
+
 export interface Job {
 	kind?: JobKind;
 	id: string;

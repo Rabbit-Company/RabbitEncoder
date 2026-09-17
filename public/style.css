@@ -2081,24 +2081,6 @@ code {
 	margin-top: 10px;
 }
 
-.repair-replace {
-	display: flex;
-	align-items: flex-start;
-	gap: 9px;
-	margin-top: 14px;
-	padding: 11px 12px;
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	font-size: 0.76rem;
-}
-
-.repair-replace span {
-	display: flex;
-	flex-direction: column;
-	gap: 3px;
-}
-
-.repair-replace small,
 .repair-empty {
 	color: var(--text-2);
 	font-size: 0.7rem;
@@ -2163,6 +2145,34 @@ code {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
+}
+
+.repair-audit-group-fields {
+	border: 0;
+	padding: 0;
+	margin: 0;
+	min-width: 0;
+}
+
+.repair-audit-metadata-fields {
+	grid-template-columns: minmax(0, 1fr) minmax(90px, 140px);
+}
+
+.repair-save-mode,
+.repair-audit-save-mode {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 16px;
+}
+
+.repair-audit-group-actions {
+	display: flex;
+	justify-content: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
 }
 
 .repair-audit-group-badge {

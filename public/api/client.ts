@@ -9,6 +9,7 @@ import type {
 	JobSettings,
 	PreviewState,
 	RepairFolderAudit,
+	RepairAuditGroupEdit,
 	RepairInspection,
 	RepairPlan,
 	StyleAppearance,
@@ -156,6 +157,17 @@ export async function fetchRepairFolderAudit(options: { path?: string; jobIds?: 
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not audit MKV folder");
+	return data;
+}
+
+export async function createRepairAuditGroupJobs(edit: RepairAuditGroupEdit): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/group`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(edit),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue group edits");
 	return data;
 }
 

@@ -17,7 +17,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
 - **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio
 - **Subtitle editor** browse MKVs, navigate and edit SRT/ASS/SSA cues, and preview timing changes in an audible video loop (three seconds before and after each cue by default). Adjust track offsets and loop boundaries. Bitmap PGS/VobSub/DVB subtitles use track delays. Save a separate `*.subtitles-edited.mkv` with video and audio copied unchanged.
-- **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
+- **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, edit subtitle metadata across an entire group, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
 - **Jellyfin / Sonarr integration** automatically cleans up `.nfo` and thumbnail files when replacing sources so metadata is regenerated
 - **Smart skip** already-encoded files (detected by `-{ORGANIZATION}` suffix) are recognized and skipped
 
@@ -95,9 +95,11 @@ Intermediate VapourSynth and prepare-filter stills are also exposed when those s
 
 Open **Repair** in the dashboard, select an encoded MKV and optionally its original source MKV, then inspect their subtitle tracks. The output plan can keep or remove target tracks, import source tracks, reorder them, edit names/languages and Matroska flags, and choose `zlib`, uncompressed, or the track's current compression. Text tracks can either be copied unchanged or processed with the current Rabbit ASS/SRT styling defaults.
 
-Repair jobs use MKVToolNix stream copying: video and audio codecs are verified before the result is accepted, and source/target duration mismatches are rejected. By default Rabbit writes a non-colliding `*.repaired.mkv` beside the encoded target. Replacing the target is opt-in and only happens atomically after the staged MKV passes verification.
+Repair jobs use MKVToolNix stream copying: video and audio codecs are verified before the result is accepted, and source/target duration mismatches are rejected. The single-file repair editor's **Save changes to** defaults to **Existing MKV file**. Choose **New .repaired.mkv copy** to write a non-colliding copy beside the encoded target instead. Replacement only happens atomically after the staged MKV passes verification.
 
 Use **Audit folder** to inspect every MKV directly inside a selected folder. Files are grouped as A, B, C, and so on by their ordered audio/subtitle track type, language, title, and flags. Group A is the majority layout. Outliers list their exact differences and open directly in the repair editor. Audits launched from a completed queue folder also pair each encode with its own original input, making missing source subtitles available for plain copying or Rabbit ASS/SRT processing without ever borrowing subtitle content from another episode.
+
+Choose **Edit group** beside a group to change subtitle names, languages, and flags for all of its files at once. Each subtitle row applies to the same ordered subtitle in every episode, using that episode's own track ID and preserving its compression. **Queue changes** validates the whole group against the audit before queueing one metadata repair per file. **Save changes to** defaults to **Existing MKV files**, updating each file after verification. Choose **New .repaired.mkv copies** if you prefer separate output files. Follow progress in the job list and audit again after completion to inspect the results.
 
 ## VapourSynth Filters
 
@@ -273,6 +275,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/repair/roots`                         | List configured media roots for the repair file picker                         |
 | `GET`    | `/api/repair/browse`                        | Browse MKV files within an allowed repair-picker root                          |
 | `POST`   | `/api/repair/audit`                         | Group a folder or completed job outputs by audio/subtitle metadata             |
+| `POST`   | `/api/repair/audit/group`                   | Validate an audited group and queue subtitle metadata edits for all its files  |
 | `POST`   | `/api/repair/jobs`                          | Validate and queue a subtitle-only stream-copy repair plan                     |
 | `GET`    | `/api/config`                               | Get default settings                                                           |
 | `PATCH`  | `/api/config`                               | Update default settings                                                        |

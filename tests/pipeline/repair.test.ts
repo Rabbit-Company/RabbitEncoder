@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
 	buildRepairMkvmergeArgs,
 	buildRepairMkvpropeditArgs,
+	buildRepairAuditGroupPlans,
 	groupRepairAuditFiles,
 	isMetadataOnlyRepair,
 	repairAuditGroupLabel,
 	sanitizeRepairPlan,
 } from "../../src/pipeline/repair";
-import type { RepairAuditTrack } from "../../src/core/types";
+import type { RepairAuditGroupEdit, RepairAuditTrack } from "../../src/core/types";
 
 function auditTrack(type: "audio" | "subtitles", language: string, title: string, flags: Partial<RepairAuditTrack> = {}): RepairAuditTrack {
 	return {
@@ -52,6 +53,68 @@ describe("subtitle repair plans", () => {
 
 	test("uses spreadsheet-style audit group labels", () => {
 		expect([0, 25, 26, 27, 51, 52].map(repairAuditGroupLabel)).toEqual(["A", "Z", "AA", "AB", "AZ", "BA"]);
+	});
+
+	test("renames subtitles across 23 episodes using each file's own track IDs and compression", () => {
+		const tracks = [auditTrack("audio", "jpn", "Japanese", { id: 1 }), auditTrack("subtitles", "eng", "Old name", { id: 2, isForced: true })];
+		const files = Array.from({ length: 23 }, (_, index) => ({
+			path: `/show/e${index + 1}.mkv`,
+			tracks: tracks.map((track) => ({ ...track, id: track.id + index * 3, compression: index % 2 ? ("zlib" as const) : ("none" as const) })),
+		}));
+		const edit: RepairAuditGroupEdit = {
+			paths: files.map((file) => file.path),
+			expectedTracks: tracks,
+			subtitles: [{ ...tracks[1]!, title: "Full Subtitles" }],
+			replaceTarget: false,
+		};
+		const plans = buildRepairAuditGroupPlans(files, edit);
+		expect(plans).toHaveLength(23);
+		for (const [index, plan] of plans.entries()) {
+			expect(plan.targetPath).toBe(files[index]!.path);
+			expect(plan.replaceTarget).toBe(false);
+			expect(plan.tracks).toHaveLength(1);
+			expect(plan.tracks[0]).toMatchObject({
+				trackId: 2 + index * 3,
+				title: "Full Subtitles",
+				language: "eng",
+				compression: "preserve",
+				source: "target",
+				mode: "copy",
+				isForced: true,
+			});
+			const target = { tracks: files[index]!.tracks.map((track) => ({ id: track.id, type: track.type, codec: track.codec, properties: {} })) };
+			expect(isMetadataOnlyRepair(plan, target)).toBe(true);
+		}
+		edit.replaceTarget = true;
+		expect(buildRepairAuditGroupPlans(files, edit).every((plan) => plan.replaceTarget)).toBe(true);
+	});
+
+	test("rejects stale or mixed group metadata before producing a batch of plans", () => {
+		const tracks = [auditTrack("subtitles", "eng", "Full")];
+		const edit: RepairAuditGroupEdit = { paths: [], expectedTracks: tracks, subtitles: [{ ...tracks[0]!, title: "New" }], replaceTarget: false };
+		const first = { path: "/show/e01.mkv", tracks };
+		for (const changed of [{ title: "Changed externally" }, { language: "jpn" }, { isDefault: true }, { type: "audio" as const }]) {
+			expect(() => buildRepairAuditGroupPlans([first, { path: "/show/e02.mkv", tracks: [{ ...tracks[0]!, ...changed }] }], edit)).toThrow(
+				"metadata changed since the audit",
+			);
+		}
+		expect(() => buildRepairAuditGroupPlans([first, { path: "/show/e02.mkv", tracks: [] }], edit)).toThrow("metadata changed since the audit");
+	});
+
+	test("keeps every subtitle in its existing order and rejects adding or removing subtitles", () => {
+		const tracks = [auditTrack("subtitles", "eng", "Full", { id: 3 }), auditTrack("subtitles", "eng", "Signs", { id: 7, isForced: true })];
+		const file = { path: "/show/e01.mkv", tracks };
+		const edit: RepairAuditGroupEdit = { paths: [file.path], expectedTracks: tracks, subtitles: tracks.map((track) => ({ ...track })), replaceTarget: false };
+		edit.subtitles[1]!.title = "Signs & Songs";
+		const plan = buildRepairAuditGroupPlans([file], edit)[0]!;
+		expect(plan.tracks.map((track) => [track.trackId, track.order, track.title])).toEqual([
+			[3, 0, "Full"],
+			[7, 1, "Signs & Songs"],
+		]);
+		edit.subtitles.pop();
+		expect(() => buildRepairAuditGroupPlans([file], edit)).toThrow("preserve every subtitle track");
+		edit.subtitles.push({ ...tracks[1]! }, { ...tracks[1]! });
+		expect(() => buildRepairAuditGroupPlans([file], edit)).toThrow("preserve every subtitle track");
 	});
 
 	test("sanitizes metadata and gives every selected track a stable order", () => {

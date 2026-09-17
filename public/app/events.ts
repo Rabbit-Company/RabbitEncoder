@@ -79,6 +79,7 @@ import {
 	closeRepairAudit,
 	closeRepairAuditIfOutside,
 	handleRepairAuditClick,
+	handleRepairAuditInput,
 	openRepairAuditJobs,
 	openRepairAuditPicker,
 	openSelectedAuditRepair,
@@ -98,6 +99,9 @@ export function initEventListeners() {
 	byId("repair-audit-modal").addEventListener("click", closeRepairAuditIfOutside);
 	byId("repair-audit-pick-folder-btn").addEventListener("click", openRepairAuditPicker);
 	byId("repair-audit-files").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-groups").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-details").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-details").addEventListener("input", handleRepairAuditInput);
 	byId("repair-audit-open-btn").addEventListener("click", openSelectedAuditRepair);
 	byId("open-repair-btn").addEventListener("click", () => openRepair());
 	byId("close-repair-btn").addEventListener("click", closeRepair);

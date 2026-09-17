@@ -8,6 +8,7 @@ import type {
 	RepairAuditFile,
 	RepairAuditGroup,
 	RepairAuditTrack,
+	RepairAuditGroupEdit,
 	RepairFolderAudit,
 	RepairPlan,
 	RepairSubtitleTrack,
@@ -222,6 +223,41 @@ export function groupRepairAuditFiles(rawFiles: Array<Omit<RepairAuditFile, "gro
 		representativePath: rawFiles[entry.firstIndex]!.path,
 	}));
 	return { path, files, groups };
+}
+
+/** Match subtitles by their ordered position, since MKV track IDs can differ between episodes. */
+export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], edit: RepairAuditGroupEdit): RepairPlan[] {
+	if (!Array.isArray(edit.expectedTracks) || !Array.isArray(edit.subtitles)) throw new Error("Group track metadata is required");
+	const expectedSignature = auditSignature({ tracks: edit.expectedTracks });
+	const subtitleCount = edit.expectedTracks.filter((track) => track.type === "subtitles").length;
+	if (!subtitleCount || edit.subtitles.length !== subtitleCount) throw new Error("Group edits must preserve every subtitle track");
+	return files.map((file) => {
+		if (auditSignature(file) !== expectedSignature) throw new Error(`${basename(file.path)} metadata changed since the audit. Audit the folder again.`);
+		return sanitizeRepairPlan({
+			targetPath: file.path,
+			replaceTarget: edit.replaceTarget,
+			tracks: file.tracks
+				.filter((track) => track.type === "subtitles")
+				.map((track, order) => {
+					const metadata = edit.subtitles[order]!;
+					return {
+						title: metadata.title,
+						language: metadata.language,
+						isDefault: metadata.isDefault,
+						isForced: metadata.isForced,
+						isEnabled: metadata.isEnabled,
+						isHearingImpaired: metadata.isHearingImpaired,
+						isOriginal: metadata.isOriginal,
+						isCommentary: metadata.isCommentary,
+						source: "target",
+						trackId: track.id,
+						mode: "copy",
+						order,
+						compression: "preserve",
+					};
+				}),
+		});
+	});
 }
 
 function durationSeconds(identified: MkvIdentification): number {

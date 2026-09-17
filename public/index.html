@@ -942,16 +942,14 @@
 									<div id="repair-tracks" class="repair-tracks"></div>
 								</section>
 							</div>
-							<label class="repair-replace">
-								<input type="checkbox" id="repair-replace-target" />
-								<span
-									><strong>Replace encoded target after verification</strong
-									><small
-										>Off creates <code>name.repaired.mkv</code> next to it. Turn this on only when you want the verified result to replace the target
-										atomically.</small
-									></span
-								>
+							<label class="repair-save-mode"
+								>Save changes to
+								<select class="select-input" id="repair-save-mode">
+									<option value="existing" selected>Existing MKV file</option>
+									<option value="copies">New .repaired.mkv copy</option>
+								</select>
 							</label>
+							<p class="repair-subtitle">The existing file is updated after verification.</p>
 						</div>
 					</div>
 					<div class="modal-footer">
@@ -1002,6 +1000,7 @@
 							<button class="btn btn-ghost" id="repair-audit-pick-folder-btn" type="button">Choose another folder...</button>
 						</div>
 						<div id="repair-audit-groups" class="repair-audit-groups"></div>
+						<div id="repair-audit-status" class="repair-subtitle" role="status" aria-live="polite"></div>
 						<div class="repair-audit-layout">
 							<div id="repair-audit-files" class="repair-audit-files"></div>
 							<div id="repair-audit-details" class="repair-audit-details"></div>

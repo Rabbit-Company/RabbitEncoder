@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, RepairPlan } from "../core/types";
-import { groupRepairAuditFiles, inspectRepairAuditFile, inspectRepairFile, sanitizeRepairPlan } from "../pipeline/repair";
-import { addRepairJob, getJob } from "../queue/store";
+import type { AppConfig, RepairAuditGroupEdit, RepairPlan } from "../core/types";
+import { buildRepairAuditGroupPlans, groupRepairAuditFiles, inspectRepairAuditFile, inspectRepairFile, sanitizeRepairPlan } from "../pipeline/repair";
+import { addRepairJob, getAllJobs, getJob } from "../queue/store";
 import { browseFolder } from "../queue/library";
 
 function isInside(path: string, root: string): boolean {
@@ -136,6 +136,30 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 				throw new Error("Choose a folder or a completed encoding folder to audit");
 			}
 			return c.json(await inspectAuditPaths(inputs, folderPath, c.req.signal));
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	app.post("/api/repair/audit/group", async (c) => {
+		try {
+			const raw = (await c.req.json()) as RepairAuditGroupEdit;
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 group files");
+			const paths = raw.paths.map((path) => resolveAllowedMkv(path, config, "Group file"));
+			if (new Set(paths).size !== paths.length) throw new Error("Group files must not contain duplicate paths");
+			const inspected = await inspectAuditPaths(
+				paths.map((path) => ({ path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairAuditGroupPlans(inspected.files, raw);
+			const busy = getAllJobs().find((job) => paths.includes(job.inputPath) && !["done", "error", "cancelled"].includes(job.status));
+			if (busy) throw new Error(`${basename(busy.inputPath)} already has an unfinished job. Finish or remove it before editing this group.`);
+			const cancelledRepair = getAllJobs().find((job) => job.kind === "repair" && paths.includes(job.inputPath) && job.status === "cancelled");
+			if (cancelledRepair) throw new Error(`${basename(cancelledRepair.inputPath)} has a cancelled repair. Remove it before editing this group.`);
+			if (c.req.signal.aborted) throw new Error("Group edit request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
 		}

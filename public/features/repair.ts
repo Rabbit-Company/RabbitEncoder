@@ -235,7 +235,7 @@ export async function openRepair(jobId?: string): Promise<void> {
 	sourceTracks = [];
 	selectedTargetPath = "";
 	selectedSourcePath = "";
-	inputById("repair-replace-target").checked = false;
+	byId<HTMLSelectElement>("repair-save-mode").value = "existing";
 	byId("repair-editor").style.display = "none";
 	buttonById("repair-queue-btn").disabled = true;
 	setError("");
@@ -250,7 +250,7 @@ export async function openRepairPaths(targetPath: string, sourcePath?: string): 
 	sourceTracks = [];
 	selectedTargetPath = targetPath;
 	selectedSourcePath = sourcePath || "";
-	inputById("repair-replace-target").checked = false;
+	byId<HTMLSelectElement>("repair-save-mode").value = "existing";
 	byId("repair-editor").style.display = "none";
 	buttonById("repair-queue-btn").disabled = true;
 	setError("");
@@ -581,7 +581,7 @@ export async function queueRepair(): Promise<void> {
 		await createRepairJob({
 			targetPath: inspection.target.path,
 			sourcePath: inspection.source?.path,
-			replaceTarget: inputById("repair-replace-target").checked,
+			replaceTarget: byId<HTMLSelectElement>("repair-save-mode").value === "existing",
 			tracks,
 		});
 		closeRepair();
