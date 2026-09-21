@@ -6,6 +6,7 @@ import { sortNodeChildren } from "./queue-order";
 import { byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
+import { compareQueuedJobs } from "../../src/queue/priority";
 
 export function statusLabel(status: JobStatus): string {
 	const labels = {
@@ -785,7 +786,7 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 			html += renderFolderNode(child, depth + 1);
 		}
 
-		const sortedJobs = [...node.jobs].sort((a, b) => a.queueOrder - b.queueOrder);
+		const sortedJobs = [...node.jobs].sort(compareQueuedJobs);
 		for (const job of sortedJobs) {
 			html += `<div class="folder-job" style="--depth:${depth + 1}" data-containing-folder="${escapeHtml(node.fullPath)}">${renderJobCard(job)}</div>`;
 		}
@@ -800,13 +801,19 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 export function renderJobsList(jobs: Job[]): string {
 	const tree = buildFolderTree(jobs);
 	let html = "";
+	const priorityRepairs = tree.jobs.filter((job) => job.kind === "repair" && (job.status === "queued" || isActive(job.status))).sort(compareQueuedJobs);
+	const priorityRepairIds = new Set(priorityRepairs.map((job) => job.id));
+
+	for (const job of priorityRepairs) {
+		html += renderJobCard(job);
+	}
 
 	const sortedFolders = sortNodeChildren(Array.from(tree.children.values()));
 	for (const folder of sortedFolders) {
 		html += renderFolderNode(folder, 0);
 	}
 
-	for (const job of tree.jobs) {
+	for (const job of tree.jobs.filter((item) => !priorityRepairIds.has(item.id))) {
 		html += renderJobCard(job);
 	}
 

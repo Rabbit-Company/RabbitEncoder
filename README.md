@@ -12,7 +12,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **VapourSynth filter chain** stackable per-job filters (FineDehalo, DehaloAlpha...) with `light` / `medium` / `heavy` presets, full per-parameter overrides, and a hot-reloadable user preset directory for dropping in your own `.vpy` scripts
 - **Web dashboard** for monitoring progress and configuring per-file settings
 - **File watcher** auto-detects new files in the input directory
-- **Queue system** processes files sequentially, with drag-and-drop reordering and pause/resume
+- **Queue system** processes files sequentially, prioritizes quick repair jobs over pending encodes, and supports reordering plus pause/resume
 - **Preview encoding** generates configurable short samples spread across the source, with frame-aligned source/encode comparisons before committing the full job
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
 - **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio

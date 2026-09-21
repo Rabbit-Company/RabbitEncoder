@@ -29,6 +29,7 @@ import { getDefaultJobSettings } from "../core/config";
 import { isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
 import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
+import { compareQueuedJobs, queuePriority } from "./priority";
 
 const jobs = new Map<string, Job>();
 let paused = false;
@@ -356,7 +357,7 @@ export function getAllJobs(): Job[] {
 		const diff = (order[a.status] ?? 1) - (order[b.status] ?? 1);
 		if (diff !== 0) return diff;
 		if (a.status === "queued" && b.status === "queued") {
-			return a.queueOrder - b.queueOrder;
+			return compareQueuedJobs(a, b);
 		}
 		return (a.startedAt || 0) - (b.startedAt || 0);
 	});
@@ -569,8 +570,8 @@ export function moveJob(id: string, direction: "up" | "down" | "top" | "bottom")
 	if (!job || job.status !== "queued") return false;
 
 	const queued = Array.from(jobs.values())
-		.filter((j) => j.status === "queued")
-		.sort((a, b) => a.queueOrder - b.queueOrder);
+		.filter((j) => j.status === "queued" && queuePriority(j) === queuePriority(job))
+		.sort(compareQueuedJobs);
 
 	const idx = queued.findIndex((j) => j.id === id);
 	if (idx === -1) return false;
@@ -616,7 +617,7 @@ async function processQueue() {
 
 	const next = Array.from(jobs.values())
 		.filter((j) => j.status === "queued")
-		.sort((a, b) => a.queueOrder - b.queueOrder)[0];
+		.sort(compareQueuedJobs)[0];
 	if (!next) return;
 
 	clearPreviewFor(next.id);

@@ -4,6 +4,7 @@ import { fetchJobs, reorderQueue } from "../api/client";
 import { buildFolderTree } from "./job-render";
 import { update } from "./polling";
 import { appState } from "../state";
+import { compareQueuedJobs, queuePriority } from "../../src/queue/priority";
 
 export function getMinQueueOrder(node: FolderTreeNode): number {
 	let min = Infinity;
@@ -49,7 +50,7 @@ export function collectQueuedIdsInOrder(node: FolderTreeNode): string[] {
 		ids.push(...collectQueuedIdsInOrder(child));
 	}
 
-	const sortedJobs = [...node.jobs].sort((a, b) => a.queueOrder - b.queueOrder);
+	const sortedJobs = [...node.jobs].sort(compareQueuedJobs);
 	for (const job of sortedJobs) {
 		if (job.status === "queued") {
 			ids.push(job.id);
@@ -105,7 +106,10 @@ export async function handleMove(targetPath: string, direction: MoveDirection, i
 		const folder = findFolderByPath(tree, targetPath);
 		if (!folder) return;
 
-		const queuedJobs = folder.jobs.filter((j) => j.status === "queued").sort((a, b) => a.queueOrder - b.queueOrder);
+		const selectedJob = folder.jobs.find((j) => j.id === jobId && j.status === "queued");
+		if (!selectedJob) return;
+		const selectedPriority = queuePriority(selectedJob);
+		const queuedJobs = folder.jobs.filter((j) => j.status === "queued" && queuePriority(j) === selectedPriority).sort(compareQueuedJobs);
 
 		const idx = queuedJobs.findIndex((j) => j.id === jobId);
 		if (idx === -1) return;
@@ -141,8 +145,8 @@ export async function handleMove(targetPath: string, direction: MoveDirection, i
 		const otherSibling = siblings[otherIdx];
 		if (!currentSibling || !otherSibling) return;
 
-		const jobsA = collectAllQueuedJobs(currentSibling).sort((a, b) => a.queueOrder - b.queueOrder);
-		const jobsB = collectAllQueuedJobs(otherSibling).sort((a, b) => a.queueOrder - b.queueOrder);
+		const jobsA = collectAllQueuedJobs(currentSibling).sort(compareQueuedJobs);
+		const jobsB = collectAllQueuedJobs(otherSibling).sort(compareQueuedJobs);
 
 		if (jobsA.length === 0 && jobsB.length === 0) return;
 
