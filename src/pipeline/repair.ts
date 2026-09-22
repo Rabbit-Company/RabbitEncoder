@@ -22,6 +22,7 @@ import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttach
 import { createFaceMaterializer, type FaceMaterializer } from "../fonts/inject";
 import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
+import { zlibWorthIt } from "../subtitles/zlib-probe";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { detectSubtitleTrackType, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
 import { planSubtitleTracks } from "../tracks/subtitle-plan";
@@ -153,7 +154,7 @@ export async function buildSourceReplacementPlan(options: {
 			order: tracks.length,
 			title: planned.trackName,
 			language: sanitizeLanguageTag(planned.effectiveLang),
-			compression: settings.compressSubtitles ? "zlib" : "none",
+			compression: settings.compressSubtitles ? "auto" : "none",
 			isDefault: planned.isDefault,
 			isForced: planned.isForced,
 			isEnabled: true,
@@ -360,7 +361,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		if (seen.has(key)) throw new Error(`Subtitle track ${key} was selected more than once`);
 		seen.add(key);
 		const mode = item.mode === "rabbit" ? "rabbit" : "copy";
-		const compression = item.compression === "zlib" ? "zlib" : item.compression === "none" ? "none" : "preserve";
+		const compression = item.compression === "zlib" ? "zlib" : item.compression === "none" ? "none" : item.compression === "auto" ? "auto" : "preserve";
 		return {
 			source,
 			trackId,
@@ -405,7 +406,9 @@ function trackOptions(plan: RepairSubtitleTrackPlan, trackId: number, original?:
 		"--commentary-flag",
 		`${trackId}:${plan.isCommentary ? 1 : 0}`,
 	];
-	const compression = plan.compression === "preserve" ? (trackUsesZlib(original) ? "zlib" : "none") : plan.compression;
+
+	const keepExisting = plan.compression === "preserve" || plan.compression === "auto";
+	const compression = keepExisting ? (trackUsesZlib(original) ? "zlib" : "none") : plan.compression;
 	args.push("--compression", `${trackId}:${compression}`);
 	return args;
 }
@@ -661,6 +664,68 @@ export function usedFontsAfterRepair(extracted: readonly ExtractedTrack[], copie
 	return used;
 }
 
+/**
+ * Rewrite every "auto" track to "zlib" or "none" from a decision per track key
+ * (`source:trackId`). A track with no decision is left uncompressed, matching
+ * what a failed probe means in an encode.
+ */
+export function applyAutoCompression(plan: RepairPlan, decisions: ReadonlyMap<string, boolean>): void {
+	for (const track of plan.tracks) {
+		if (track.compression !== "auto") continue;
+		track.compression = decisions.get(`${track.source}:${track.trackId}`) ? "zlib" : "none";
+	}
+}
+
+/**
+ * Decide "auto" tracks by trial-muxing each one, exactly as an encode does:
+ * compress only when zlib saves at least `compressSubtitlesMinSavings` percent.
+ * Matroska zlib works per block, so short dialogue tracks usually grow.
+ *
+ * Restyled tracks are probed as the file we will mux; copied tracks are pulled
+ * into a single-track MKV first, so any codec (including PGS) can be measured.
+ */
+async function resolveAutoCompression(options: {
+	plan: RepairPlan;
+	target: MkvIdentification;
+	source?: MkvIdentification;
+	prepared: PreparedTrack[];
+	tempDir: string;
+	minSavings: number;
+	signal?: AbortSignal;
+}): Promise<void> {
+	const { plan, target, source, prepared, tempDir, minSavings, signal } = options;
+	const pending = plan.tracks.filter((track) => track.compression === "auto");
+	if (pending.length === 0) return;
+
+	const decisions = new Map<string, boolean>();
+	for (const track of pending) {
+		const key = `${track.source}:${track.trackId}`;
+		const preparedItem = prepared.find((item) => item.plan.source === track.source && item.plan.trackId === track.trackId);
+		let probePath = preparedItem?.path;
+
+		if (!probePath) {
+			const inputPath = track.source === "target" ? plan.targetPath : plan.sourcePath;
+			const identified = track.source === "target" ? target : source;
+			if (!inputPath || !identified) continue;
+			const single = join(tempDir, `zprobe_src_${track.source}_${track.trackId}.mkv`);
+			const extract = await run(
+				["mkvmerge", "-o", single, "--subtitle-tracks", String(track.trackId), "--no-video", "--no-audio", "--no-attachments", "--no-chapters", inputPath],
+				{ signal },
+			);
+			if (signal?.aborted) throw new CancelledError();
+			if (extract.code > 1 || !existsSync(single)) {
+				Logger.warn(`[repair] Could not measure compression for ${key}; leaving it uncompressed`);
+				continue;
+			}
+			probePath = single;
+		}
+
+		decisions.set(key, await zlibWorthIt(probePath, tempDir, minSavings, signal));
+		if (signal?.aborted) throw new CancelledError();
+	}
+	applyAutoCompression(plan, decisions);
+}
+
 /** Build the mkvmerge command separately so selection/order behavior is unit-testable. */
 export function buildRepairMkvmergeArgs(options: {
 	outputPath: string;
@@ -874,6 +939,17 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			prepared.push(await styleRabbitTrack(item, tempDir, job.settings, materializeFace));
 		}
 		setStep(1, { status: "done", progress: 100, detail: rabbitPlans.length ? `${rabbitPlans.length} track(s) processed` : "No subtitle conversion needed" });
+
+		await resolveAutoCompression({
+			plan,
+			target: targetId,
+			source: sourceId,
+			prepared,
+			tempDir,
+			minSavings: job.settings.compressSubtitlesMinSavings ?? 10,
+			signal,
+		});
+		checkCancelled();
 
 		const metadataOnly = isMetadataOnlyRepair(plan, targetId);
 		setStep(2, { status: "active", progress: 10, detail: metadataOnly ? "Creating safe metadata-edit copy" : "Copying streams without video encoding" });

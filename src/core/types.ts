@@ -365,7 +365,7 @@ export interface JobStep {
 export type JobKind = "encode" | "repair";
 export type RepairTrackSource = "target" | "source";
 export type RepairTrackMode = "copy" | "rabbit";
-export type RepairCompression = "preserve" | "none" | "zlib";
+export type RepairCompression = "preserve" | "none" | "zlib" | "auto";
 
 /** One subtitle track selected for a stream-copy repair/remux job. */
 export interface RepairSubtitleTrackPlan {

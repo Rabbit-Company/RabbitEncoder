@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	applyAutoCompression,
 	buildRepairMkvmergeArgs,
 	buildRepairMkvpropeditArgs,
 	buildRepairAuditGroupPlans,
@@ -461,5 +462,110 @@ describe("repair attachment rewrite", () => {
 		expect(args.filter((arg) => arg === "--no-attachments")).toHaveLength(1);
 		// The target already carries a noto_sans.ttf, so nothing is attached over it.
 		expect(args).not.toContain("/tmp/inst_abc.ttf");
+	});
+});
+
+describe("repair subtitle compression", () => {
+	const planWith = (compression: "auto" | "zlib" | "none" | "preserve") =>
+		sanitizeRepairPlan({
+			targetPath: "/media/encoded.mkv",
+			sourcePath: "/media/source.mkv",
+			replaceTarget: false,
+			tracks: [
+				{
+					source: "source",
+					trackId: 5,
+					mode: "rabbit",
+					order: 0,
+					title: "Full Subtitles",
+					language: "eng",
+					compression,
+					isDefault: true,
+					isForced: false,
+					isEnabled: true,
+					isHearingImpaired: false,
+					isOriginal: false,
+					isCommentary: false,
+				},
+				{
+					source: "target",
+					trackId: 3,
+					mode: "copy",
+					order: 1,
+					title: "Signs & Songs",
+					language: "eng",
+					compression,
+					isDefault: false,
+					isForced: true,
+					isEnabled: true,
+					isHearingImpaired: false,
+					isOriginal: false,
+					isCommentary: false,
+				},
+			],
+		});
+
+	test("keeps auto as a distinct choice through sanitization", () => {
+		expect(planWith("auto").tracks.map((track) => track.compression)).toEqual(["auto", "auto"]);
+	});
+
+	test("compresses only the tracks the probe found worth compressing", () => {
+		const plan = planWith("auto");
+		applyAutoCompression(
+			plan,
+			new Map([
+				["source:5", false], // dialogue grew under zlib
+				["target:3", true],
+			]),
+		);
+
+		expect(plan.tracks.map((track) => track.compression)).toEqual(["none", "zlib"]);
+	});
+
+	test("leaves a track uncompressed when the probe produced no answer", () => {
+		const plan = planWith("auto");
+		applyAutoCompression(plan, new Map());
+
+		expect(plan.tracks.every((track) => track.compression === "none")).toBe(true);
+	});
+
+	test("never overrides an explicit choice", () => {
+		const explicit = planWith("zlib");
+		applyAutoCompression(explicit, new Map([["source:5", false]]));
+
+		expect(explicit.tracks.every((track) => track.compression === "zlib")).toBe(true);
+	});
+
+	test("does not take the metadata-only shortcut while compression is unresolved", () => {
+		const target = {
+			tracks: [
+				{ id: 3, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS" } },
+				{ id: 5, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS" } },
+			],
+		};
+		const plan = planWith("auto");
+		plan.tracks = plan.tracks.map((track) => ({ ...track, source: "target" as const, mode: "copy" as const }));
+		plan.tracks[0]!.trackId = 3;
+		plan.tracks[1]!.trackId = 5;
+
+		expect(isMetadataOnlyRepair(plan, target)).toBe(false);
+	});
+
+	test("an unresolved auto track is muxed with the compression it already had", () => {
+		const plan = planWith("auto");
+		const target = { tracks: [{ id: 3, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS" } }] };
+		const source = {
+			tracks: [{ id: 5, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS", content_encoding_algorithms: "0" } }],
+		};
+		const args = buildRepairMkvmergeArgs({
+			outputPath: "/tmp/out.mkv",
+			plan,
+			target,
+			source,
+			prepared: [{ plan: plan.tracks[0]!, path: "/tmp/source_5.rabbit.ass" }],
+		});
+
+		expect(args).toContain("0:zlib"); // the source track was already zlib
+		expect(args).not.toContain("0:auto");
 	});
 });

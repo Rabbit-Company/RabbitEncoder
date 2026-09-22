@@ -127,6 +127,7 @@ function renderTrack(track: EditableTrack, index: number): string {
 			</select></label>
 			<label>Compression<select class="select-input" data-field="compression" data-key="${key}">
 				<option value="preserve" ${track.compression === "preserve" ? "selected" : ""}>Preserve (${track.currentCompression})</option>
+				<option value="auto" ${track.compression === "auto" ? "selected" : ""}>Auto (only if it saves space)</option>
 				<option value="none" ${track.compression === "none" ? "selected" : ""}>None</option>
 				<option value="zlib" ${track.compression === "zlib" ? "selected" : ""}>zlib</option>
 			</select></label>
