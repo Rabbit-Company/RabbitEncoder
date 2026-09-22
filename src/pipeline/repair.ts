@@ -14,6 +14,7 @@ import type {
 	RepairSubtitleTrack,
 	RepairSubtitleTrackPlan,
 	SubtitleStyle,
+	JobSettings,
 } from "../core/types";
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
@@ -23,8 +24,10 @@ import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { detectSubtitleTrackType, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
+import { planSubtitleTracks } from "../tracks/subtitle-plan";
 import { resolveUniqueOutputPath } from "./output";
 import { probeFile } from "./probe";
+import { analyzeSourceTracks } from "./source-analysis";
 
 interface MkvTrackProperties {
 	codec_id?: string;
@@ -100,6 +103,69 @@ export async function inspectRepairFile(path: string, signal?: AbortSignal): Pro
 			currentCompression: track.properties.content_encoding_algorithms?.split(",").includes("0") ? "zlib" : "none",
 		}));
 	return { path, filename: basename(path), durationSeconds: (identified.container?.properties?.duration || 0) / 1_000_000_000, subtitles };
+}
+
+/**
+ * Build a plan that throws away the encode's subtitles and re-imports every
+ * subtitle the source offers, run through the same workflow an encode uses:
+ * language and type filters, source priority ordering, dedupe, track naming,
+ * and the default/forced/SDH/commentary flags.
+ *
+ * Tracks Rabbit can restyle are planned as "rabbit"; picture-based ones are
+ * copied verbatim. The caller still shows the result for review before it runs.
+ */
+export async function buildSourceReplacementPlan(options: {
+	targetPath: string;
+	sourcePath: string;
+	settings: JobSettings;
+	tempDir: string;
+	replaceTarget: boolean;
+	signal?: AbortSignal;
+}): Promise<RepairPlan> {
+	const { targetPath, sourcePath, settings, tempDir, replaceTarget, signal } = options;
+
+	const [identified, probe] = await Promise.all([identifyMatroska(sourcePath, signal), probeFile(sourcePath)]);
+	if (signal?.aborted) throw new CancelledError();
+
+	// ffprobe stream indexes and mkvmerge track IDs are different numbering
+	// schemes, so the two lists are matched by their order among subtitles.
+	const sourceSubtitleTracks = (identified.tracks || []).filter((track) => track.type === "subtitles");
+	const probeSubtitles = probe.subtitleStreams || [];
+	if (sourceSubtitleTracks.length === 0) throw new Error("The source has no subtitle tracks to import");
+	if (sourceSubtitleTracks.length !== probeSubtitles.length) {
+		throw new Error(`Could not match the source's subtitle tracks (mkvmerge reports ${sourceSubtitleTracks.length}, ffprobe ${probeSubtitles.length})`);
+	}
+	const trackByStreamIndex = new Map<number, MkvTrack>();
+	probeSubtitles.forEach((stream, ordinal) => trackByStreamIndex.set(stream.index, sourceSubtitleTracks[ordinal]!));
+
+	const analyzed = await analyzeSourceTracks(probe, settings, sourcePath, tempDir, signal ?? new AbortController().signal);
+	if (signal?.aborted) throw new CancelledError();
+	if (analyzed.subtitleStreams.length === 0) throw new Error("No source subtitle tracks survived the current subtitle settings");
+
+	const tracks: RepairSubtitleTrackPlan[] = [];
+	for (const planned of planSubtitleTracks(analyzed.subtitleStreams, { renameTracks: settings.renameSubtitleTracks })) {
+		const track = trackByStreamIndex.get(planned.stream.index);
+		if (!track) continue;
+		tracks.push({
+			source: "source",
+			trackId: track.id,
+			mode: isRabbitProcessable(track) ? "rabbit" : "copy",
+			order: tracks.length,
+			title: planned.trackName,
+			language: sanitizeLanguageTag(planned.effectiveLang),
+			compression: settings.compressSubtitles ? "zlib" : "none",
+			isDefault: planned.isDefault,
+			isForced: planned.isForced,
+			isEnabled: true,
+			isHearingImpaired: planned.isHearingImpaired,
+			isOriginal: planned.isOriginal,
+			isCommentary: planned.isCommentary,
+		});
+	}
+	if (tracks.length === 0) throw new Error("No source subtitle tracks could be matched to the file's tracks");
+
+	Logger.info(`[repair] Replacement plan: ${tracks.length} source subtitle track(s) for ${basename(targetPath)}`);
+	return sanitizeRepairPlan({ targetPath, sourcePath, replaceTarget, tracks });
 }
 
 function auditTrack(track: MkvTrack): RepairAuditTrack {

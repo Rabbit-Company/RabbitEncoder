@@ -149,6 +149,17 @@ export async function fetchRepairInspection(options: { jobId?: string; targetPat
 	return data;
 }
 
+export async function fetchRepairReplacePlan(options: { targetPath: string; sourcePath: string; replaceTarget: boolean }): Promise<RepairPlan> {
+	const response = await authFetch(`${API}/api/repair/replace-plan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not build a replacement plan");
+	return data;
+}
+
 export async function fetchRepairFolderAudit(options: { path?: string; jobIds?: string[] }): Promise<RepairFolderAudit> {
 	const response = await authFetch(`${API}/api/repair/audit`, {
 		method: "POST",

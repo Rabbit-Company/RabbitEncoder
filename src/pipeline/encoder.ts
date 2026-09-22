@@ -9,7 +9,6 @@ import {
 	sortAudioStreams,
 	deduplicateAudioStreams,
 	detectSubtitleTrackType,
-	buildSubtitleTrackName,
 	sortSubtitleStreams,
 	analyzeSubtitleStreams,
 	normalizeLanguageGroup,
@@ -22,8 +21,8 @@ import {
 	isTextSubtitleCodec,
 	DEFAULT_IGNORE_KEYWORD,
 	filterIgnoredTracks,
-	computeSubtitleDefaultIndexByLang,
 } from "../tracks/tracks";
+import { planSubtitleTracks, subtitleFlagArgs } from "../tracks/subtitle-plan";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { fontRegistry, buildKeptAttachmentArgs, scanMkvAttachmentFontNames, type ResolvedFace } from "../fonts/fonts";
@@ -1438,80 +1437,14 @@ export async function encodeJob(
 				const subSortedTypes = subtitleStreams.map((stream) => `${stream.language || "und"}:${detectSubtitleTrackType(stream)}`);
 				Logger.info(`[subtitle] Track order: ${subSortedTypes.join(", ")}`);
 
-				const subForcedAssigned = new Set<string>();
-				const subDefaultIndexByLang = computeSubtitleDefaultIndexByLang(subtitleStreams);
-
-				for (const stream of subtitleStreams) {
-					const trackType = detectSubtitleTrackType(stream);
-					const lang = stream.language || "und";
-					const langGroup = normalizeLanguageGroup(lang);
-					const trackName = job.settings.renameSubtitleTracks
-						? buildSubtitleTrackName(trackType, stream.title)
-						: stream.title || buildSubtitleTrackName(trackType, stream.title);
-
-					let effectiveLang = lang;
-					if (trackType === "honorifics") {
-						effectiveLang = "en-JP";
-					}
-
-					const flagArgs: string[] = [];
-					const isDefault = subDefaultIndexByLang.get(langGroup) === stream.index;
-
-					switch (trackType) {
-						case "full": {
-							flagArgs.push("--default-track-flag", `0:${isDefault ? "1" : "0"}`);
-							flagArgs.push("--forced-display-flag", "0:0");
-							flagArgs.push("--hearing-impaired-flag", "0:0");
-							flagArgs.push("--commentary-flag", "0:0");
-							flagArgs.push("--original-flag", `0:${stream.isOriginal ? "1" : "0"}`);
-							break;
-						}
-						case "forced": {
-							if (subForcedAssigned.has(langGroup)) {
-								Logger.warn(`[subtitle] Duplicate forced track for ${lang}, skipping index ${stream.index}`);
-								continue;
-							}
-							subForcedAssigned.add(langGroup);
-							flagArgs.push("--default-track-flag", "0:0");
-							flagArgs.push("--forced-display-flag", "0:1");
-							flagArgs.push("--hearing-impaired-flag", "0:0");
-							flagArgs.push("--commentary-flag", "0:0");
-							flagArgs.push("--original-flag", `0:${stream.isOriginal ? "1" : "0"}`);
-							break;
-						}
-						case "honorifics": {
-							flagArgs.push("--default-track-flag", "0:1");
-							flagArgs.push("--forced-display-flag", "0:0");
-							flagArgs.push("--hearing-impaired-flag", "0:0");
-							flagArgs.push("--commentary-flag", "0:0");
-							flagArgs.push("--original-flag", `0:${stream.isOriginal ? "1" : "0"}`);
-							break;
-						}
-						case "sdh": {
-							flagArgs.push("--default-track-flag", `0:${isDefault ? "1" : "0"}`);
-							flagArgs.push("--forced-display-flag", "0:0");
-							flagArgs.push("--hearing-impaired-flag", "0:1");
-							flagArgs.push("--commentary-flag", "0:0");
-							flagArgs.push("--original-flag", `0:${stream.isOriginal ? "1" : "0"}`);
-							break;
-						}
-						case "commentary": {
-							flagArgs.push("--default-track-flag", "0:0");
-							flagArgs.push("--forced-display-flag", "0:0");
-							flagArgs.push("--hearing-impaired-flag", "0:0");
-							flagArgs.push("--commentary-flag", "0:1");
-							flagArgs.push("--original-flag", `0:${stream.isOriginal ? "1" : "0"}`);
-							break;
-						}
-					}
-
+				for (const track of planSubtitleTracks(subtitleStreams, { renameTracks: job.settings.renameSubtitleTracks })) {
 					plannedSubs.push({
-						stream,
-						subFile: join(tempDir, `sub_${stream.index}.mkv`),
-						effectiveLang,
-						trackName,
-						trackType,
-						flagArgs,
+						stream: track.stream,
+						subFile: join(tempDir, `sub_${track.stream.index}.mkv`),
+						effectiveLang: track.effectiveLang,
+						trackName: track.trackName,
+						trackType: track.trackType,
+						flagArgs: subtitleFlagArgs(track),
 					});
 				}
 

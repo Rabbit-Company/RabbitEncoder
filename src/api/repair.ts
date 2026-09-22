@@ -1,8 +1,16 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "fs";
+import { randomUUID } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig, RepairAuditGroupEdit, RepairPlan } from "../core/types";
-import { buildRepairAuditGroupPlans, groupRepairAuditFiles, inspectRepairAuditFile, inspectRepairFile, sanitizeRepairPlan } from "../pipeline/repair";
+import {
+	buildRepairAuditGroupPlans,
+	buildSourceReplacementPlan,
+	groupRepairAuditFiles,
+	inspectRepairAuditFile,
+	inspectRepairFile,
+	sanitizeRepairPlan,
+} from "../pipeline/repair";
 import { addRepairJob, getAllJobs, getJob } from "../queue/store";
 import { browseFolder } from "../queue/library";
 
@@ -162,6 +170,31 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	app.post("/api/repair/replace-plan", async (c) => {
+		const workDir = join(config.tempDir, `repair-plan-${randomUUID()}`);
+		try {
+			const raw = (await c.req.json()) as { targetPath?: unknown; sourcePath?: unknown; replaceTarget?: unknown };
+			const targetPath = resolveAllowedMkv(raw.targetPath, config, "Encoded target");
+			const sourcePath = resolveAllowedMkv(raw.sourcePath, config, "Subtitle source");
+			mkdirSync(workDir, { recursive: true });
+			const plan = await buildSourceReplacementPlan({
+				targetPath,
+				sourcePath,
+				settings: config.defaults,
+				tempDir: workDir,
+				replaceTarget: raw.replaceTarget !== false,
+				signal: c.req.signal,
+			});
+			return c.json(plan);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		} finally {
+			try {
+				rmSync(workDir, { recursive: true, force: true });
+			} catch {}
 		}
 	});
 

@@ -1,6 +1,6 @@
 import type { RepairInspection, RepairSubtitleTrack, RepairSubtitleTrackPlan, RepairTrackSource } from "../types";
 import type { LibraryEntry } from "../ui/models";
-import { createRepairJob, fetchRepairBrowse, fetchRepairInspection, fetchRepairRoots } from "../api/client";
+import { createRepairJob, fetchRepairBrowse, fetchRepairInspection, fetchRepairReplacePlan, fetchRepairRoots } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { humanFileSize } from "./library";
@@ -186,6 +186,7 @@ function renderTracks(): void {
 		: '<div class="repair-empty">No output subtitles. Queueing this plan will remove every subtitle from the encoded target.</div>';
 	byId("repair-source-count").textContent = inspection?.source ? `${availableSourceTracks.length} of ${sourceTracks.length} available` : "No source selected";
 	buttonById("repair-add-all-btn").disabled = availableSourceTracks.length === 0;
+	buttonById("repair-replace-btn").disabled = !inspection?.source || sourceTracks.length === 0;
 	byId("repair-output-count").textContent = `${editableTracks.length} track${editableTracks.length === 1 ? "" : "s"}`;
 	byId("repair-editor").style.display = "";
 }
@@ -558,6 +559,48 @@ export function handleRepairTrackMove(event: MouseEvent): void {
 	}
 	normalizeTrackOrder();
 	renderTracks();
+}
+
+/**
+ * Drop the encode's subtitles and rebuild the output list from the source,
+ * named, ordered and flagged the way an encode would. The plan is loaded into
+ * the editor rather than queued, so it can still be reviewed and adjusted.
+ */
+export async function replaceSubtitlesFromSource(): Promise<void> {
+	if (!inspection?.source) {
+		setError("Choose an original source and inspect the files first.");
+		return;
+	}
+	setError("");
+	const button = buttonById("repair-replace-btn");
+	button.disabled = true;
+	button.textContent = "Building plan...";
+	try {
+		const plan = await fetchRepairReplacePlan({
+			targetPath: inspection.target.path,
+			sourcePath: inspection.source.path,
+			replaceTarget: byId<HTMLSelectElement>("repair-save-mode").value === "existing",
+		});
+		const byTrackId = new Map(sourceTracks.map((track) => [track.trackId, track]));
+		editableTracks = plan.tracks.map((track, order) => {
+			const known = byTrackId.get(track.trackId);
+			return {
+				...track,
+				order,
+				mode: track.mode === "rabbit" && known && !known.canRabbitProcess ? "copy" : track.mode,
+				codec: known?.codec || "",
+				canRabbitProcess: known?.canRabbitProcess ?? false,
+				currentCompression: known?.currentCompression ?? "none",
+			};
+		});
+		normalizeTrackOrder();
+		renderTracks();
+	} catch (error) {
+		setError(errorMessage(error));
+	} finally {
+		button.disabled = !inspection?.source;
+		button.textContent = "Replace from source";
+	}
 }
 
 export async function queueRepair(): Promise<void> {

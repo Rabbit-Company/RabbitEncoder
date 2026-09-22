@@ -74,6 +74,7 @@ import {
 	openRepair,
 	openRepairPicker,
 	queueRepair,
+	replaceSubtitlesFromSource,
 } from "../features/repair";
 import {
 	closeRepairAudit,
@@ -109,6 +110,7 @@ export function initEventListeners() {
 	byId("repair-modal").addEventListener("click", closeRepairIfOutside);
 	byId("repair-inspect-btn").addEventListener("click", () => inspectRepairPaths());
 	byId("repair-queue-btn").addEventListener("click", queueRepair);
+	byId("repair-replace-btn").addEventListener("click", replaceSubtitlesFromSource);
 	byId("repair-pick-target-btn").addEventListener("click", () => openRepairPicker("target"));
 	byId("repair-pick-source-btn").addEventListener("click", () => openRepairPicker("source"));
 	byId("repair-clear-source-btn").addEventListener("click", clearRepairSource);
