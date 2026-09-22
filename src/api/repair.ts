@@ -11,6 +11,7 @@ import {
 	inspectRepairFile,
 	sanitizeRepairPlan,
 } from "../pipeline/repair";
+import { pairRepairFiles } from "../pipeline/repair-pairing";
 import { addRepairJob, getAllJobs, getJob } from "../queue/store";
 import { browseFolder } from "../queue/library";
 
@@ -195,6 +196,55 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			try {
 				rmSync(workDir, { recursive: true, force: true });
 			} catch {}
+		}
+	});
+
+	app.post("/api/repair/batch/pair", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { targetDir?: unknown; sourceDir?: unknown };
+			const targetDir = resolveAllowedDirectory(raw.targetDir, config);
+			const sourceDir = resolveAllowedDirectory(raw.sourceDir, config);
+			if (targetDir === sourceDir) throw new Error("Choose two different folders - the encodes and their original sources");
+			const mkvsIn = (dir: string) =>
+				readdirSync(dir, { withFileTypes: true })
+					.filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === ".mkv")
+					.map((entry) => join(dir, entry.name));
+			const targets = mkvsIn(targetDir);
+			const sources = mkvsIn(sourceDir);
+			if (targets.length === 0) throw new Error("The encodes folder has no MKV files");
+			if (sources.length === 0) throw new Error("The sources folder has no MKV files");
+			if (targets.length > 500 || sources.length > 500) throw new Error("Batch replacement is limited to 500 files per folder");
+			return c.json({ targetDir, sourceDir, ...pairRepairFiles(targets, sources) });
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	app.post("/api/repair/batch/jobs", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { pairs?: unknown; replaceTarget?: unknown };
+			if (!Array.isArray(raw.pairs) || raw.pairs.length === 0) throw new Error("Confirm at least one encode/source pair");
+			if (raw.pairs.length > 500) throw new Error("Batch replacement is limited to 500 files");
+
+			const plans: RepairPlan[] = raw.pairs.map((entry: any) => ({
+				targetPath: resolveAllowedMkv(entry?.targetPath, config, "Encoded target"),
+				sourcePath: resolveAllowedMkv(entry?.sourcePath, config, "Subtitle source"),
+				replaceTarget: raw.replaceTarget !== false,
+				replaceFromSource: true,
+				tracks: [],
+			}));
+			const targets = plans.map((plan) => plan.targetPath);
+			if (new Set(targets).size !== targets.length) throw new Error("The same encode was paired more than once");
+
+			const busy = getAllJobs().find((job) => targets.includes(job.inputPath) && !["done", "error", "cancelled"].includes(job.status));
+			if (busy) throw new Error(`${basename(busy.inputPath)} already has an unfinished job. Finish or remove it first.`);
+			const cancelled = getAllJobs().find((job) => job.kind === "repair" && targets.includes(job.inputPath) && job.status === "cancelled");
+			if (cancelled) throw new Error(`${basename(cancelled.inputPath)} has a cancelled repair. Remove it before queueing another.`);
+
+			const jobs = plans.map((plan) => addRepairJob(sanitizeRepairPlan(plan)));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
 		}
 	});
 

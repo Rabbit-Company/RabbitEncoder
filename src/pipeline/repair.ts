@@ -348,7 +348,13 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	const targetPath = checkedText(raw.targetPath, 4096);
 	const sourcePath = checkedText(raw.sourcePath, 4096) || undefined;
 	if (!targetPath) throw new Error("An encoded target path is required");
-	if (!Array.isArray(raw.tracks)) throw new Error("Subtitle track plan is required");
+	const replaceFromSource = !!raw.replaceFromSource;
+	if (replaceFromSource && !sourcePath) throw new Error("Replacing subtitles from source requires a source path");
+	if (!Array.isArray(raw.tracks)) {
+		// A replacement plan is built when the job runs, so it starts without tracks.
+		if (replaceFromSource) return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, tracks: [] };
+		throw new Error("Subtitle track plan is required");
+	}
 	if (raw.tracks.length > MAX_REPAIR_TRACKS) throw new Error(`A repair job may contain at most ${MAX_REPAIR_TRACKS} subtitle tracks`);
 
 	const seen = new Set<string>();
@@ -380,7 +386,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	});
 	tracks.sort((a, b) => a.order - b.order);
 	tracks.forEach((track, index) => (track.order = index));
-	return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, tracks };
+	return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, tracks };
 }
 
 function trackUsesZlib(track: MkvTrack | undefined): boolean {
@@ -823,7 +829,7 @@ function makeSteps(): JobStep[] {
 
 export async function runRepairJob(job: Job, config: AppConfig, updateJob: (partial: Partial<Job>) => void, signal?: AbortSignal): Promise<void> {
 	if (!job.repairPlan) throw new Error("Repair job has no plan");
-	const plan = sanitizeRepairPlan(job.repairPlan);
+	let plan = sanitizeRepairPlan(job.repairPlan);
 	const tempDir = join(config.tempDir, job.id);
 	mkdirSync(tempDir, { recursive: true });
 	const stagePath = join(dirname(plan.targetPath), `.rabbit-repair-${job.id}.mkv`);
@@ -852,6 +858,26 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 
 		setStep(0, { status: "active", progress: 10 });
 		updateJob({ status: "probing" });
+
+		// Batch replacement queues jobs without a track list: building one means
+		// analysing the source, which belongs in the job, not in the request that
+		// queued dozens of them.
+		if (plan.replaceFromSource) {
+			setStep(0, { progress: 25, detail: "Analysing source subtitles" });
+			const planDir = join(tempDir, "plan");
+			mkdirSync(planDir, { recursive: true });
+			plan = await buildSourceReplacementPlan({
+				targetPath: plan.targetPath,
+				sourcePath: plan.sourcePath!,
+				settings: job.settings,
+				tempDir: planDir,
+				replaceTarget: plan.replaceTarget,
+				signal,
+			});
+			checkCancelled();
+			updateJob({ repairPlan: plan });
+		}
+
 		const [targetId, sourceId, probe] = await Promise.all([
 			identifyMatroska(plan.targetPath, signal),
 			plan.sourcePath ? identifyMatroska(plan.sourcePath, signal) : Promise.resolve(undefined),

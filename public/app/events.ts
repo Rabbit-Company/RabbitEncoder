@@ -77,6 +77,16 @@ import {
 	replaceSubtitlesFromSource,
 } from "../features/repair";
 import {
+	closeRepairBatch,
+	closeRepairBatchIfOutside,
+	handleRepairBatchPairChange,
+	openRepairBatch,
+	pairRepairBatchFolders,
+	pickRepairBatchSourceFolder,
+	pickRepairBatchTargetFolder,
+	queueRepairBatch,
+} from "../features/repair-batch";
+import {
 	closeRepairAudit,
 	closeRepairAuditIfOutside,
 	handleRepairAuditClick,
@@ -111,6 +121,15 @@ export function initEventListeners() {
 	byId("repair-inspect-btn").addEventListener("click", () => inspectRepairPaths());
 	byId("repair-queue-btn").addEventListener("click", queueRepair);
 	byId("repair-replace-btn").addEventListener("click", replaceSubtitlesFromSource);
+	byId("open-repair-batch-btn").addEventListener("click", openRepairBatch);
+	byId("close-repair-batch-btn").addEventListener("click", closeRepairBatch);
+	byId("repair-batch-cancel-btn").addEventListener("click", closeRepairBatch);
+	byId("repair-batch-modal").addEventListener("click", closeRepairBatchIfOutside);
+	byId("repair-batch-pick-target-btn").addEventListener("click", pickRepairBatchTargetFolder);
+	byId("repair-batch-pick-source-btn").addEventListener("click", pickRepairBatchSourceFolder);
+	byId("repair-batch-pair-btn").addEventListener("click", pairRepairBatchFolders);
+	byId("repair-batch-pairs").addEventListener("change", handleRepairBatchPairChange);
+	byId("repair-batch-queue-btn").addEventListener("click", queueRepairBatch);
 	byId("repair-pick-target-btn").addEventListener("click", () => openRepairPicker("target"));
 	byId("repair-pick-source-btn").addEventListener("click", () => openRepairPicker("source"));
 	byId("repair-clear-source-btn").addEventListener("click", clearRepairSource);

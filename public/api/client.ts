@@ -10,6 +10,7 @@ import type {
 	PreviewState,
 	RepairFolderAudit,
 	RepairAuditGroupEdit,
+	RepairBatchPairing,
 	RepairInspection,
 	RepairPlan,
 	StyleAppearance,
@@ -157,6 +158,31 @@ export async function fetchRepairReplacePlan(options: { targetPath: string; sour
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not build a replacement plan");
+	return data;
+}
+
+export async function fetchRepairBatchPairing(options: { targetDir: string; sourceDir: string }): Promise<RepairBatchPairing> {
+	const response = await authFetch(`${API}/api/repair/batch/pair`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not pair the two folders");
+	return data;
+}
+
+export async function createRepairBatchJobs(options: {
+	pairs: { targetPath: string; sourcePath: string }[];
+	replaceTarget: boolean;
+}): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/batch/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the replacements");
 	return data;
 }
 

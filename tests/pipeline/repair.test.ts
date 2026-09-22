@@ -569,3 +569,28 @@ describe("repair subtitle compression", () => {
 		expect(args).not.toContain("0:auto");
 	});
 });
+
+describe("batch replacement plans", () => {
+	test("accepts a plan whose tracks are built when the job runs", () => {
+		const plan = sanitizeRepairPlan({
+			targetPath: "/media/encoded.mkv",
+			sourcePath: "/media/source.mkv",
+			replaceTarget: true,
+			replaceFromSource: true,
+		} as never);
+
+		expect(plan.replaceFromSource).toBe(true);
+		expect(plan.tracks).toEqual([]);
+		expect(plan.sourcePath).toBe("/media/source.mkv");
+	});
+
+	test("refuses to replace from a source that was not given", () => {
+		expect(() => sanitizeRepairPlan({ targetPath: "/media/encoded.mkv", replaceTarget: true, replaceFromSource: true, tracks: [] } as never)).toThrow(
+			"requires a source path",
+		);
+	});
+
+	test("still requires a track list for an ordinary repair", () => {
+		expect(() => sanitizeRepairPlan({ targetPath: "/media/encoded.mkv", replaceTarget: true } as never)).toThrow("Subtitle track plan is required");
+	});
+});

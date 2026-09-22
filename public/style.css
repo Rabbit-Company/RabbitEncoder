@@ -3817,3 +3817,84 @@ code {
 .fg-danger {
 	color: var(--red);
 }
+
+/* Batch subtitle replacement: encode/source mapping table */
+.repair-batch-pairs {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	max-height: 46vh;
+	overflow-y: auto;
+}
+
+.repair-pair-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	align-items: center;
+	gap: 10px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	padding: 8px 12px;
+}
+
+.repair-pair-row-skipped {
+	opacity: 0.62;
+}
+
+.repair-pair-target {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.repair-pair-target .repair-file-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.repair-pair-arrow {
+	color: var(--text-2);
+	font-size: 0.85rem;
+}
+
+.repair-pair-source {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.repair-pair-source .select-input {
+	width: 100%;
+}
+
+.repair-pair-method {
+	font-size: 0.63rem;
+	color: var(--text-2);
+}
+
+.repair-pair-weak {
+	color: var(--amber);
+}
+
+.repair-pair-none,
+.repair-pair-warning {
+	color: var(--red);
+	font-size: 0.63rem;
+}
+
+.repair-pair-edited {
+	color: var(--green);
+}
+
+.repair-batch-save {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-right: auto;
+	font-size: 0.7rem;
+	color: var(--text-2);
+}

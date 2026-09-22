@@ -357,6 +357,21 @@ export interface RepairSubtitleTrackPlan {
 	isCommentary: boolean;
 }
 
+export interface RepairPairSuggestion {
+	targetPath: string;
+	targetName: string;
+	sourcePath: string;
+	sourceName: string;
+	method: "episode" | "order" | "none";
+}
+
+export interface RepairBatchPairing {
+	targetDir: string;
+	sourceDir: string;
+	pairs: RepairPairSuggestion[];
+	unmatchedSources: string[];
+}
+
 export interface RepairPlan {
 	targetPath: string;
 	sourcePath?: string;
