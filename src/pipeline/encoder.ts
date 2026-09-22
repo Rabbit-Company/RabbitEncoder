@@ -37,8 +37,8 @@ import { combineCumulativeSettings, encodeSettingsCode } from "../settings/setti
 import { decodePriorSettings } from "../core/mkv-tags";
 import { cpus } from "os";
 import { getEncoder } from "../core/encoders";
-import { axisSuffix, chooseAvailableFontFamily, fontAttachmentFileName, instancedFontNames, instanceFont } from "../fonts/font-instance";
-import { DEFAULT_STYLE_APPEARANCE, type StyleAppearance } from "../subtitles/subtitle-style";
+import { createFaceMaterializer } from "../fonts/inject";
+import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { cleanupAssociatedFiles, resolveUniqueOutputPath } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
@@ -673,57 +673,7 @@ export async function encodeJob(
 		const sourceAttachmentUsedFonts = new Set<string>();
 		let effectiveRemoveUnusedFonts = job.settings.removeUnusedFonts;
 		const resolvedFaces = new Map<string, ResolvedFace>();
-		const instanceCache = new Map<string, ResolvedFace>();
-
-		function cleanAttachmentExtension(fileName: string): string {
-			const extension = extname(fileName).toLowerCase();
-			if (extension === ".otf") return ".otf";
-			if (extension === ".ttc" || extension === ".otc") return extension;
-			return ".ttf";
-		}
-
-		const applyAxes = async (face: ResolvedFace | null, appearance: StyleAppearance): Promise<ResolvedFace | null> => {
-			if (!face) return null;
-			const axes = face.axes ?? [];
-			const { suffix: axisKey, coords } = axisSuffix(axes, appearance.fontAxes ?? {});
-			const cacheKey = `${face.path}|${axisKey || "default"}|${appearance.bold ? "bold" : "regular"}`;
-			const cached = instanceCache.get(cacheKey);
-			if (cached) return cached;
-
-			const family = chooseAvailableFontFamily(face.family, occupiedFontNames, appearance.bold);
-			const familyChanged = family !== face.family;
-			const needsMaterializedCopy = axisKey.length > 0 || familyChanged;
-			const sourceFontExt = cleanAttachmentExtension(face.fileName);
-			const materializedExt = sourceFontExt === ".otf" ? ".otf" : ".ttf";
-
-			let resolved: ResolvedFace;
-			if (needsMaterializedCopy) {
-				const materializeKey = `${cacheKey}|${family}`;
-				const out = join(tempDir, `inst_${Buffer.from(materializeKey).toString("base64url").slice(0, 40)}${materializedExt}`);
-				const inst = await instanceFont(face.path, coords, family, appearance.bold, out, stageSignal);
-				if (inst) {
-					resolved = {
-						...face,
-						family: inst.family,
-						path: inst.path,
-						names: inst.names,
-						fileName: fontAttachmentFileName(family, materializedExt),
-						mime: fontRegistry.mime(inst.path),
-					};
-				} else {
-					Logger.warn(`[fonts] Could not materialize ${face.fileName} as "${family}"; using the original face`);
-					resolved = { ...face, fileName: fontAttachmentFileName(face.family, sourceFontExt) };
-				}
-			} else {
-				resolved = { ...face, fileName: fontAttachmentFileName(family, sourceFontExt) };
-			}
-
-			for (const name of resolved.names.length > 0 ? resolved.names : instancedFontNames(resolved.family, false)) {
-				occupiedFontNames.add(name);
-			}
-			instanceCache.set(cacheKey, resolved);
-			return resolved;
-		};
+		const applyAxes = createFaceMaterializer({ tempDir, occupiedNames: occupiedFontNames, signal: stageSignal });
 
 		const encodeVideo = async (): Promise<void> => {
 			if (skipVideoEncode) {

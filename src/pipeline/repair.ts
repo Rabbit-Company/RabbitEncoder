@@ -13,11 +13,15 @@ import type {
 	RepairPlan,
 	RepairSubtitleTrack,
 	RepairSubtitleTrackPlan,
+	SubtitleStyle,
 } from "../core/types";
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
-import { fontRegistry } from "../fonts/fonts";
+import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttachmentFontNames, type KeptAttachment } from "../fonts/fonts";
+import { createFaceMaterializer, type FaceMaterializer } from "../fonts/inject";
+import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
+import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { detectSubtitleTrackType, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
 import { resolveUniqueOutputPath } from "./output";
 import { probeFile } from "./probe";
@@ -429,14 +433,31 @@ interface PreparedTrack {
 	attachFontMime?: string;
 }
 
-async function prepareRabbitTrack(
+/**
+ * A subtitle track pulled out of its MKV, before any styling. Fonts can only be
+ * decided once every track's text is known, so extraction happens on its own.
+ */
+interface ExtractedTrack {
+	plan: RepairSubtitleTrackPlan;
+	/** The file to mux when nothing is styled (a passthrough SRT). */
+	path: string;
+	/** ASS text, when this track has one. */
+	rawText?: string;
+	/** Which transform this track will get. */
+	kind: "srt-passthrough" | "converted-srt" | "ass";
+	/** For `ass`: the track type is in the restyle targets. */
+	restyle: boolean;
+}
+
+/** Extract one track, converting SRT→ASS when that setting is on. */
+async function extractRabbitTrack(
 	plan: RepairSubtitleTrackPlan,
 	track: MkvTrack,
 	inputPath: string,
 	tempDir: string,
 	settings: Job["settings"],
 	signal?: AbortSignal,
-): Promise<PreparedTrack> {
+): Promise<ExtractedTrack> {
 	const extension = extractedExtension(track);
 	const prefix = `${plan.source}_${plan.trackId}`;
 	const extracted = join(tempDir, `${prefix}.raw${extension}`);
@@ -444,41 +465,61 @@ async function prepareRabbitTrack(
 	if (signal?.aborted) throw new CancelledError();
 	if (extract.code !== 0) throw new Error(`Could not extract ${plan.source} subtitle track ${plan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
 
-	let assPath = extracted;
-	let rawText = readFileSync(extracted, "utf-8");
-	let converted = false;
-	if (extension === ".srt" && settings.convertSrtToAss) {
-		assPath = join(tempDir, `${prefix}.converted.ass`);
+	if (extension === ".srt") {
+		if (!settings.convertSrtToAss) return { plan, path: extracted, kind: "srt-passthrough", restyle: false };
+		const assPath = join(tempDir, `${prefix}.converted.ass`);
 		const convert = await run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", extracted, assPath], { signal });
 		if (signal?.aborted) throw new CancelledError();
 		if (convert.code !== 0) throw new Error(`Could not convert subtitle track ${plan.trackId} to ASS: ${(convert.stderr || convert.stdout).slice(-500)}`);
-		rawText = readFileSync(assPath, "utf-8");
-		converted = true;
+		return { plan, path: assPath, rawText: readFileSync(assPath, "utf-8"), kind: "converted-srt", restyle: true };
 	}
 
-	if (extension === ".srt" && !converted) return { plan, path: extracted };
+	const type = detectSubtitleTrackType({
+		index: plan.trackId,
+		codec: track.codec,
+		language: plan.language,
+		title: plan.title,
+		isDefault: plan.isDefault,
+		isForced: plan.isForced,
+		isHearingImpaired: plan.isHearingImpaired,
+		isOriginal: plan.isOriginal,
+	});
+	return {
+		plan,
+		path: extracted,
+		rawText: readFileSync(extracted, "utf-8"),
+		kind: "ass",
+		restyle: settings.restyleAssFont && settings.assRestyleTargets.includes(type),
+	};
+}
 
-	const { face, appearance } = fontRegistry.resolveFaceAndStyle(settings.fontGroup, plan.language, rawText);
+/** The transform this track will receive, applied with `fontName`. */
+function styleExtractedText(extracted: ExtractedTrack, style: SubtitleStyle): string {
+	const rawText = extracted.rawText ?? "";
+	if (extracted.kind === "converted-srt") return styleSrtAss(rawText, style);
+	if (extracted.kind === "ass" && extracted.restyle) return restyleAssDialogueFont(rawText, style, true);
+	return rawText;
+}
+
+/** Apply the real transform with the final injected face and write the output. */
+async function styleRabbitTrack(
+	extracted: ExtractedTrack,
+	tempDir: string,
+	settings: Job["settings"],
+	materializeFace: FaceMaterializer,
+): Promise<PreparedTrack> {
+	const { plan, rawText } = extracted;
+	if (extracted.kind === "srt-passthrough" || rawText === undefined) return { plan, path: extracted.path };
+
+	const { face: baseFace, appearance } = fontRegistry.resolveFaceAndStyle(settings.fontGroup, plan.language, rawText);
+	// Pins variable axes (weight) and keeps the family clear of attachments that
+	// survive the mux - without this the track asks for a family an earlier
+	// encode already attached, and renders at the wrong weight.
+	const face = await materializeFace(baseFace, appearance);
 	const family = face?.family || settings.fontGroup;
-	const style = { ...appearance, fontName: family };
-	let styled = rawText;
-	if (converted) {
-		styled = styleSrtAss(rawText, style);
-	} else if (settings.restyleAssFont) {
-		const type = detectSubtitleTrackType({
-			index: plan.trackId,
-			codec: track.codec,
-			language: plan.language,
-			title: plan.title,
-			isDefault: plan.isDefault,
-			isForced: plan.isForced,
-			isHearingImpaired: plan.isHearingImpaired,
-			isOriginal: plan.isOriginal,
-		});
-		if (settings.assRestyleTargets.includes(type)) styled = restyleAssDialogueFont(rawText, style, true);
-	}
+	const styled = styleExtractedText(extracted, { ...appearance, fontName: family });
 
-	const output = join(tempDir, `${prefix}.rabbit.ass`);
+	const output = join(tempDir, `${plan.source}_${plan.trackId}.rabbit.ass`);
 	writeFileSync(output, styled, "utf-8");
 	const changed = styled !== rawText;
 	return {
@@ -490,6 +531,70 @@ async function prepareRabbitTrack(
 	};
 }
 
+/**
+ * Read the ASS text of every track copied verbatim. Their fonts must survive
+ * the unused-font pass, so a track we cannot read makes the whole pass unsafe
+ * and `complete` false — the caller then keeps all attachments.
+ */
+async function readCopiedAssText(
+	plan: RepairPlan,
+	target: MkvIdentification,
+	source: MkvIdentification | undefined,
+	tempDir: string,
+	signal?: AbortSignal,
+): Promise<{ texts: string[]; complete: boolean }> {
+	const texts: string[] = [];
+	let complete = true;
+	for (const trackPlan of plan.tracks) {
+		if (trackPlan.mode !== "copy") continue;
+		const identified = trackPlan.source === "target" ? target : source;
+		const inputPath = trackPlan.source === "target" ? plan.targetPath : plan.sourcePath;
+		if (!identified || !inputPath) {
+			complete = false;
+			continue;
+		}
+		const track = (identified.tracks || []).find((candidate) => candidate.type === "subtitles" && candidate.id === trackPlan.trackId);
+		if (!track) {
+			complete = false;
+			continue;
+		}
+		if (extractedExtension(track) !== ".ass") continue; // SRT and bitmap tracks use no fonts
+
+		const out = join(tempDir, `copied_${trackPlan.source}_${trackPlan.trackId}.ass`);
+		const extract = await run(["mkvextract", inputPath, "tracks", `${trackPlan.trackId}:${out}`], { signal });
+		if (signal?.aborted) throw new CancelledError();
+		if (extract.code !== 0 || !existsSync(out)) {
+			complete = false;
+			Logger.warn(`[repair] Could not read copied ${trackPlan.source} track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-200)}`);
+			continue;
+		}
+		texts.push(readFileSync(out, "utf-8"));
+	}
+	return { texts, complete };
+}
+
+/** Private stand-in for the injected family, so it never counts as a source font. */
+const FONT_PROBE_FAMILY = "__RabbitEncoderRepairFontProbe_9C2E17__";
+
+/**
+ * Fonts still referenced once the repair is applied: what restyled tracks keep
+ * (signs, songs, inline \fn overrides, non-targeted styles) plus everything
+ * copied tracks use. The injected face is excluded via a probe family, so an
+ * attachment is not retained merely because it shares our dialogue font's name
+ * — that attachment is exactly the stale copy we want dropped.
+ */
+export function usedFontsAfterRepair(extracted: readonly ExtractedTrack[], copiedAssText: readonly string[]): Set<string> {
+	const probe = normalizeFontName(FONT_PROBE_FAMILY);
+	const used = new Set<string>();
+	for (const track of extracted) {
+		if (track.rawText === undefined) continue;
+		const probeText = styleExtractedText(track, { ...DEFAULT_STYLE_APPEARANCE, fontName: FONT_PROBE_FAMILY });
+		for (const font of extractUsedFonts(probeText)) if (font !== probe) used.add(font);
+	}
+	for (const text of copiedAssText) for (const font of extractUsedFonts(text)) used.add(font);
+	return used;
+}
+
 /** Build the mkvmerge command separately so selection/order behavior is unit-testable. */
 export function buildRepairMkvmergeArgs(options: {
 	outputPath: string;
@@ -497,8 +602,15 @@ export function buildRepairMkvmergeArgs(options: {
 	target: MkvIdentification;
 	source?: MkvIdentification;
 	prepared: PreparedTrack[];
+	/**
+	 * Attachments that survive the unused-font pass, already extracted. When
+	 * given, both inputs are muxed with `--no-attachments` and only these are
+	 * re-attached; omit it to pass every input attachment through untouched.
+	 */
+	keptAttachments?: KeptAttachment[] | null;
 }): string[] {
-	const { outputPath, plan, target, source, prepared } = options;
+	const { outputPath, plan, target, source, prepared, keptAttachments } = options;
+	const rewriteAttachments = !!keptAttachments;
 	const directTarget = plan.tracks.filter((track) => track.source === "target" && track.mode === "copy");
 	const directSource = plan.tracks.filter((track) => track.source === "source" && track.mode === "copy");
 	const needsSourceInput = plan.tracks.some((track) => track.source === "source");
@@ -517,6 +629,7 @@ export function buildRepairMkvmergeArgs(options: {
 	});
 
 	const args = ["mkvmerge", "-o", outputPath, "--track-order", [...targetNonSubs, ...plannedOrder].join(",")];
+	if (rewriteAttachments) args.push("--no-attachments");
 	if (directTarget.length) {
 		args.push("--subtitle-tracks", directTarget.map((track) => track.trackId).join(","));
 		for (const track of directTarget) args.push(...trackOptions(track, track.trackId, findTrack(target, track)));
@@ -527,7 +640,7 @@ export function buildRepairMkvmergeArgs(options: {
 
 	if (needsSourceInput) {
 		args.push("--no-video", "--no-audio", "--no-chapters", "--no-global-tags");
-		if (!sourceAddsAttachments) args.push("--no-attachments");
+		if (rewriteAttachments || !sourceAddsAttachments) args.push("--no-attachments");
 		if (directSource.length) {
 			args.push("--subtitle-tracks", directSource.map((track) => track.trackId).join(","));
 			for (const track of directSource) args.push(...trackOptions(track, track.trackId, findTrack(source!, track)));
@@ -543,8 +656,16 @@ export function buildRepairMkvmergeArgs(options: {
 	}
 
 	const attached = new Set<string>();
-	const availableAttachmentNames = new Set(targetAttachmentNames);
-	if (sourceAddsAttachments) for (const attachment of source?.attachments || []) availableAttachmentNames.add(attachment.file_name.toLowerCase());
+	const availableAttachmentNames = new Set<string>();
+	if (rewriteAttachments) {
+		// Only the attachments that survived are re-attached, so a stale font is
+		// gone and its family name is free for the face we inject below.
+		args.push(...keptAttachmentArgs(keptAttachments!));
+		for (const attachment of keptAttachments!) availableAttachmentNames.add(attachment.fileName.toLowerCase());
+	} else {
+		for (const name of targetAttachmentNames) availableAttachmentNames.add(name);
+		if (sourceAddsAttachments) for (const attachment of source?.attachments || []) availableAttachmentNames.add(attachment.file_name.toLowerCase());
+	}
 	for (const item of prepared) {
 		if (!item.attachFontPath || attached.has(item.attachFontPath)) continue;
 		if (item.attachFontName && availableAttachmentNames.has(item.attachFontName.toLowerCase())) continue;
@@ -618,13 +739,73 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		setStep(1, { status: "active", progress: 0 });
 		const rabbitPlans = plan.tracks.filter((track) => track.mode === "rabbit");
 		const prepared: PreparedTrack[] = [];
+		let keptAttachments: KeptAttachment[] | null = null;
+
+		// Pass 1 - extract every track we restyle. Fonts can only be decided once
+		// all of the text is known.
+		const extracted: ExtractedTrack[] = [];
 		for (let i = 0; i < rabbitPlans.length; i++) {
 			checkCancelled();
 			const trackPlan = rabbitPlans[i]!;
 			const identified = trackPlan.source === "target" ? targetId : sourceId!;
 			const input = trackPlan.source === "target" ? plan.targetPath : plan.sourcePath!;
-			setStep(1, { progress: Math.round((i / Math.max(1, rabbitPlans.length)) * 100), detail: `Processing ${trackPlan.source} track ${trackPlan.trackId}` });
-			prepared.push(await prepareRabbitTrack(trackPlan, findTrack(identified, trackPlan), input, tempDir, job.settings, signal));
+			setStep(1, { progress: Math.round((i / Math.max(1, rabbitPlans.length)) * 50), detail: `Extracting ${trackPlan.source} track ${trackPlan.trackId}` });
+			extracted.push(await extractRabbitTrack(trackPlan, findTrack(identified, trackPlan), input, tempDir, job.settings, signal));
+		}
+
+		// Pass 2 - work out which attachments survive. A font still referenced by
+		// a copied or partly-restyled track is kept and keeps its family name; the
+		// rest are dropped, which frees their names for the faces we inject.
+		const occupiedFontNames = new Set<string>();
+		if (rabbitPlans.length > 0) {
+			setStep(1, { progress: 55, detail: "Checking which fonts are still used" });
+			const copied = await readCopiedAssText(plan, targetId, sourceId, tempDir, signal);
+			checkCancelled();
+			const dropUnusedFonts = job.settings.removeUnusedFonts && copied.complete;
+			if (job.settings.removeUnusedFonts && !copied.complete) {
+				Logger.warn("[repair] Could not read every copied subtitle track; keeping all attachments for safety.");
+			}
+			const usedFonts = usedFontsAfterRepair(extracted, copied.texts);
+
+			const inputs = [{ path: plan.targetPath, prefix: "att_target" }];
+			if (plan.sourcePath && plan.tracks.some((track) => track.source === "source")) inputs.push({ path: plan.sourcePath, prefix: "att_source" });
+
+			const collected: KeptAttachment[] = [];
+			let complete = true;
+			for (const input of inputs) {
+				const kept = await collectKeptAttachments(input.path, usedFonts, tempDir, dropUnusedFonts, signal, input.prefix);
+				checkCancelled();
+				if (!kept) {
+					// Without the real inventory we cannot safely drop anything, so fall
+					// back to passing attachments through and reserve names best-effort.
+					complete = false;
+					const names = await scanMkvAttachmentFontNames(input.path, tempDir, new Set(), false, signal);
+					checkCancelled();
+					if (names) for (const name of names) occupiedFontNames.add(name);
+					Logger.warn(`[repair] Could not read attachments of ${basename(input.path)}; keeping all of them.`);
+					continue;
+				}
+				for (const attachment of kept) {
+					if (collected.some((existing) => existing.fileName.toLowerCase() === attachment.fileName.toLowerCase())) continue;
+					collected.push(attachment);
+					for (const name of attachment.names) occupiedFontNames.add(name);
+				}
+			}
+			// Rewriting the attachment set is only safe with a complete inventory;
+			// otherwise the collected names still serve as collision reservations.
+			if (complete && dropUnusedFonts) {
+				keptAttachments = collected;
+				Logger.info(`[repair] Keeping ${collected.filter((item) => item.isFont).length} used font attachment(s); dropping the rest`);
+			}
+		}
+
+		// Pass 3 - restyle with the final face, now that its family is known to be free.
+		const materializeFace = createFaceMaterializer({ tempDir, occupiedNames: occupiedFontNames, signal });
+		for (let i = 0; i < extracted.length; i++) {
+			checkCancelled();
+			const item = extracted[i]!;
+			setStep(1, { progress: 60 + Math.round((i / Math.max(1, extracted.length)) * 40), detail: `Styling ${item.plan.source} track ${item.plan.trackId}` });
+			prepared.push(await styleRabbitTrack(item, tempDir, job.settings, materializeFace));
 		}
 		setStep(1, { status: "done", progress: 100, detail: rabbitPlans.length ? `${rabbitPlans.length} track(s) processed` : "No subtitle conversion needed" });
 
@@ -641,7 +822,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			checkCancelled();
 			if (edited.code !== 0) throw new Error(`mkvpropedit repair failed (exit ${edited.code}): ${(edited.stderr || edited.stdout).slice(-800)}`);
 		} else {
-			const args = buildRepairMkvmergeArgs({ outputPath: stagePath, plan, target: targetId, source: sourceId, prepared });
+			const args = buildRepairMkvmergeArgs({ outputPath: stagePath, plan, target: targetId, source: sourceId, prepared, keptAttachments });
 			Logger.info(`[repair] Remuxing ${basename(plan.targetPath)} with ${plan.tracks.length} subtitle track(s)`);
 			const merged = await run(args, { signal });
 			checkCancelled();

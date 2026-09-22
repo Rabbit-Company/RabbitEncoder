@@ -7,8 +7,10 @@ import {
 	isMetadataOnlyRepair,
 	repairAuditGroupLabel,
 	sanitizeRepairPlan,
+	usedFontsAfterRepair,
 } from "../../src/pipeline/repair";
 import type { RepairAuditGroupEdit, RepairAuditTrack } from "../../src/core/types";
+import { ass4kWithSign, buildAss } from "../fixtures/ass";
 
 function auditTrack(type: "audio" | "subtitles", language: string, title: string, flags: Partial<RepairAuditTrack> = {}): RepairAuditTrack {
 	return {
@@ -343,5 +345,121 @@ describe("subtitle repair plans", () => {
 
 		plan.tracks[0]!.compression = "zlib";
 		expect(isMetadataOnlyRepair(plan, target)).toBe(false);
+	});
+});
+
+describe("repair font retention", () => {
+	const track = (over: Record<string, unknown> = {}) => ({
+		plan: { source: "target", trackId: 3 } as never,
+		path: "/tmp/target_3.raw.ass",
+		kind: "ass" as const,
+		restyle: true,
+		...over,
+	});
+
+	test("drops the dialogue font we replace but keeps fonts the same file still uses", () => {
+		const used = usedFontsAfterRepair([track({ rawText: ass4kWithSign() })], []);
+
+		expect(used.has("comic sans ms")).toBe(true); // the sign style is untouched
+		expect(used.has("arial")).toBe(false); // restyled away, so its attachment can go
+	});
+
+	test("keeps the dialogue font of a track that is not restyled", () => {
+		const used = usedFontsAfterRepair([track({ rawText: ass4kWithSign(), restyle: false })], []);
+
+		expect(used.has("arial")).toBe(true);
+		expect(used.has("comic sans ms")).toBe(true);
+	});
+
+	test("keeps every font used by a copied track", () => {
+		const used = usedFontsAfterRepair([], [ass4kWithSign()]);
+
+		expect(used.has("arial")).toBe(true);
+		expect(used.has("comic sans ms")).toBe(true);
+	});
+
+	test("keeps a font an inline override pulls in", () => {
+		const overridden = buildAss({ events: ["Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\fnPapyrus}Hello"] });
+
+		expect(usedFontsAfterRepair([track({ rawText: overridden })], []).has("papyrus")).toBe(true);
+	});
+
+	test("reports no fonts for an SRT track passed through untouched", () => {
+		expect(usedFontsAfterRepair([track({ kind: "srt-passthrough", restyle: false })], []).size).toBe(0);
+	});
+});
+
+describe("repair attachment rewrite", () => {
+	const plan = () =>
+		sanitizeRepairPlan({
+			targetPath: "/media/encoded.mkv",
+			sourcePath: "/media/source.mkv",
+			replaceTarget: false,
+			tracks: [
+				{
+					source: "source",
+					trackId: 5,
+					mode: "rabbit",
+					order: 0,
+					title: "Full Subtitles",
+					language: "eng",
+					compression: "none",
+					isDefault: true,
+					isForced: false,
+					isEnabled: true,
+					isHearingImpaired: false,
+					isOriginal: false,
+					isCommentary: false,
+				},
+			],
+		});
+	const target = {
+		tracks: [
+			{ id: 0, type: "video", codec: "AV1", properties: { codec_id: "V_AV1" } },
+			{ id: 3, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS" } },
+		],
+		attachments: [{ id: 1, file_name: "noto_sans.ttf" }],
+	};
+	const source = { tracks: [{ id: 5, type: "subtitles", codec: "SubStationAlpha", properties: { codec_id: "S_TEXT/ASS" } }], attachments: [] };
+	const prepared = [
+		{
+			plan: plan().tracks[0]!,
+			path: "/tmp/source_5.rabbit.ass",
+			attachFontPath: "/tmp/inst_abc.ttf",
+			attachFontName: "noto_sans.ttf",
+			attachFontMime: "font/ttf",
+		},
+	];
+
+	test("re-attaches only the kept attachments and lets the injected face reuse a dropped name", () => {
+		const kept = [{ fileName: "signs.otf", path: "/tmp/att_target_2_signs.otf", mime: "font/otf", isFont: true, names: ["signsfont"] }];
+		const args = buildRepairMkvmergeArgs({ outputPath: "/tmp/out.mkv", plan: plan(), target, source, prepared, keptAttachments: kept });
+
+		// Both inputs are muxed without their own attachments, so the stale
+		// noto_sans.ttf in the target is dropped rather than passed through.
+		expect(args.filter((arg) => arg === "--no-attachments")).toHaveLength(2);
+		expect(args).toContain("/tmp/att_target_2_signs.otf");
+		expect(args).toContain("font/otf");
+		// Its name is free again, so the fresh face is attached under it.
+		expect(args).toContain("/tmp/inst_abc.ttf");
+		expect(args[args.indexOf("/tmp/inst_abc.ttf") - 1]).toBe("--attach-file");
+		expect(args).toContain("noto_sans.ttf");
+	});
+
+	test("does not attach a face whose name a kept attachment still holds", () => {
+		const kept = [{ fileName: "noto_sans.ttf", path: "/tmp/att_target_1_noto_sans.ttf", mime: "font/ttf", isFont: true, names: ["notosans"] }];
+		const args = buildRepairMkvmergeArgs({ outputPath: "/tmp/out.mkv", plan: plan(), target, source, prepared, keptAttachments: kept });
+
+		expect(args).toContain("/tmp/att_target_1_noto_sans.ttf");
+		expect(args).not.toContain("/tmp/inst_abc.ttf");
+	});
+
+	test("passes attachments through untouched when the kept set is unknown", () => {
+		const args = buildRepairMkvmergeArgs({ outputPath: "/tmp/out.mkv", plan: plan(), target, source, prepared, keptAttachments: null });
+
+		// Only the source input is muxed without attachments, as before.
+		expect(args.filter((arg) => arg === "--no-attachments")).toHaveLength(1);
+		// The target already carries a noto_sans.ttf, so nothing is attached over it.
+		expect(args).not.toContain("/tmp/inst_abc.ttf");
 	});
 });

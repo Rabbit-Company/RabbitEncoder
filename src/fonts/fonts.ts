@@ -502,13 +502,40 @@ export async function buildKeptAttachmentArgs(
 	dropUnusedFonts: boolean,
 	signal?: AbortSignal,
 ): Promise<string[] | null> {
+	const kept = await collectKeptAttachments(mkvPath, usedFonts, tempDir, dropUnusedFonts, signal);
+	return kept && keptAttachmentArgs(kept);
+}
+
+/** One attachment that survives the mux, already extracted to `path`. */
+export interface KeptAttachment {
+	fileName: string;
+	path: string;
+	mime: string;
+	isFont: boolean;
+	/** Normalized internal names of a kept font; empty for other attachments. */
+	names: string[];
+}
+
+/**
+ * The attachment-collecting half of `buildKeptAttachmentArgs`, for callers that
+ * merge the attachments of more than one input and must dedupe across them.
+ * `filePrefix` separates the extraction dirs of two files sharing a temp dir.
+ */
+export async function collectKeptAttachments(
+	mkvPath: string,
+	usedFonts: ReadonlySet<string>,
+	tempDir: string,
+	dropUnusedFonts: boolean,
+	signal?: AbortSignal,
+	filePrefix = "att",
+): Promise<KeptAttachment[] | null> {
 	const attachments = await listMkvAttachments(mkvPath, signal);
 	if (attachments.length === 0) return [];
 
 	const specs: string[] = [];
 	const outById = new Map<number, string>();
 	for (const a of attachments) {
-		const out = join(tempDir, `att_${a.id}_${a.fileName}`);
+		const out = join(tempDir, `${filePrefix}_${a.id}_${a.fileName}`);
 		specs.push(`${a.id}:${out}`);
 		outById.set(a.id, out);
 	}
@@ -519,21 +546,34 @@ export async function buildKeptAttachmentArgs(
 		return null;
 	}
 
-	const args: string[] = [];
+	const kept: KeptAttachment[] = [];
 	for (const a of attachments) {
 		const out = outById.get(a.id)!;
 		if (!existsSync(out)) continue;
 		const isFont = FONT_EXTS.has(extname(a.fileName).toLowerCase());
 		if (!isFont) {
-			args.push("--attachment-name", a.fileName, "--attach-file", out);
+			kept.push({ fileName: a.fileName, path: out, mime: "", isFont: false, names: [] });
 			continue;
 		}
 		const { names } = await scanFontNames(out, signal);
 		if (!dropUnusedFonts || names.some((n) => usedFonts.has(n))) {
-			args.push("--attachment-mime-type", mimeForFont(out), "--attachment-name", a.fileName, "--attach-file", out);
+			// A font we could not scan still reserves its visible stem, so an
+			// injected face cannot take a name this attachment might answer to.
+			const reserved = names.length > 0 ? names : [normalizeFontName(basename(a.fileName, extname(a.fileName)))].filter(Boolean);
+			kept.push({ fileName: a.fileName, path: out, mime: mimeForFont(out), isFont: true, names: reserved });
 		} else {
 			Logger.info(`[fonts] Dropping unused font: ${a.fileName}`);
 		}
+	}
+	return kept;
+}
+
+/** mkvmerge args attaching each kept attachment under its original name. */
+export function keptAttachmentArgs(kept: readonly KeptAttachment[]): string[] {
+	const args: string[] = [];
+	for (const a of kept) {
+		if (a.isFont) args.push("--attachment-mime-type", a.mime);
+		args.push("--attachment-name", a.fileName, "--attach-file", a.path);
 	}
 	return args;
 }
