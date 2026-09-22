@@ -143,6 +143,66 @@ describe("restyleAssDialogueFont — scope of changes", () => {
 	});
 });
 
+describe("restyleAssDialogueFont — alignment keeps each style's vertical row", () => {
+	const styleLine = (name: string, alignment: number): string =>
+		`Style: ${name},Arial,40,&H00FFFFFF,&H000000FF,&H00FF0000,&H80000000,0,0,0,0,100,100,0,0,1,1,0,${alignment},40,40,40,1`;
+	const eventLine = (name: string, text = "Hello"): string => `Dialogue: 0,0:00:01.00,0:00:03.00,${name},,0,0,0,,${text}`;
+	const topAndBottom = (): string =>
+		buildAss({
+			playResX: 1920,
+			playResY: 1080,
+			styles: [styleLine("Default", 2), styleLine("Top", 8)],
+			events: [eventLine("Default"), eventLine("Default"), eventLine("Top")],
+		});
+
+	it("keeps top dialogue at the top and bottom dialogue at the bottom", () => {
+		const out = restyleAssDialogueFont(topAndBottom(), sampleStyle, true);
+		expect(getStyle(out, "Default").alignment).toBe("2");
+		expect(getStyle(out, "Top").alignment).toBe("8");
+		expect(getStyle(out, "Top").fontname).toBe("Noto Sans");
+	});
+
+	it("applies the configured horizontal column within the original row", () => {
+		const out = restyleAssDialogueFont(topAndBottom(), { ...sampleStyle, alignment: 1 }, true);
+		expect(getStyle(out, "Default").alignment).toBe("1");
+		expect(getStyle(out, "Top").alignment).toBe("7");
+	});
+
+	it("keeps a top style at the top even when configured for the top-right", () => {
+		const out = restyleAssDialogueFont(topAndBottom(), { ...sampleStyle, alignment: 9 }, true);
+		expect(getStyle(out, "Default").alignment).toBe("3");
+		expect(getStyle(out, "Top").alignment).toBe("9");
+	});
+
+	it("leaves middle-row dialogue alignment untouched", () => {
+		const ass = buildAss({ styles: [styleLine("Default", 2), styleLine("Thoughts", 5)], events: [eventLine("Default"), eventLine("Thoughts")] });
+		const out = restyleAssDialogueFont(ass, sampleStyle, true);
+		expect(getStyle(out, "Thoughts").alignment).toBe("5");
+	});
+
+	it("does not change alignment when only the font is restyled", () => {
+		const out = restyleAssDialogueFont(topAndBottom(), { ...sampleStyle, alignment: 1 }, false);
+		expect(getStyle(out, "Default").alignment).toBe("2");
+		expect(getStyle(out, "Top").alignment).toBe("8");
+	});
+
+	it("preserves inline \\an8 overrides on individual lines", () => {
+		const ass = buildAss({ events: [eventLine("Default"), eventLine("Default", "{\\an8}Up here")] });
+		const out = restyleAssDialogueFont(ass, sampleStyle, true);
+		expect(out).toContain("{\\an8}Up here");
+	});
+
+	it("uses legacy SSA alignment values in a [V4 Styles] section", () => {
+		const ass = buildAss({ styles: [styleLine("Default", 2), styleLine("Top", 6)], events: [eventLine("Default"), eventLine("Top")] }).replace(
+			"[V4+ Styles]",
+			"[V4 Styles]",
+		);
+		const out = restyleAssDialogueFont(ass, { ...sampleStyle, alignment: 1 }, true);
+		expect(getStyle(out, "Default").alignment).toBe("1"); // SSA bottom-left
+		expect(getStyle(out, "Top").alignment).toBe("5"); // SSA top-left
+	});
+});
+
 describe("RabbitEncoder provenance stamp", () => {
 	it("stamps the tool version into SRT→ASS output", () => {
 		const out = styleSrtAss(ass1080(), sampleStyle);

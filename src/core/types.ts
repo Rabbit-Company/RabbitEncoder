@@ -561,7 +561,10 @@ export interface SubtitleStyle {
 	outline: number;
 	/** Shadow depth in 1080p px. */
 	shadow: number;
-	/** ASS numpad alignment (2 = bottom-centre). */
+	/**
+	 * ASS numpad alignment (2 = bottom-centre). When restyling existing ASS only
+	 * the horizontal column is applied (each style keeps its own top/bottom row).
+	 */
 	alignment: number;
 	/** Vertical (bottom) margin in 1080p px. */
 	marginV: number;

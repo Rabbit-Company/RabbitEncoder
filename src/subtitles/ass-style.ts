@@ -27,11 +27,48 @@ const RESTYLE_COLUMNS: Record<string, (s: SubtitleStyle, sx: number, sy: number)
 	bold: (s) => (s.bold ? "-1" : "0"),
 	outline: (s, _sx, sy) => tidy(s.outline * sy),
 	shadow: (s, _sx, sy) => tidy(s.shadow * sy),
-	alignment: (s) => String(s.alignment),
 	marginl: (s, sx) => tidy(s.marginL * sx),
 	marginr: (s, sx) => tidy(s.marginR * sx),
 	marginv: (s, _sx, sy) => tidy(s.marginV * sy),
 };
+
+type AlignRow = "bottom" | "middle" | "top";
+
+/**
+ * Split an alignment into vertical row and horizontal column (0 = left,
+ * 1 = centre, 2 = right). V4+ uses numpad 1-9; legacy V4 (SSA) uses 1-3
+ * bottom, 5-7 top and 9-11 middle. Returns null for anything unrecognised.
+ */
+function splitAlignment(value: number, legacy: boolean): { row: AlignRow; col: number } | null {
+	if (!Number.isInteger(value)) return null;
+	if (legacy) {
+		const base = [1, 5, 9].find((b) => value >= b && value <= b + 2);
+		if (base === undefined) return null;
+		return { row: base === 1 ? "bottom" : base === 5 ? "top" : "middle", col: value - base };
+	}
+	if (value < 1 || value > 9) return null;
+	const rows: AlignRow[] = ["bottom", "middle", "top"];
+	return { row: rows[Math.floor((value - 1) / 3)]!, col: (value - 1) % 3 };
+}
+
+function joinAlignment(row: AlignRow, col: number, legacy: boolean): number {
+	if (legacy) return (row === "bottom" ? 1 : row === "top" ? 5 : 9) + col;
+	return (row === "bottom" ? 0 : row === "middle" ? 3 : 6) + col + 1;
+}
+
+/**
+ * Alignment for a restyled dialogue style. The style's own vertical row is kept
+ * so top-placed dialogue (e.g. a `Top` style at \an8 used while something else
+ * occupies the bottom) stays at the top; only the horizontal column follows the
+ * configured style. Middle-row and unparseable alignments are left untouched,
+ * since those are deliberate choices we can't safely second-guess.
+ */
+function restyledAlignment(original: string, configured: number, legacy: boolean): string {
+	const orig = splitAlignment(Number(original.trim()), legacy);
+	const want = splitAlignment(configured, false);
+	if (!orig || !want || orig.row === "middle") return original.trim();
+	return String(joinAlignment(orig.row, want.col, legacy));
+}
 
 /**
  * Insert or update the RabbitEncoder provenance line in [Script Info]. Stamped
@@ -208,6 +245,8 @@ export function styleSrtAss(assText: string, style: SubtitleStyle): string {
  * Restyle dialogue-classified styles in an existing ASS file. The font is always
  * replaced; appearance columns (colours, border, shadow, alignment, margins) are
  * replaced too when `restyleAppearance` is true. Sign/song styles are left alone.
+ * Alignment keeps each style's vertical row (see `restyledAlignment`), so
+ * top-placed dialogue is not pushed to the bottom.
  *
  * The configured style values are authored in 1080p px. Existing ASS files keep
  * their own PlayRes (often 4K), so the pixel-bearing fields are scaled to that
@@ -248,13 +287,18 @@ export function restyleAssDialogueFont(assText: string, style: SubtitleStyle, re
 			const name = (values[nameIdx] ?? "").trim();
 			if (!dialogue.has(name)) return line;
 
+			const setColumn = (colName: string, compute: (current: string) => string): void => {
+				const idx = cols.indexOf(colName);
+				if (idx < 0 || idx >= values.length) return;
+				const lead = values[idx]!.match(/^\s*/)?.[0] ?? "";
+				values[idx] = lead + compute(values[idx]!);
+			};
 			for (const [colName, getter] of Object.entries(RESTYLE_COLUMNS)) {
 				if (colName !== "fontname" && !restyleAppearance) continue; // font always; rest only if asked
-				const idx = cols.indexOf(colName);
-				if (idx >= 0 && idx < values.length) {
-					const lead = values[idx]!.match(/^\s*/)?.[0] ?? "";
-					values[idx] = lead + getter(style, scaleX, scaleY);
-				}
+				setColumn(colName, () => getter(style, scaleX, scaleY));
+			}
+			if (restyleAppearance) {
+				setColumn("alignment", (current) => restyledAlignment(current, style.alignment, section === "v4 styles"));
 			}
 			return line.slice(0, cut) + values.join(",");
 		}
