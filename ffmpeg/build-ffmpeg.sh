@@ -13,7 +13,6 @@ COMMON_FLAGS=(
   --disable-podpages
   --disable-sndio
   --disable-stripping
-  --disable-omx
 
   --enable-avfilter
   --enable-chromaprint
@@ -103,7 +102,6 @@ COMMON_FLAGS=(
   --enable-libvpl
 
   --enable-vulkan
-  --enable-libshaderc
 
   --enable-runtime-cpudetect
 	--enable-x86asm
@@ -151,6 +149,12 @@ build_one() {
   "$prefix/bin/ffmpeg" -hide_banner -filters   > "$prefix/filters.txt"
   "$prefix/bin/ffmpeg" -hide_banner -encoders  > "$prefix/encoders.txt"
   "$prefix/bin/ffmpeg" -hide_banner -decoders  > "$prefix/decoders.txt"
+
+  # Vulkan filters are silently dropped when configure finds no GLSL compiler
+  if ! grep -q nlmeans_vulkan "$prefix/filters.txt"; then
+    echo "ERROR: nlmeans_vulkan filter missing from ${level} build" >&2
+    exit 1
+  fi
 
   tar --zstd -cpf "$OUT/ffmpeg-${level}.tar.zst" -C /opt "ffmpeg-${level}"
 

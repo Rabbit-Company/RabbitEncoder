@@ -136,7 +136,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libvorbisenc2 \
 	libvpl2 \
 	libsvtvp9enc1 \
-	libshaderc1 \
 	libwebp7 \
 	libwebpmux3 \
 	libx264-165 \
@@ -189,7 +188,7 @@ RUN python3 -m venv /opt/vs-venv \
 # Use the venv's vsrepo to install required scripts
 RUN mkdir -p /root/.config/vsrepo \
 	&& vsrepo update \
-	&& vsrepo install ffms2 fmtc nnedi3 knlm
+	&& vsrepo install ffms2 fmtc
 
 # Make the venv's Python the default for any 'python3' call
 ENV PATH="/opt/vs-venv/bin:${PATH}"
@@ -210,9 +209,9 @@ RUN mkdir -p /opt/binaries/x86_64_v2 /opt/binaries/x86_64_v3 /opt/binaries/x86_6
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v2/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v3/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v4/SVT-AV1-5FISH \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v2/ffmpeg.tar.zst \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v3/ffmpeg.tar.zst \
- && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/ffmpeg2.tar.zst" -o /opt/binaries/x86_64_v4/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v2/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v3/ffmpeg.tar.zst \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v4/ffmpeg.tar.zst \
 # Make encoder binaries executable
  && chmod +x \
 	/opt/binaries/language-detector \

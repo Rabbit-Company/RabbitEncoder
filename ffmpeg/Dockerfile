@@ -4,7 +4,7 @@ USER root
 ENV DEBIAN_FRONTEND=noninteractive
 ENV MAKEFLAGS="-j$(nproc)"
 
-ARG FFMPEG_REF=n8.1
+ARG FFMPEG_REF=n9.0.2
 ARG DEB_MULTIMEDIA_KEYRING_VERSION=2024.9.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -111,7 +111,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libvpx-dev \
 	libvulkan-dev \
 	glslang-dev \
-	libshaderc-dev \
+	glslc \
+	spirv-headers \
 	libwebp-dev \
 	libx264-dev \
 	libx265-dev \
