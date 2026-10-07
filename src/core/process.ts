@@ -101,6 +101,10 @@ function readTimecodeLines(timecodesPath: string): string[] {
 		.filter((l) => l.trim() && !l.startsWith("#"));
 }
 
+export function readTimecodes(timecodesPath: string): number[] {
+	return readTimecodeLines(timecodesPath).map(Number);
+}
+
 export function countTimecodes(timecodesPath: string): number {
 	return readTimecodeLines(timecodesPath).length;
 }

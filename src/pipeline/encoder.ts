@@ -3,7 +3,19 @@ import { join, parse as parsePath, dirname, extname, basename, resolve } from "p
 import type { Job, JobStep, AppConfig, EncodeJobOptions, SubtitleBurnMode, AudioStreamInfo, SubtitleStreamInfo } from "../core/types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "../core/logger";
-import { CancelledError, run, humanSize, fmtFrames, pct2, escapeXml, describeExitCode, isTimecodesVFR, countTimecodes, computeFps } from "../core/process";
+import {
+	CancelledError,
+	run,
+	humanSize,
+	fmtFrames,
+	pct2,
+	escapeXml,
+	describeExitCode,
+	isTimecodesVFR,
+	countTimecodes,
+	readTimecodes,
+	computeFps,
+} from "../core/process";
 import {
 	detectAudioTrackType,
 	sortAudioStreams,
@@ -30,6 +42,7 @@ import { fontRegistry, buildKeptAttachmentArgs, scanMkvAttachmentFontNames, type
 import { detectSourceTag, detectReleaseGroup, getResolutionTag, extractBaseTitle, inferSourceFromStream } from "../core/naming";
 import pkg from "../../package.json";
 import { buildPrepareFilterConfig } from "../video/filters";
+import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
 import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
@@ -374,6 +387,41 @@ export async function encodeJob(
 
 		if (extractRes.code !== 0) {
 			throw new Error(`Failed to extract video stream: ${extractRes.stderr || extractRes.stdout}`);
+		}
+
+		// A source that is CFR apart from a few dropped frames gets those gaps
+		// filled with duplicates here, so every later stage sees a plain CFR file.
+		let cfrNormalized = false;
+		if (job.settings.videoEncode !== "off" && existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
+			const sourceFrames = await probeVideoFrameCount(preparedVideo, signal);
+			const plan = sourceFrames === null ? null : planCfrNormalization(readTimecodes(timecodesFile), sourceFrames, probe.videoFrameRate);
+
+			if (plan) {
+				checkCancelled();
+				const missing = plan.totalFrames - plan.sourceFrames;
+				Logger.info(`[prepare] Source is ${plan.fpsNum}/${plan.fpsDen} fps with ${missing} dropped frame(s). Filling gaps for a constant frame rate.`);
+				setStep(S_PREPARE, { detail: `Filling ${missing} dropped frame(s)` });
+
+				const cfrVideo = join(tempDir, "source_video_cfr.mkv");
+				const cfrRes = await run(
+					["ffmpeg", "-y", "-v", "error", "-nostats", "-i", preparedVideo, "-vf", buildCfrFilter(plan), ...FFV1_ENCODE_ARGS, "-an", "-sn", cfrVideo],
+					{ signal },
+				);
+				checkCancelled();
+				const cfrFrames = cfrRes.code === 0 ? await probeVideoFrameCount(cfrVideo, signal) : null;
+
+				if (cfrFrames === plan.totalFrames) {
+					unlinkSync(preparedVideo);
+					renameSync(cfrVideo, preparedVideo);
+					cfrNormalized = true;
+				} else {
+					const reason = cfrRes.code !== 0 ? (cfrRes.stderr || cfrRes.stdout).trim().slice(-300) : `expected ${plan.totalFrames} frames, got ${cfrFrames}`;
+					Logger.warn(`[prepare] Could not fill dropped frames, keeping variable frame rate: ${reason}`);
+					try {
+						unlinkSync(cfrVideo);
+					} catch {}
+				}
+			}
 		}
 
 		if (sink) {
@@ -1737,7 +1785,7 @@ export async function encodeJob(
 
 		const mkvArgs = ["mkvmerge", "-o", finalOutput, "--title", baseTitle, "--global-tags", xmlPath, "--no-audio", "--no-subtitles"];
 
-		if (existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
+		if (!cfrNormalized && existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
 			const timecodeCount = countTimecodes(timecodesFile);
 			const encodedFrames = await probeVideoFrameCount(videoMkv!, signal);
 			if (encodedFrames === null) {
