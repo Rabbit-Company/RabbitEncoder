@@ -1,9 +1,9 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, readdirSync, symlinkSync, renameSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, symlinkSync, renameSync } from "fs";
 import { join, parse as parsePath, dirname, extname, basename, resolve } from "path";
 import type { Job, JobStep, AppConfig, EncodeJobOptions, SubtitleBurnMode, AudioStreamInfo, SubtitleStreamInfo } from "../core/types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "../core/logger";
-import { CancelledError, run, humanSize, fmtFrames, pct2, escapeXml, describeExitCode, isTimecodesVFR, computeFps } from "../core/process";
+import { CancelledError, run, humanSize, fmtFrames, pct2, escapeXml, describeExitCode, isTimecodesVFR, countTimecodes, computeFps } from "../core/process";
 import {
 	detectAudioTrackType,
 	sortAudioStreams,
@@ -249,6 +249,29 @@ async function materializeAssForInspection(
 
 	resetOutput();
 	return { ok: false, empty: false, detail: errors.map((e) => e.slice(-300)).join(" | ") };
+}
+
+/** Number of video frames in a container, counted from packets (no decode). */
+async function probeVideoFrameCount(path: string, signal?: AbortSignal): Promise<number | null> {
+	const res = await run(
+		[
+			"ffprobe",
+			"-v",
+			"error",
+			"-select_streams",
+			"v:0",
+			"-count_packets",
+			"-show_entries",
+			"stream=nb_read_packets",
+			"-of",
+			"default=noprint_wrappers=1:nokey=1",
+			path,
+		],
+		{ signal },
+	);
+	if (res.code !== 0) return null;
+	const count = Number(res.stdout.trim());
+	return Number.isInteger(count) && count > 0 ? count : null;
 }
 
 /**
@@ -887,7 +910,22 @@ export async function encodeJob(
 						throw new Error(`Failed to create encode FIFO: ${mkfifoRes.stderr || mkfifoRes.stdout}`);
 					}
 
-					const ffArgs = ["ffmpeg", "-nostdin", "-y", "-i", preparedVideo, "-f", "yuv4mpegpipe", "-strict", "-1", "-pix_fmt", "yuv420p10le", y4mFifo];
+					const ffArgs = [
+						"ffmpeg",
+						"-nostdin",
+						"-y",
+						"-i",
+						preparedVideo,
+						"-fps_mode",
+						"passthrough",
+						"-f",
+						"yuv4mpegpipe",
+						"-strict",
+						"-1",
+						"-pix_fmt",
+						"yuv420p10le",
+						y4mFifo,
+					];
 					const encArgs = [
 						enc.binary,
 						"-i",
@@ -1700,6 +1738,13 @@ export async function encodeJob(
 		const mkvArgs = ["mkvmerge", "-o", finalOutput, "--title", baseTitle, "--global-tags", xmlPath, "--no-audio", "--no-subtitles"];
 
 		if (existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
+			const timecodeCount = countTimecodes(timecodesFile);
+			const encodedFrames = await probeVideoFrameCount(videoMkv!, signal);
+			if (encodedFrames === null) {
+				Logger.warn("[mux] Could not count encoded frames. Applying source timecodes without verification.");
+			} else if (encodedFrames !== timecodeCount && encodedFrames !== timecodeCount - 1) {
+				Logger.warn(`[mux] VFR source: encoded video has ${encodedFrames} frames but the source has ${timecodeCount} timecodes. The video may be desynced.`);
+			}
 			mkvArgs.push("--timestamps", `0:${timecodesFile}`);
 		}
 

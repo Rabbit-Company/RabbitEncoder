@@ -1,6 +1,6 @@
 {
 	"name": "rabbit-encoder",
-	"version": "8.7.3",
+	"version": "8.7.4",
 	"type": "module",
 	"scripts": {
 		"dev": "bun run --watch src/index.ts",
@@ -15,7 +15,7 @@
 	},
 	"dependencies": {
 		"@rabbit-company/blake2b": "^2.1.0",
-		"@rabbit-company/web": "^0.19.0",
-		"@rabbit-company/web-middleware": "^0.19.0"
+		"@rabbit-company/web": "^0.20.0",
+		"@rabbit-company/web-middleware": "^0.20.0"
 	}
 }

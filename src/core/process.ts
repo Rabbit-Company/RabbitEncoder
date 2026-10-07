@@ -95,10 +95,18 @@ export function describeExitCode(code: number): string {
 	return signals[signal] || `Signal ${signal}`;
 }
 
-export function isTimecodesVFR(timecodesPath: string, toleranceMs = 2): boolean {
-	const lines = readFileSync(timecodesPath, "utf-8")
+function readTimecodeLines(timecodesPath: string): string[] {
+	return readFileSync(timecodesPath, "utf-8")
 		.split("\n")
 		.filter((l) => l.trim() && !l.startsWith("#"));
+}
+
+export function countTimecodes(timecodesPath: string): number {
+	return readTimecodeLines(timecodesPath).length;
+}
+
+export function isTimecodesVFR(timecodesPath: string, toleranceMs = 2): boolean {
+	const lines = readTimecodeLines(timecodesPath);
 
 	if (lines.length < 3) return false;
 
