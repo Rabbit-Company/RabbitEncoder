@@ -53,7 +53,7 @@ import { getEncoder } from "../core/encoders";
 import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
-import { cleanupAssociatedFiles, resolveUniqueOutputPath } from "./output";
+import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 
 export { CancelledError } from "../core/process";
@@ -2008,40 +2008,7 @@ export async function encodeJob(
 
 		setStep(S_MUX, { progress: 85, detail: "Moving to output" });
 
-		let outputPath: string;
-
-		if (job.replaceSource) {
-			const sourceDir = dirname(job.inputPath);
-			outputPath = resolveUniqueOutputPath(sourceDir, outputFilename, job.inputPath);
-
-			const moveRes = await run(["mv", finalOutput, outputPath], { signal });
-			if (moveRes.code !== 0) {
-				await run(["cp", finalOutput, outputPath], { signal });
-				unlinkSync(finalOutput);
-			}
-
-			if (resolve(outputPath) !== resolve(job.inputPath)) {
-				cleanupAssociatedFiles(job.inputPath);
-				try {
-					unlinkSync(job.inputPath);
-					Logger.info(`[library] Removed source: ${job.filename}`);
-				} catch (err: any) {
-					Logger.warn(`[library] Failed to remove source ${job.filename}:`, { "error.message": err?.message });
-				}
-			}
-
-			Logger.info(`[library] Replaced with: ${basename(outputPath)}`);
-		} else {
-			const outputSubDir = job.relativePath ? join(config.outputDir, job.relativePath) : config.outputDir;
-			mkdirSync(outputSubDir, { recursive: true });
-			outputPath = resolveUniqueOutputPath(outputSubDir, outputFilename);
-
-			const moveRes = await run(["mv", finalOutput, outputPath], { signal });
-			if (moveRes.code !== 0) {
-				await run(["cp", finalOutput, outputPath], { signal });
-				unlinkSync(finalOutput);
-			}
-		}
+		const outputPath = await finalizeOutput(job, config, finalOutput, outputFilename, signal);
 
 		const finalName = basename(outputPath);
 

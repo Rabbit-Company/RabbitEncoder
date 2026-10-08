@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "fs";
 import { basename, dirname, extname, join, parse as parsePath, resolve } from "path";
 import type { AppConfig, Job } from "../core/types";
 import { Logger } from "../core/logger";
@@ -66,12 +66,47 @@ export function resolveUniqueOutputPath(dir: string, filename: string, ignorePat
 }
 
 /**
+ * Move a library source into the recycle bin instead of deleting it.
+ *
+ * The source's absolute path is mirrored under `recycleBinDir`
+ * (`/Animes/Show/Ep 1.mkv` -> `<bin>/Animes/Show/Ep 1.mkv`). An original that
+ * is already in the bin under the same name is never overwritten; the new one
+ * gets a numeric suffix instead. Throws if the source could not be moved, so
+ * callers never go on to destroy an original that was not saved.
+ */
+export async function recycleSource(sourcePath: string, recycleBinDir: string, signal?: AbortSignal): Promise<string> {
+	const source = resolve(sourcePath);
+	const binDir = join(recycleBinDir, dirname(source));
+	mkdirSync(binDir, { recursive: true });
+	const binPath = resolveUniqueOutputPath(binDir, basename(source));
+
+	try {
+		renameSync(source, binPath);
+	} catch {
+		// Different filesystem: copy, then drop the source.
+		const copied = await run(["cp", "--reflink=auto", source, binPath], { signal });
+		if (copied.code !== 0) {
+			try {
+				unlinkSync(binPath);
+			} catch {}
+			throw new Error(`Failed to move source to recycle bin: ${(copied.stderr || copied.stdout).trim().slice(-300)}`);
+		}
+		unlinkSync(source);
+	}
+
+	Logger.info(`[library] Moved source to recycle bin: ${binPath}`);
+	return binPath;
+}
+
+/**
  * Move a finished temp file to its final destination and return that path.
  *
  * Library jobs (`job.replaceSource`): the result lands next to the source; if
  * it does not overwrite the source directly, associated Jellyfin/Sonarr
- * metadata is cleaned up and the source removed. Watched-input jobs: the
- * result lands in `config.outputDir` (respecting `job.relativePath`).
+ * metadata is cleaned up and the source removed. With `config.recycleBinDir`
+ * set, the source is moved to the recycle bin instead of being overwritten or
+ * removed. Watched-input jobs: the result lands in `config.outputDir`
+ * (respecting `job.relativePath`).
  *
  * Note: deleting the *input* file for non-replaceSource jobs stays the
  * caller's responsibility (matching encodeJob's existing behavior), because
@@ -83,6 +118,12 @@ export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: 
 	if (job.replaceSource) {
 		const sourceDir = dirname(job.inputPath);
 		outputPath = resolveUniqueOutputPath(sourceDir, outputFilename, job.inputPath);
+		const overwritesSource = resolve(outputPath) === resolve(job.inputPath);
+
+		// Overwriting in place: the source has to be out of the way first.
+		if (overwritesSource && config.recycleBinDir) {
+			await recycleSource(job.inputPath, config.recycleBinDir, signal);
+		}
 
 		const moveRes = await run(["mv", finishedFile, outputPath], { signal });
 		if (moveRes.code !== 0) {
@@ -90,11 +131,15 @@ export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: 
 			unlinkSync(finishedFile);
 		}
 
-		if (resolve(outputPath) !== resolve(job.inputPath)) {
+		if (!overwritesSource) {
 			cleanupAssociatedFiles(job.inputPath);
 			try {
-				unlinkSync(job.inputPath);
-				Logger.info(`[library] Removed source: ${job.filename}`);
+				if (config.recycleBinDir) {
+					await recycleSource(job.inputPath, config.recycleBinDir, signal);
+				} else {
+					unlinkSync(job.inputPath);
+					Logger.info(`[library] Removed source: ${job.filename}`);
+				}
 			} catch (err: any) {
 				Logger.warn(`[library] Failed to remove source ${job.filename}:`, { "error.message": err?.message });
 			}

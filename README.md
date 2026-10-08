@@ -49,6 +49,7 @@ Settings are configurable via environment variables in `docker-compose.yml`:
 | `OUTPUT_DIR`           | `/data/output`                | Encoded output directory                                         |
 | `TEMP_DIR`             | `/data/temp`                  | Temporary encode and preview files                               |
 | `LIBRARY_DIRS`         | empty                         | Comma-separated mounted library roots                            |
+| `RECYCLE_BIN_DIR`      | empty                         | Keep originals of in-place library encodes here (see below)      |
 | `FONTS_STOCK_DIR`      | `/app/fonts`                  | Seed font groups copied into the user dir on first start         |
 | `FONTS_USER_DIR`       | `/config/fonts`               | User font groups (read/write, the only directory scanned)        |
 | `SYSTEM_FONTS_DIRS`    | `/system-fonts`               | Read-only host font dirs, browsable to import fonts into groups  |
@@ -62,6 +63,15 @@ If `ORGANIZATION` is set to `RabbitCompany` (the default), then any file ending 
 - Completely **skipped** when you click Encode Folder
 
 This means you can safely run Encode Folder on the same series multiple times (only new or unencoded files will be queued).
+
+If `RECYCLE_BIN_DIR` is set, the original of every library file that is replaced in place is moved into that directory instead of being overwritten or deleted, keeping its full path:
+
+```
+Library:      /Animes/example/series/Episode 1.mkv
+Recycle bin:  <RECYCLE_BIN_DIR>/Animes/example/series/Episode 1.mkv
+```
+
+The recycle bin is never emptied automatically, so delete the originals yourself once you have checked the encodes. Mount it on the same filesystem as your library to make the move instant as otherwise the original is copied. Keep it outside `LIBRARY_DIRS`.
 
 ## Encoding Pipeline
 

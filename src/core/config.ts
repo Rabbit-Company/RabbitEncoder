@@ -141,6 +141,7 @@ export async function loadConfig(): Promise<AppConfig> {
 		port: parseInt(process.env.PORT || "3000"),
 		organization: process.env.ORGANIZATION || "RabbitCompany",
 		libraryDirs,
+		recycleBinDir: (process.env.RECYCLE_BIN_DIR || "").trim(),
 		systemFontDirs,
 		languageDetector: { version: await getLanguageDetectorVersion() },
 		defaults: getDefaultJobSettings(),

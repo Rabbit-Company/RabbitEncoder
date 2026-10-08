@@ -19,6 +19,8 @@ services:
       # - /mnt/HDD/media/Animes:/Animes
       # - /mnt/HDD/media/Shows:/Shows
       # - /mnt/HDD/media/Movies:/Movies
+      # Keep the originals of in-place library encodes (see RECYCLE_BIN_DIR)
+      # - /mnt/HDD/media/recycle-bin:/recycle-bin
     environment:
       # Server
       - PORT=3000
@@ -36,3 +38,8 @@ services:
       # The encoded file replaces the source and Jellyfin metadata (.nfo, thumbnails) is cleaned up.
       # Files already ending with -{ORGANIZATION}.mkv are recognized as already encoded and skipped.
       # - LIBRARY_DIRS=/Animes,/Shows,/Movies
+
+      # Recycle bin (path inside the container, mount it as a volume)
+      # Originals of in-place library encodes are moved here instead of being replaced,
+      # keeping their folder structure: /Animes/Show/Ep.mkv -> /recycle-bin/Animes/Show/Ep.mkv
+      # - RECYCLE_BIN_DIR=/recycle-bin

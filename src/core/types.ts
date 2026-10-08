@@ -528,6 +528,7 @@ export interface AppConfig {
 	defaults: JobSettings;
 	organization: string;
 	libraryDirs: string[];
+	recycleBinDir: string;
 	systemFontDirs: string[];
 	languageDetector: LanguageDetector;
 }
