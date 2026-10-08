@@ -59,6 +59,11 @@ export async function removeJob(id: string): Promise<void> {
 	update();
 }
 
+export async function removeJobs(ids: string[]): Promise<void> {
+	await Promise.all(ids.map((id) => deleteJob(id)));
+	update();
+}
+
 export async function doRetry(id: string): Promise<void> {
 	await retryJob(id);
 	update();

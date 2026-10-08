@@ -744,6 +744,9 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 				.filter((job) => job.status === "done" && !!job.outputFilename)
 				.map((job) => job.id)
 		: [];
+	const doneJobIds = collectAllJobs(node)
+		.filter((job) => job.status === "done")
+		.map((job) => job.id);
 
 	const chevronSvg = `<svg class="folder-chevron ${isExpanded ? "expanded" : ""}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>`;
 
@@ -751,6 +754,11 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	const auditButton = auditJobIds.length
 		? `<button class="btn-icon btn-folder-audit" type="button" title="Audit MKV track metadata in this completed folder" data-audit-job-ids="${escapeHtml(auditJobIds.join(","))}" data-audit-folder-label="${escapeHtml(node.name)}">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+		</button>`
+		: "";
+	const dismissButton = doneJobIds.length
+		? `<button class="btn-icon btn-folder-dismiss" type="button" title="Dismiss ${doneJobIds.length} completed job${doneJobIds.length !== 1 ? "s" : ""} in this folder" data-dismiss-job-ids="${escapeHtml(doneJobIds.join(","))}">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
 		</button>`
 		: "";
 
@@ -762,6 +770,7 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 					${folderIconSvg}
 					<span class="folder-name">${escapeHtml(node.name)}</span>
 					${auditButton}
+					${dismissButton}
 					<div class="move-buttons" data-move-type="folder" data-move-path="${escapeHtml(node.fullPath)}">
 						<button class="btn-icon btn-move" title="Move up" data-action="move-up">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>

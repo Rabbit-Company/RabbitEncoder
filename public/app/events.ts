@@ -21,7 +21,7 @@ import {
 	openBitrateAnalysis,
 	openBitrateAnalysisImport,
 } from "../features/bitrate-analysis";
-import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, saveJobSettings } from "../features/job-settings";
+import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, removeJobs, saveJobSettings } from "../features/job-settings";
 import { openFolderFromSearch, renderLibraryView } from "../features/library-search";
 import { closeLibrary, closeLibraryIfOutside, handleLibraryEncode, openLibrary, toggleNodeCheck, toggleNodeExpand } from "../features/library";
 import { handlePauseToggle, update } from "../features/polling";
@@ -230,6 +230,13 @@ export function initEventListeners() {
 			e.stopPropagation();
 			const jobIds = (auditFolderButton.dataset.auditJobIds || "").split(",").filter(Boolean);
 			if (jobIds.length) void openRepairAuditJobs(jobIds, auditFolderButton.dataset.auditFolderLabel);
+			return;
+		}
+		const dismissFolderButton = target.closest<HTMLElement>(".btn-folder-dismiss");
+		if (dismissFolderButton) {
+			e.stopPropagation();
+			const jobIds = (dismissFolderButton.dataset.dismissJobIds || "").split(",").filter(Boolean);
+			if (jobIds.length) void removeJobs(jobIds);
 			return;
 		}
 		const moveBtn = target.closest<HTMLElement>(".btn-move");
