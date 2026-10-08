@@ -141,7 +141,7 @@ export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: 
 					Logger.info(`[library] Removed source: ${job.filename}`);
 				}
 			} catch (err: any) {
-				Logger.warn(`[library] Failed to remove source ${job.filename}:`, { "error.message": err?.message });
+				Logger.warn(`[library] Failed to ${config.recycleBinDir ? "recycle" : "remove"} source ${job.filename}:`, { "error.message": err?.message });
 			}
 		}
 
