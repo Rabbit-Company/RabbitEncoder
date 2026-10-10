@@ -680,7 +680,7 @@ export async function runSegmentedPass(
 	outputPath: string,
 	segments: DenoiseSegment[],
 	tempDir: string,
-	encode: (seg: DenoiseSegment, segFile: string) => Promise<void>,
+	encode: (seg: DenoiseSegment, segFile: string, index: number) => Promise<void>,
 	onProgress: (i: number, n: number, label: string) => void,
 	signal?: AbortSignal,
 ): Promise<void> {
@@ -706,7 +706,7 @@ export async function runSegmentedPass(
 			onProgress(i, segments.length, label);
 			Logger.debug(`[auto-denoise] Segment ${i + 1}/${segments.length}: ${label}`);
 
-			await encode(seg, segFile);
+			await encode(seg, segFile, i);
 			segFiles.push(segFile);
 		}
 

@@ -44,7 +44,7 @@ import pkg from "../../package.json";
 import { buildPrepareFilterConfig } from "../video/filters";
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
 import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
-import { runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
+import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
 import { combineCumulativeSettings, encodeSettingsCode } from "../settings/settings-code";
@@ -526,6 +526,11 @@ export async function encodeJob(
 			totalDuration: probe.duration,
 		});
 
+		// av-denoise has no CPU fallback, so stop here rather than after the filter pass.
+		if (prepareFilter?.deferredAvd) {
+			await assertAvdDeviceUsable(prepareFilter.deferredAvd.engine, prepareFilter.deferredAvd.device);
+		}
+
 		// The segmented stages cut by time, which is only frame-accurate on the intra-only FFV1 this pass writes,
 		// so it also runs with an empty filter when one of them follows.
 		const needsFilterPass = !!prepareFilter && (!!prepareFilter.filter || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd?.plan);
@@ -678,7 +683,7 @@ export async function encodeJob(
 					(i, n, segLabel) => {
 						setStep(S_PREPARE, {
 							progress: 5 + (95 * i) / n,
-							detail: `${label}, segment ${i}/${n} (${segLabel})`,
+							detail: `${label}, segment ${Math.min(n, Math.floor(i) + 1)}/${n} (${segLabel})`,
 						});
 					},
 					signal,

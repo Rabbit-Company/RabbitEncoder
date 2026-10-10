@@ -140,6 +140,9 @@ export async function listAvdDevices(): Promise<AvdDevice[]> {
 			if (m[1] === "cpu") continue;
 			devices.push({ id: m[1]!, backends: m[2]!.split(",").map((b) => b.trim()) });
 		}
+		// Without a real GPU, "default" resolves to the software device (lavapipe), which would run
+		// for hours. Only offer "default" when there is an actual GPU behind it.
+		if (!devices.some((d) => d.id !== "default")) return [];
 		return devices;
 	} catch (err) {
 		Logger.warn(`[avd] Failed to enumerate devices: ${err instanceof Error ? err.message : String(err)}`);
@@ -151,6 +154,17 @@ export async function listAvdDevices(): Promise<AvdDevice[]> {
 export async function isAvdDeviceAvailable(device: string): Promise<boolean> {
 	const devices = await listAvdDevices();
 	return devices.some((d) => d.id === device);
+}
+
+/** Fail with a clear message before any work starts when av-denoise has no usable GPU. */
+export async function assertAvdDeviceUsable(engine: AvdEngine, device: string): Promise<void> {
+	const devices = await listAvdDevices();
+	if (devices.some((d) => d.id === device)) return;
+	const found =
+		devices.length > 0 ? `Available devices: ${devices.map((d) => d.id).join(", ")}.` : "av-denoise found no GPU (only a software device, or none at all).";
+	throw new Error(
+		`${avdEngineLabel(engine)} cannot run on device "${device}". ${found} av-denoise has no CPU fallback: pass a GPU through to the container or switch the denoiser to nlmeans.`,
+	);
 }
 
 /**
@@ -231,7 +245,8 @@ export interface RunAvdPassOptions {
 	range?: { start: number; end: number };
 	/** Probed format of the input. Probed here when omitted. */
 	format?: StreamFormat;
-	onProgress?: (currentFrames: number, fpsStr: string | null) => void;
+	/** `outSeconds` is how much video has been written so far, when FFmpeg reports it. */
+	onProgress?: (currentFrames: number, fpsStr: string | null, outSeconds: number | null) => void;
 	signal?: AbortSignal;
 }
 
@@ -301,7 +316,9 @@ export async function runAvdPass(opts: RunAvdPassOptions): Promise<void> {
 		if (now - lastUpdate >= 1000) {
 			lastUpdate = now;
 			const current = parseInt(m[1]!, 10);
-			onProgress?.(current, computeFps(current, startedAt));
+			const t = line.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+			const outSeconds = t ? parseInt(t[1]!, 10) * 3600 + parseInt(t[2]!, 10) * 60 + parseFloat(t[3]!) : null;
+			onProgress?.(current, computeFps(current, startedAt), outSeconds);
 		}
 		return true;
 	});
@@ -462,14 +479,34 @@ export async function runSegmentedAutoDenoiseAvd(
 		Logger.warn(`[avd] Source is ${format.pixFmt}; converting to ${pixFmt} for av-denoise.`);
 	}
 
+	const segments = buildSegmentList(mergeEqualStrengthRanges(plan, engine, params), totalDuration);
+	const segmentCount = segments.length;
+
 	await runSegmentedPass(
 		inputPath,
 		outputPath,
-		buildSegmentList(mergeEqualStrengthRanges(plan, engine, params), totalDuration),
+		segments,
 		tempDir,
-		async (seg, segFile) => {
+		async (seg, segFile, index) => {
 			if (seg.level !== null) {
-				await runAvdPass({ inputPath, outputPath: segFile, engine, level: seg.level, params, device, range: seg, format, signal });
+				const label = `${seg.level} ${seg.start.toFixed(1)} to ${seg.end.toFixed(1)}s`;
+				const length = Math.max(0.001, seg.end - seg.start);
+				await runAvdPass({
+					inputPath,
+					outputPath: segFile,
+					engine,
+					level: seg.level,
+					params,
+					device,
+					range: seg,
+					format,
+					signal,
+					// Report progress inside the segment: a long NL4D range can run for minutes.
+					onProgress: (frames, fps, outSeconds) => {
+						const frac = outSeconds === null ? 0 : Math.min(0.999, outSeconds / length);
+						onProgress(index + frac, segmentCount, `${label}, ${frames} frames${fps ? ` @ ${fps} fps` : ""}`);
+					},
+				});
 				return;
 			}
 
