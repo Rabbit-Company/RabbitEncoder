@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, rmSync, statSync } from "fs";
-import { join } from "path";
+import { basename, join } from "path";
 import type {
 	AppConfig,
 	Job,
 	JobSettings,
 	PreviewFrameSink,
 	SubtitleBurnMode,
+	PreviewReference,
 	PreviewSample,
 	PreviewSampleVsFrame,
 	PreviewState,
@@ -19,12 +20,25 @@ import { analyzeSourceTracks } from "./source-analysis";
 import { FFV1_ENCODE_ARGS } from "../video/auto-denoise";
 import { vsRegistry } from "../video/vs-filters";
 
+/** Extra video (e.g. the pre-denoise original) whose frames are shown next to the job's own source and encode. */
+export interface PreviewReferenceInput {
+	path: string;
+	label: string;
+}
+
+export const MAX_PREVIEW_REFERENCES = 4;
+
 export interface PreviewEncodeOptions {
 	sampleCount: number;
 	windowSeconds: number;
+	references: PreviewReferenceInput[];
 }
 
-export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = { sampleCount: 6, windowSeconds: 5 };
+export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = { sampleCount: 6, windowSeconds: 5, references: [] };
+
+export function buildPreviewReferences(inputs: PreviewReferenceInput[]): PreviewReference[] {
+	return inputs.map((ref, index) => ({ index, path: ref.path, name: basename(ref.path), label: ref.label }));
+}
 
 export function previewDirFor(config: AppConfig, jobId: string): string {
 	return join(config.tempDir, `${jobId}_preview`);
@@ -127,12 +141,15 @@ async function captureFrame(
 	frameIndex: number,
 	burnSubs: SubtitleBurnMode,
 	color: PreviewColorInfo,
-	probe: ProbeResult,
+	height: number,
 	signal: AbortSignal,
-): Promise<void> {
+	seekSec?: number,
+): Promise<boolean> {
 	const inRange = color.range === "pc" ? "pc" : "tv";
-	const matrix = previewMatrixFromColorSpace(color.space, probe.height);
+	const matrix = previewMatrixFromColorSpace(color.space, height);
 	const targetFrame = Math.max(0, Math.round(frameIndex));
+	// Input seek, so frame 0 is the first frame at or after seekSec (same as cutSourceClip).
+	const input = seekSec !== undefined ? ["-ss", seekSec.toFixed(3), "-i", inputPath] : ["-i", inputPath];
 
 	const select = `select=eq(n\\,${targetFrame})`;
 	const resetVideoPts = "setpts=PTS-STARTPTS";
@@ -147,8 +164,7 @@ async function captureFrame(
 			"-loglevel",
 			"error",
 			"-y",
-			"-i",
-			inputPath,
+			...input,
 			"-map",
 			"0:v:0",
 			"-vf",
@@ -170,8 +186,7 @@ async function captureFrame(
 			"-loglevel",
 			"error",
 			"-y",
-			"-i",
-			inputPath,
+			...input,
 			"-filter_complex",
 			`[0:v:0]${resetVideoPts}[base];[base][0:s:0]overlay,${select},${colorChain}[v]`,
 			"-map",
@@ -193,8 +208,7 @@ async function captureFrame(
 			"-loglevel",
 			"error",
 			"-y",
-			"-i",
-			inputPath,
+			...input,
 			"-map",
 			"0:v:0",
 			"-vf",
@@ -213,6 +227,44 @@ async function captureFrame(
 
 	const res = await run(args, { signal });
 	if (res.code !== 0) Logger.warn(`[preview] Frame capture failed (${outPath}): ${res.stderr.slice(-300)}`);
+	return res.code === 0 && existsSync(outPath);
+}
+
+interface PreparedReference {
+	ref: PreviewReference;
+	color: PreviewColorInfo;
+	height: number;
+	/** Frame offset inside the sample window that matches the job's comparison frame. */
+	frame: number;
+	duration: number;
+}
+
+/** Probe every reference once and flag the ones that are unlikely to line up frame for frame with the job source. */
+async function prepareReferences(inputs: PreviewReferenceInput[], probe: ProbeResult, comparisonFrame: number): Promise<PreparedReference[]> {
+	const prepared: PreparedReference[] = [];
+	for (const ref of buildPreviewReferences(inputs)) {
+		if (!existsSync(ref.path)) throw new Error(`Comparison source no longer accessible: ${ref.name}`);
+		let refProbe: ProbeResult;
+		try {
+			refProbe = await probeFile(ref.path);
+		} catch (err) {
+			throw new Error(`Comparison source could not be read (${ref.name}): ${err instanceof Error ? err.message : String(err)}`);
+		}
+
+		const warnings: string[] = [];
+		let frame = comparisonFrame;
+		const sameFps = Math.abs(refProbe.videoStreamFps - probe.videoStreamFps) < 0.01;
+		if (!sameFps && refProbe.videoStreamFps > 0 && probe.videoStreamFps > 0) {
+			frame = Math.round((comparisonFrame / probe.videoStreamFps) * refProbe.videoStreamFps);
+			warnings.push(`frame rate differs (${refProbe.videoStreamFps.toFixed(3)} vs ${probe.videoStreamFps.toFixed(3)} fps)`);
+		}
+		const durationDiff = Math.abs(refProbe.duration - probe.duration);
+		if (durationDiff > 1) warnings.push(`duration differs by ${durationDiff.toFixed(1)}s`);
+		if (warnings.length > 0) ref.warning = `${warnings.join(" and ")}, frames may not line up with the job source`;
+
+		prepared.push({ ref, color: await probeColorInfo(ref.path), height: refProbe.height, frame, duration: refProbe.duration });
+	}
+	return prepared;
 }
 
 /**
@@ -320,6 +372,8 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 
 	const stamps = pickSampleTimestamps(probe.duration, opts.sampleCount, opts.windowSeconds);
 	const comparisonFrame = Math.max(0, Math.round((opts.windowSeconds / 2) * probe.videoStreamFps));
+	const references = await prepareReferences(opts.references, probe, comparisonFrame);
+	if (references.length > 0) onUpdate({ references: references.map((r) => r.ref) });
 	const completed: PreviewSample[] = [];
 
 	for (let i = 0; i < stamps.length; i++) {
@@ -337,8 +391,18 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 			const sink: PreviewFrameSink = {
 				dir: sampleDir,
 				frameOffsetSec: opts.windowSeconds / 2,
-				capture: (input, name, burn) => captureFrame(input, join(sampleDir, name), comparisonFrame, burn, colorInfo, probe, signal),
+				capture: (input, name, burn) => captureFrame(input, join(sampleDir, name), comparisonFrame, burn, colorInfo, probe.height, signal).then(() => {}),
 			};
+
+			// Same seek + frame offset as the cut clip, so matching files land on the same frame as source.png.
+			const refFrames: number[] = [];
+			for (const r of references) {
+				if (signal.aborted) throw new CancelledError();
+				if (stamps[i]! + opts.windowSeconds / 2 >= r.duration) continue;
+				report(`Capturing ${r.ref.label}`);
+				const ok = await captureFrame(r.ref.path, join(sampleDir, `ref_${r.ref.index}.png`), r.frame, "none", r.color, r.height, signal, stamps[i]!);
+				if (ok) refFrames.push(r.ref.index);
+			}
 
 			const clipJob: Job = { ...job, id: `${job.id}__pv${i}`, inputPath: clipPath, probe: undefined, replaceSource: false };
 			report("Encoding clip");
@@ -363,6 +427,7 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 				encodedBitrateKbps: Math.round((streamBytes * 8) / 1000 / clipDurationSec),
 				vsFrames,
 				prepareFrames: [],
+				refFrames,
 			});
 			onUpdate({ samples: [...completed] });
 		} catch (err) {
@@ -383,7 +448,11 @@ export function resolvePreviewArtifact(config: AppConfig, jobId: string, sampleI
 	else if (kind === "clip") file = join(dir, "encoded.mkv");
 	else if (kind === "source-clip") file = join(dir, "source_clip.mkv");
 	else if (kind === "prepare") file = join(dir, "prepare.png");
-	else if (kind.startsWith("vs:")) {
+	else if (kind.startsWith("ref:")) {
+		const m = kind.match(/^ref:(\d+)$/);
+		if (!m) return null;
+		file = join(dir, `ref_${parseInt(m[1]!, 10)}.png`);
+	} else if (kind.startsWith("vs:")) {
 		const m = kind.match(/^vs:(\d+)$/);
 		if (!m) return null;
 		file = join(dir, `vs_${parseInt(m[1]!, 10)}.png`);

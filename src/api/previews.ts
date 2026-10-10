@@ -1,7 +1,8 @@
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
 import { cancelPreview, clearPreviewFor, getPreviewState, startPreview } from "../queue/store";
-import { resolvePreviewArtifact, type PreviewEncodeOptions } from "../pipeline/preview-encoder";
+import { MAX_PREVIEW_REFERENCES, resolvePreviewArtifact, type PreviewEncodeOptions, type PreviewReferenceInput } from "../pipeline/preview-encoder";
+import { resolveAllowedMkv } from "./repair";
 
 export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/jobs/:id/preview", (c) => {
@@ -11,7 +12,7 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.post("/api/jobs/:id/preview", async (c) => {
-		let body: { clipCount?: number; clipDuration?: number } = {};
+		let body: { clipCount?: number; clipDuration?: number; references?: unknown } = {};
 		try {
 			body = (await c.req.json()) as typeof body;
 		} catch {
@@ -34,6 +35,25 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 				return c.json({ error: "clipDuration must be between 1 and 30 seconds" }, 400);
 			}
 			options.windowSeconds = d;
+		}
+
+		if (body.references !== undefined) {
+			if (!Array.isArray(body.references) || body.references.length > MAX_PREVIEW_REFERENCES) {
+				return c.json({ error: `references must be a list of at most ${MAX_PREVIEW_REFERENCES} videos` }, 400);
+			}
+			const references: PreviewReferenceInput[] = [];
+			for (const [i, raw] of body.references.entries()) {
+				const entry = (raw ?? {}) as { path?: unknown; label?: unknown };
+				let path: string;
+				try {
+					path = resolveAllowedMkv(entry.path, config, "Comparison source");
+				} catch (err) {
+					return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+				}
+				const label = typeof entry.label === "string" ? entry.label.trim().slice(0, 40) : "";
+				references.push({ path, label: label || `Reference ${i + 1}` });
+			}
+			options.references = references;
 		}
 
 		const result = startPreview(c.params.id!, options);
@@ -59,8 +79,9 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 
 		const isStandard = kind === "source" || kind === "encode" || kind === "clip" || kind === "source-clip";
 		const isVsStep = /^vs:\d+$/.test(kind);
+		const isReference = /^ref:\d+$/.test(kind);
 		const isPrepareStep = /^pf:(?:downscale|deband|denoise|crop)$/.test(kind);
-		if (!isStandard && !isVsStep && !isPrepareStep) {
+		if (!isStandard && !isVsStep && !isReference && !isPrepareStep) {
 			return c.json({ error: "Bad request" }, 400);
 		}
 

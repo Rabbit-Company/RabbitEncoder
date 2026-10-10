@@ -21,6 +21,7 @@ import {
 	runPreviewEncode,
 	deletePreviewDir,
 	previewSettingsFingerprint,
+	buildPreviewReferences,
 	DEFAULT_PREVIEW_OPTIONS,
 	type PreviewEncodeOptions,
 } from "../pipeline/preview-encoder";
@@ -710,6 +711,7 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 		progress: 0,
 		currentDetail: "Starting...",
 		samples: [],
+		references: buildPreviewReferences(opts.references),
 		settingsFingerprint: previewSettingsFingerprint(job.settings),
 		sampleCount: opts.sampleCount,
 		windowSeconds: opts.windowSeconds,

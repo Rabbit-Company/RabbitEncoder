@@ -3,7 +3,7 @@ import type { Job, JobSettings } from "../types";
 export type AdvancedTarget = "default" | "job";
 export type PipelinePreset = "full" | "prepare" | "translate" | "custom";
 export type MoveDirection = "up" | "down";
-export type PreviewArtifactKind = "source" | "encode" | "clip" | "source-clip" | `vs:${number}` | `pf:${string}`;
+export type PreviewArtifactKind = "source" | "encode" | "clip" | "source-clip" | `ref:${number}` | `vs:${number}` | `pf:${string}`;
 export type FetchOptions = RequestInit & { headers?: HeadersInit };
 
 export interface LibraryDir {
@@ -117,7 +117,13 @@ export interface SystemStats {
 export interface PreviewSampleView {
 	id: PreviewArtifactKind;
 	label: string;
-	role: "source" | "vs" | "prepare" | "encode";
+	role: "reference" | "source" | "vs" | "prepare" | "encode";
+}
+
+/** Extra comparison video queued up for the next preview run. */
+export interface PreviewReferenceDraft {
+	path: string;
+	label: string;
 }
 
 export type PreviewSampleCard = HTMLDivElement & {

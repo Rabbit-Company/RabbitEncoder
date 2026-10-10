@@ -1,5 +1,5 @@
 import type { JobSettings, VsPresetManifest } from "./types";
-import type { AdvancedTarget, AvdDevice, GpuDevice, LibraryDir, LibraryNode, PreviewSampleCard } from "./ui/models";
+import type { AdvancedTarget, AvdDevice, GpuDevice, LibraryDir, LibraryNode, PreviewReferenceDraft, PreviewSampleCard } from "./ui/models";
 
 export const appState = {
 	queuePaused: false,
@@ -22,6 +22,7 @@ export const appState = {
 	previewPollTimer: null as ReturnType<typeof setInterval> | null,
 	currentPreviewJobId: null as string | null,
 	currentPreviewSettingsFingerprint: "",
+	previewReferences: [] as PreviewReferenceDraft[],
 	previewBlobCache: new Map<string, string>(),
 	currentPreviewFullscreenCard: null as PreviewSampleCard | null,
 

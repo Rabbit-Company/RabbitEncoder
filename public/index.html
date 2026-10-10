@@ -1287,7 +1287,7 @@
 						<div id="preview-intro" class="preview-intro" style="display: none">
 							<p>
 								Encodes a set of short clips spread evenly across the source so you can compare quality before committing the full encode. Click any image to
-								step through source → filter passes → encode. In fullscreen, use ← → or Space to navigate.
+								step through comparison sources → source → filter passes → encode. In fullscreen, use ← → or Space to navigate.
 							</p>
 						</div>
 
@@ -1302,6 +1302,19 @@
 							</label>
 						</div>
 
+						<div id="preview-references" class="preview-references" style="display: none">
+							<div class="preview-references-header">
+								<div>
+									<div class="preview-references-title">Extra comparison sources</div>
+									<div class="preview-references-hint">
+										Add other versions of this video, like the original before denoising. Their frames show up next to the source and encode on the next run.
+									</div>
+								</div>
+								<button class="btn btn-ghost btn-sm" id="preview-add-reference-btn" type="button">Add video...</button>
+							</div>
+							<div id="preview-reference-list" class="preview-reference-list"></div>
+						</div>
+
 						<div id="preview-status" class="preview-status" style="display: none">
 							<div class="preview-status-row">
 								<span class="preview-status-label" id="preview-status-label">Starting...</span>
@@ -1314,6 +1327,7 @@
 						</div>
 
 						<div id="preview-error" class="preview-error" style="display: none"></div>
+						<div id="preview-reference-warnings" class="preview-reference-warnings" style="display: none"></div>
 
 						<div id="preview-samples" class="preview-samples" style="display: none"></div>
 						<div id="preview-summary" class="preview-summary" style="display: none"></div>

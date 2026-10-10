@@ -32,8 +32,11 @@ import {
 	closePreviewModalIfOutside,
 	cyclePreviewSampleView,
 	downloadPreviewSampleArtifact,
+	handlePreviewAddReference,
 	handlePreviewCancel,
 	handlePreviewClear,
+	handlePreviewReferenceListClick,
+	handlePreviewReferenceListInput,
 	handlePreviewRun,
 	initPreviewOptionControls,
 	openPreviewFullscreen,
@@ -198,6 +201,9 @@ export function initEventListeners() {
 	byId("preview-run-btn").addEventListener("click", handlePreviewRun);
 	byId("preview-cancel-btn").addEventListener("click", handlePreviewCancel);
 	byId("preview-clear-btn").addEventListener("click", handlePreviewClear);
+	byId("preview-add-reference-btn").addEventListener("click", handlePreviewAddReference);
+	byId("preview-reference-list").addEventListener("click", handlePreviewReferenceListClick);
+	byId("preview-reference-list").addEventListener("input", handlePreviewReferenceListInput);
 	initPreviewOptionControls();
 
 	byId("login-submit-btn").addEventListener("click", handleLogin);

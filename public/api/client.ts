@@ -528,7 +528,10 @@ export async function fetchPreviewState(jobId: string): Promise<PreviewState> {
 	return res.json();
 }
 
-export async function startPreviewRequest(jobId: string, options?: { clipCount?: number; clipDuration?: number }): Promise<PreviewState> {
+export async function startPreviewRequest(
+	jobId: string,
+	options?: { clipCount?: number; clipDuration?: number; references?: { path: string; label: string }[] },
+): Promise<PreviewState> {
 	const res = await authFetch(`${API}/api/jobs/${jobId}/preview`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },

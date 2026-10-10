@@ -1,4 +1,4 @@
-import type { PreviewSample, PreviewState } from "../types";
+import type { PreviewReference, PreviewSample, PreviewState } from "../types";
 import type { PreviewArtifactKind, PreviewSampleCard, PreviewSampleView } from "../ui/models";
 import { authFetch, cancelPreviewRequest, fetchJobs, fetchPreviewState, startPreviewRequest } from "../api/client";
 import { API } from "../config/api-base";
@@ -8,6 +8,9 @@ import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { humanFileSize } from "./library";
+import { openPreviewReferencePicker } from "./repair";
+
+const MAX_PREVIEW_REFERENCES = 4;
 
 export async function fetchPreviewArtifactBlob(jobId: string, idx: number, kind: PreviewArtifactKind): Promise<string> {
 	const cacheKey = `${jobId}:${idx}:${kind}`;
@@ -39,7 +42,65 @@ export async function openPreviewModal(jobId: string): Promise<void> {
 	byId("preview-modal-title").textContent = `Preview Encode: ${job.filename}`;
 	byId("preview-modal").style.display = "";
 
+	// Start from the comparison sources of this job's last run, if it had any.
+	appState.previewReferences = [];
+	renderPreviewReferences();
+	try {
+		const state = await fetchPreviewState(jobId);
+		if (appState.currentPreviewJobId !== jobId) return;
+		appState.previewReferences = (state.references || []).map((r) => ({ path: r.path, label: r.label }));
+		renderPreviewReferences();
+	} catch {
+		// The poll below reports load problems.
+	}
+
 	await refreshPreviewModal();
+}
+
+function fileNameOf(path: string): string {
+	return path.split("/").filter(Boolean).pop() || path;
+}
+
+export function renderPreviewReferences(): void {
+	const refs = appState.previewReferences;
+	byId("preview-reference-list").innerHTML = refs
+		.map(
+			(ref, i) => `
+			<div class="preview-reference-row">
+				<input class="repair-input preview-reference-label" data-ref-label="${i}" value="${escapeHtml(ref.label)}" maxlength="40" placeholder="Label" aria-label="Label for ${escapeHtml(fileNameOf(ref.path))}">
+				<span class="preview-reference-name" title="${escapeHtml(ref.path)}">${escapeHtml(fileNameOf(ref.path))}</span>
+				<button class="btn btn-ghost btn-sm" type="button" data-ref-remove="${i}">Remove</button>
+			</div>`,
+		)
+		.join("");
+	buttonById("preview-add-reference-btn").disabled = refs.length >= MAX_PREVIEW_REFERENCES;
+}
+
+export function handlePreviewAddReference(): void {
+	if (appState.previewReferences.length >= MAX_PREVIEW_REFERENCES) return;
+	openPreviewReferencePicker((path) => {
+		const refs = appState.previewReferences;
+		if (refs.length >= MAX_PREVIEW_REFERENCES || refs.some((r) => r.path === path)) return;
+		const taken = new Set(refs.map((r) => r.label));
+		let label = refs.length === 0 ? "Original" : `Reference ${refs.length + 1}`;
+		for (let n = refs.length + 1; taken.has(label); n++) label = `Reference ${n}`;
+		refs.push({ path, label });
+		renderPreviewReferences();
+	});
+}
+
+export function handlePreviewReferenceListClick(e: MouseEvent): void {
+	const btn = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-ref-remove]") : null;
+	if (!btn) return;
+	appState.previewReferences.splice(parseInt(btn.dataset.refRemove!, 10), 1);
+	renderPreviewReferences();
+}
+
+export function handlePreviewReferenceListInput(e: Event): void {
+	const input = e.target;
+	if (!(input instanceof HTMLInputElement) || input.dataset.refLabel === undefined) return;
+	const ref = appState.previewReferences[parseInt(input.dataset.refLabel, 10)];
+	if (ref) ref.label = input.value;
 }
 
 export function closePreviewModal() {
@@ -130,6 +191,8 @@ export function renderPreviewSummary(samples: PreviewSample[]): void {
 export function renderPreviewState(state: PreviewState): void {
 	const introEl = byId("preview-intro");
 	const optionsEl = byId("preview-options");
+	const referencesEl = byId("preview-references");
+	const refWarningsEl = byId("preview-reference-warnings");
 	const statusEl = byId("preview-status");
 	const errorEl = byId("preview-error");
 	const samplesEl = byId("preview-samples");
@@ -148,6 +211,13 @@ export function renderPreviewState(state: PreviewState): void {
 
 	introEl.style.display = status === "idle" ? "" : "none";
 	optionsEl.style.display = isRunning ? "none" : "";
+	referencesEl.style.display = isRunning ? "none" : "";
+
+	const refWarnings = (state?.references || []).filter((r) => r.warning);
+	refWarningsEl.style.display = refWarnings.length > 0 ? "" : "none";
+	refWarningsEl.innerHTML = refWarnings
+		.map((r) => `<div><strong>${escapeHtml(r.label)}</strong> (${escapeHtml(r.name)}): ${escapeHtml(r.warning)}</div>`)
+		.join("");
 
 	if (isRunning) {
 		statusEl.style.display = "";
@@ -169,7 +239,7 @@ export function renderPreviewState(state: PreviewState): void {
 
 	if (hasResults) {
 		samplesEl.style.display = "";
-		renderPreviewSamples(state.jobId, state.samples);
+		renderPreviewSamples(state.jobId, state.samples, state.references || []);
 	} else {
 		samplesEl.style.display = "none";
 	}
@@ -182,8 +252,14 @@ export function renderPreviewState(state: PreviewState): void {
 	clearBtn.style.display = !isRunning && hasResults ? "" : "none";
 }
 
-export function buildPreviewSampleViews(sample: PreviewSample): PreviewSampleView[] {
-	const views: PreviewSampleView[] = [{ id: "source", label: "Source", role: "source" }];
+export function buildPreviewSampleViews(sample: PreviewSample, references: PreviewReference[] = []): PreviewSampleView[] {
+	// Comparison sources come first, they are usually an earlier generation of the job's source.
+	const views: PreviewSampleView[] = [];
+	for (const idx of sample.refFrames || []) {
+		const ref = references.find((r) => r.index === idx);
+		if (ref) views.push({ id: `ref:${idx}`, label: ref.label, role: "reference" });
+	}
+	views.push({ id: "source", label: "Source", role: "source" });
 	for (const f of sample.vsFrames || []) {
 		views.push({
 			id: `vs:${f.index}`,
@@ -202,10 +278,20 @@ export function buildPreviewSampleViews(sample: PreviewSample): PreviewSampleVie
 	return views;
 }
 
-export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): void {
+function applyPreviewTag(tag: Element | null, view: PreviewSampleView): void {
+	if (!tag) return;
+	tag.textContent = view.label;
+	tag.classList.toggle("is-reference", view.role === "reference");
+	tag.classList.toggle("is-source", view.role === "source");
+	tag.classList.toggle("is-encode", view.role === "encode");
+	tag.classList.toggle("is-vs", view.role === "vs");
+	tag.classList.toggle("is-prepare", view.role === "prepare");
+}
+
+export function renderPreviewSamples(jobId: string, samples: PreviewSample[], references: PreviewReference[] = []): void {
 	const container = byId("preview-samples");
 
-	const desiredKey = samples.map((s) => `${s.index}:${(s.vsFrames || []).length}:${(s.prepareFrames || []).length}`).join(",");
+	const desiredKey = samples.map((s) => `${s.index}:${(s.vsFrames || []).length}:${(s.prepareFrames || []).length}:${(s.refFrames || []).join("+")}`).join(",");
 	if (container.dataset.renderedKey === desiredKey) return;
 	container.dataset.renderedKey = desiredKey;
 	container.innerHTML = "";
@@ -215,7 +301,12 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 		card.className = "preview-sample";
 		card.dataset.idx = String(sample.index);
 
-		const views = buildPreviewSampleViews(sample);
+		const views = buildPreviewSampleViews(sample, references);
+		const firstView = views[0]!;
+		const refDownloads = views
+			.filter((v) => v.role === "reference")
+			.map((v, n) => `<button class="btn btn-ghost" data-dl="${v.id}" title="${escapeHtml(v.label)}">PNG (R${n + 1})</button>`)
+			.join("");
 		card._views = views;
 		card._viewIdx = 0;
 
@@ -230,7 +321,7 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 			<div class="preview-sample-image" data-action="toggle">
 				<div class="preview-img-loading">Loading...</div>
 				<img alt="Preview sample ${sample.index + 1}" style="display: none">
-				<span class="preview-sample-tag is-source">Source</span>
+				<span class="preview-sample-tag"></span>
 				<button class="preview-fullscreen-btn" type="button" title="View fullscreen" aria-label="View preview sample fullscreen" data-action="fullscreen">
 					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
 				</button>
@@ -250,6 +341,7 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 					<span class="meta-value">${escapeHtml(projected)}</span>
 				</div>
 				<div class="preview-sample-actions">
+					${refDownloads}
 					<button class="btn btn-ghost" data-dl="source">PNG (S)</button>
 					<button class="btn btn-ghost" data-dl="encode">PNG (E)</button>
 					<button class="btn btn-ghost" data-dl="source-clip">MKV (S)</button>
@@ -257,20 +349,21 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[]): v
 				</div>
 			</div>`;
 
+		applyPreviewTag(card.querySelector(".preview-sample-tag"), firstView);
 		container.appendChild(card);
 
 		(async () => {
 			try {
-				// Show source immediately.
-				const sourceUrl = await fetchPreviewArtifactBlob(jobId, sample.index, "source");
+				// Show the first view immediately.
+				const firstUrl = await fetchPreviewArtifactBlob(jobId, sample.index, firstView.id);
 				const img = card.querySelector<HTMLImageElement>("img")!;
-				img.src = sourceUrl;
+				img.src = firstUrl;
 				img.style.display = "";
 				card.querySelector<HTMLElement>(".preview-img-loading")!.style.display = "none";
 
 				// Warm-cache every other view so cycling/arrow keys are instant.
 				for (const v of views) {
-					if (v.id === "source") continue;
+					if (v.id === firstView.id) continue;
 					fetchPreviewArtifactBlob(jobId, sample.index, v.id).catch(() => {
 						// Per-view fetch can fail, just ignore.
 					});
@@ -308,26 +401,13 @@ export async function setPreviewSampleViewByIdx(card: PreviewSampleCard, idx: nu
 		card._viewIdx = wrapped;
 		card.dataset.viewing = view.id;
 
-		const tag = card.querySelector(".preview-sample-tag");
-		if (tag) {
-			tag.textContent = view.label;
-			tag.classList.toggle("is-source", view.role === "source");
-			tag.classList.toggle("is-encode", view.role === "encode");
-			tag.classList.toggle("is-vs", view.role === "vs");
-			tag.classList.toggle("is-prepare", view.role === "prepare");
-		}
+		applyPreviewTag(card.querySelector(".preview-sample-tag"), view);
 
 		if (appState.currentPreviewFullscreenCard === card) {
 			const fsImg = byId<HTMLImageElement>("preview-fullscreen-img");
 			const fsTag = byId("preview-fullscreen-tag");
 			if (fsImg) fsImg.src = url;
-			if (fsTag) {
-				fsTag.textContent = view.label;
-				fsTag.classList.toggle("is-source", view.role === "source");
-				fsTag.classList.toggle("is-encode", view.role === "encode");
-				fsTag.classList.toggle("is-vs", view.role === "vs");
-				fsTag.classList.toggle("is-prepare", view.role === "prepare");
-			}
+			applyPreviewTag(fsTag, view);
 		}
 	} catch (e) {
 		console.error("Preview image switch failed:", e);
@@ -394,7 +474,7 @@ export async function downloadPreviewSampleArtifact(jobId: string, idx: number, 
 		a.href = url;
 		const isClip = kind === "clip" || kind === "source-clip";
 		const ext = isClip ? "mkv" : "png";
-		const role = isClip ? kind : `${kind}-frame`;
+		const role = isClip ? kind : `${kind.replace(":", "")}-frame`;
 		a.download = `preview-${role}-sample${idx + 1}.${ext}`;
 		document.body.appendChild(a);
 		a.click();
@@ -422,7 +502,8 @@ export async function handlePreviewRun() {
 	const clipDuration = clamp(inputById("preview-clip-duration").value, 5, 1, 30);
 
 	try {
-		const result = await startPreviewRequest(appState.currentPreviewJobId, { clipCount, clipDuration });
+		const references = appState.previewReferences.map((r) => ({ path: r.path, label: r.label.trim() }));
+		const result = await startPreviewRequest(appState.currentPreviewJobId, { clipCount, clipDuration, references });
 		if (result.error) {
 			byId("preview-error").textContent = result.error;
 			byId("preview-error").style.display = "";

@@ -680,6 +680,18 @@ export interface PreviewSamplePrepareFrame {
 	label: string;
 }
 
+/** Extra comparison video picked by the user (e.g. the original source of an already denoised input). */
+export interface PreviewReference {
+	index: number;
+	path: string;
+	/** File name, shown next to the label. */
+	name: string;
+	/** Short user-facing label like "Original". */
+	label: string;
+	/** Set when the file is unlikely to line up frame for frame with the job source. */
+	warning?: string;
+}
+
 export interface PreviewSample {
 	index: number;
 	timestampSec: number;
@@ -691,6 +703,8 @@ export interface PreviewSample {
 	encodedBitrateKbps: number;
 	vsFrames: PreviewSampleVsFrame[];
 	prepareFrames: PreviewSamplePrepareFrame[];
+	/** Indices into PreviewState.references whose still was captured for this sample. */
+	refFrames: number[];
 }
 
 export interface PreviewState {
@@ -699,6 +713,7 @@ export interface PreviewState {
 	progress: number;
 	currentDetail: string;
 	samples: PreviewSample[];
+	references: PreviewReference[];
 	error?: string;
 	startedAt?: number;
 	finishedAt?: number;

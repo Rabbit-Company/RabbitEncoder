@@ -18,7 +18,7 @@ let sourceTracks: EditableTrack[] = [];
 let selectedTargetPath = "";
 let selectedSourcePath = "";
 
-type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor";
+type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -424,7 +424,9 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 				? "Choose original subtitle source"
 				: purpose === "subtitle-editor"
 					? "Choose MKV to edit subtitles"
-					: "Choose folder to audit";
+					: purpose === "preview-reference"
+						? "Choose comparison video"
+						: "Choose folder to audit";
 	inputById("repair-picker-search").placeholder = purpose === "folder" ? "Filter loaded folders..." : "Filter loaded folders and MKV files...";
 	byId("repair-picker-error").style.display = "none";
 	byId("repair-picker-content").innerHTML = '<div class="library-loading">Loading media folders...</div>';
@@ -440,7 +442,7 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 			const preferred =
 				purpose === "target"
 					? roots.find((root) => root.name.startsWith("Output")) || roots[0]
-					: purpose === "source"
+					: purpose === "source" || purpose === "preview-reference"
 						? roots.find((root) => root.name.startsWith("Input")) || roots.find((root) => root.name.startsWith("Library")) || roots[0]
 						: roots.find((root) => root.name.startsWith("Output")) || roots.find((root) => root.name.startsWith("Library")) || roots[0];
 			if (preferred) await togglePickerFolder(preferred.path);
@@ -458,6 +460,11 @@ export function openRepairFolderPicker(onChoose: (path: string) => void | Promis
 export function openSubtitleFilePicker(onChoose: (path: string) => void | Promise<void>): void {
 	pickerFileCallback = onChoose;
 	void openRepairPicker("subtitle-editor");
+}
+
+export function openPreviewReferencePicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("preview-reference");
 }
 
 export function closeRepairPicker(): void {
@@ -490,7 +497,7 @@ export function filterRepairPicker(): void {
 
 export function chooseRepairPickerFile(): void {
 	if (!pickerSelectedPath) return;
-	if (pickerPurpose === "subtitle-editor") {
+	if (pickerPurpose === "subtitle-editor" || pickerPurpose === "preview-reference") {
 		const callback = pickerFileCallback;
 		closeRepairPicker();
 		if (callback) void callback(pickerSelectedPath);
