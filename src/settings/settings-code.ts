@@ -839,6 +839,11 @@ export function combineCumulativeSettings(prior: Partial<JobSettings> | null | u
 		combined.deband = prior.deband;
 	}
 
+	if ((current.crop ?? "off") === "off" && prior.crop && prior.crop !== "off") {
+		combined.crop = prior.crop;
+		if (prior.cropLimit !== undefined) combined.cropLimit = prior.cropLimit;
+	}
+
 	combined.downscale = !!current.downscale || !!prior.downscale;
 
 	return combined;

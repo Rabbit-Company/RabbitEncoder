@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getDefaultJobSettings } from "../../src/core/config";
 import type { JobSettings } from "../../src/core/types";
-import { encodeSettingsCode, decodeSettingsCode } from "../../src/settings/settings-code";
+import { combineCumulativeSettings, encodeSettingsCode, decodeSettingsCode } from "../../src/settings/settings-code";
 
 describe("settings code — font/style not carried (RE1 compat)", () => {
 	it("never emits font/style/group fields", () => {
@@ -110,5 +110,28 @@ describe("settings code — av-denoise engine", () => {
 		const decoded = decodeSettingsCode(encodeSettingsCode(settings));
 		expect(decoded.denoiseEngine).toBe("avd-nlmeans");
 		expect(decoded.avdParams?.nlmeansStrength).toEqual({ light: 0.8, medium: 1.05, heavy: 1.3 });
+	});
+});
+
+describe("settings code — cumulative settings", () => {
+	it("carries auto crop and its limit from the prior pass when the current pass does not crop", () => {
+		const prior = getDefaultJobSettings();
+		prior.crop = "auto";
+		prior.cropLimit = 0.25;
+
+		const combined = combineCumulativeSettings(decodeSettingsCode(encodeSettingsCode(prior)), getDefaultJobSettings());
+		expect(combined.crop).toBe("auto");
+		expect(combined.cropLimit).toBe(0.25);
+	});
+
+	it("keeps the current crop settings when the current pass crops itself", () => {
+		const prior = getDefaultJobSettings();
+		prior.crop = "auto";
+		prior.cropLimit = 0.25;
+		const current = getDefaultJobSettings();
+		current.crop = "auto";
+
+		const combined = combineCumulativeSettings(decodeSettingsCode(encodeSettingsCode(prior)), current);
+		expect(combined.cropLimit).toBe(current.cropLimit);
 	});
 });
