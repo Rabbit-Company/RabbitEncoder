@@ -55,6 +55,42 @@ export type DenoiseBackend = "cpu" | "auto" | "vulkan" | "opencl";
 
 export type GpuBackend = "auto" | "vulkan" | "opencl";
 
+/**
+ * Which denoiser runs when denoise is enabled.
+ *
+ *   - "nlmeans"        : FFmpeg nlmeans (CPU / OpenCL / Vulkan, see DenoiseBackend).
+ *   - "avd-nlmeans"    : av-denoise fast NLMeans. GPU only.
+ *   - "avd-nlmeans-hq" : av-denoise NLMeans-HQ, measures the noise level itself. GPU only.
+ *   - "avd-nl4d"       : av-denoise NL4D spatio-temporal denoiser. GPU only.
+ */
+export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+export type AvdEngine = Exclude<DenoiseEngine, "nlmeans">;
+export type AvdPreset = "veryfast" | "fast" | "base" | "slow" | "veryslow";
+
+/** One strength value per denoise level. */
+export interface AvdLevelStrengths {
+	light: number;
+	medium: number;
+	heavy: number;
+}
+
+/** The av-denoise engines that measure the source's noise and set their own strength. */
+export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d";
+
+/** Parameters for the av-denoise engines. */
+export interface AvdParams {
+	/** av-denoise --preset, the speed/quality ladder (mainly the temporal window). Not used by avd-nl4d. */
+	preset: AvdPreset;
+	/** avd-nlmeans --strength per denoise level (same scale as FFmpeg nlmeans). */
+	nlmeansStrength: AvdLevelStrengths;
+	/**
+	 * Multiplier on what the self-tuning engines measure: --hq-sigma-scale for avd-nlmeans-hq,
+	 * --lambda-ht-scale for avd-nl4d. One value for every denoise level, because the engine already
+	 * adapts its strength to each scene. 1.0 trusts the measurement.
+	 */
+	scales: Record<AvdSelfTuningEngine, number>;
+}
+
 export type JobStatus = "queued" | "probing" | "encoding_video" | "encoding_audio" | "muxing" | "done" | "error" | "cancelled";
 
 export const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".webm", ".flv", ".ts", ".mov"]);
@@ -160,6 +196,12 @@ export interface JobSettings {
 	nlmeansParams: NlmeansLevelParams;
 	/** Filter parameters used for gradfun at each level. */
 	gradfunParams: GradfunLevelParams;
+	/** Which denoiser to use. The av-denoise engines ignore denoiseBackend / gpuDevice / nlmeansParams. */
+	denoiseEngine: DenoiseEngine;
+	/** Preset, strengths and scales for the av-denoise engines. */
+	avdParams: AvdParams;
+	/** av-denoise --device spec ("default", "discrete:0", "integrated:0", ...). */
+	avdDevice: string;
 	/** Backend selection for nlmeans. "cpu" forces CPU; the others may fall back. */
 	denoiseBackend: DenoiseBackend;
 	/** Device id for vulkan/opencl backends (e.g. "0" / "0.0"); ignored for cpu. */

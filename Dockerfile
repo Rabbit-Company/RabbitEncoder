@@ -190,6 +190,20 @@ RUN mkdir -p /root/.config/vsrepo \
 	&& vsrepo update \
 	&& vsrepo install ffms2 fmtc
 
+# av-denoise (GPU denoisers behind the avd-* denoise engines). Self-contained binary.
+ARG AV_DENOISE_VERSION=0.5.0
+ARG AV_DENOISE_SHA256=9b3fdf22a1362d36ce86c29d7fec8eff55e92902d05428f10f1f6481fa77c60c
+RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
+	"https://github.com/ChillFish8/av-denoise/releases/download/v${AV_DENOISE_VERSION}/av-denoise-linux-x86.tar.gz" \
+	-o /tmp/av-denoise.tar.gz \
+ && echo "${AV_DENOISE_SHA256}  /tmp/av-denoise.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/av-denoise.tar.gz -C /usr/local/bin av-denoise \
+ && rm -f /tmp/av-denoise.tar.gz \
+ && chmod +x /usr/local/bin/av-denoise \
+ && av-denoise --version
+
+ENV AV_DENOISE_COMPILATION_CACHE=/config/vapoursynth/av-denoise-cache
+
 # Make the venv's Python the default for any 'python3' call
 ENV PATH="/opt/vs-venv/bin:${PATH}"
 

@@ -1,6 +1,14 @@
 import type { AutoDenoiseMetric, DenoiseBackend } from "../types";
 import type { AdvancedTarget, SettingsCodePanelElement } from "../ui/models";
-import { decodeSettingsCodeRequest, fetchConfig, fetchOpenClDevices, fetchVulkanDevices, patchConfig, resetConfigRequest } from "../api/client";
+import {
+	decodeSettingsCodeRequest,
+	fetchAvdDevices,
+	fetchConfig,
+	fetchOpenClDevices,
+	fetchVulkanDevices,
+	patchConfig,
+	resetConfigRequest,
+} from "../api/client";
 import { getCurrentSettings } from "../app/events";
 import {
 	AUTO_DENOISE_METRICS,
@@ -8,7 +16,11 @@ import {
 	DEFAULT_BITRATE_THRESHOLDS,
 	DEFAULT_GRADFUN_PARAMS,
 	DEFAULT_NLMEANS_PARAMS,
+	DEFAULT_AVD_PARAMS,
+	AVD_PRESETS,
+	AVD_STRENGTH_HELP,
 	DENOISE_BACKENDS,
+	DEFAULT_DENOISE_ENGINE,
 } from "../config/options";
 import {
 	mountSettingsCodePanel,
@@ -18,7 +30,7 @@ import {
 	renderNlmeansParamsEditor,
 	renderRadioPills,
 } from "./settings-controls";
-import { cloneSettingsForEditing, renderSettingsForm } from "./settings-form";
+import { cloneSettingsForEditing, renderSettingsForm, updateDenoiseLevelHint } from "./settings-form";
 import { renderVsChainEditor } from "./vapoursynth";
 import { byId } from "../shared/dom";
 import { appState } from "../state";
@@ -73,6 +85,33 @@ export function closeSettingsIfOutside(e: MouseEvent): void {
 	if (e.target === e.currentTarget) closeSettings();
 }
 
+/** Single number input for a self-tuning engine's scale, styled like one row of the per-level editors. */
+function renderScaleInput(container: HTMLElement, value: number, onChange: (value: number) => void): void {
+	container.innerHTML = "";
+	const wrap = document.createElement("div");
+	wrap.className = "auto-threshold-grid";
+	const row = document.createElement("label");
+	row.className = "auto-threshold-row";
+	const span = document.createElement("span");
+	span.textContent = "scale";
+	const input = document.createElement("input");
+	input.type = "number";
+	input.step = "0.05";
+	input.min = "0.1";
+	input.max = "10";
+	input.value = String(value);
+	input.onchange = () => {
+		const n = parseFloat(input.value);
+		const v = Number.isFinite(n) ? Math.min(10, Math.max(0.1, n)) : 1;
+		input.value = String(v);
+		onChange(v);
+	};
+	row.appendChild(span);
+	row.appendChild(input);
+	wrap.appendChild(row);
+	container.appendChild(wrap);
+}
+
 export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	appState.currentAdvancedTarget = target;
 	const settings = target === "default" ? window._tempDefaults : window._tempJobSettings;
@@ -93,6 +132,9 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	}
 	if (!settings.autoDenoiseMetric) settings.autoDenoiseMetric = "noise";
 	if (!settings.denoiseBackend) settings.denoiseBackend = "auto";
+	if (!settings.denoiseEngine) settings.denoiseEngine = DEFAULT_DENOISE_ENGINE;
+	if (!settings.avdParams) settings.avdParams = JSON.parse(JSON.stringify(DEFAULT_AVD_PARAMS));
+	if (!settings.avdDevice) settings.avdDevice = "default";
 	if (settings.gpuDevice === undefined || settings.gpuDevice === null) {
 		settings.gpuDevice = settings.denoiseBackend === "vulkan" ? "0" : "0.0";
 	}
@@ -126,6 +168,40 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	});
 	await refreshDevicePicker(settings.denoiseBackend);
 
+	// The denoiser itself is picked in the main settings. Here every denoiser's settings are editable,
+	// with the selected one's card marked.
+	const isAvd = settings.denoiseEngine !== "nlmeans";
+	byId("advanced-nlmeans-in-use").style.display = isAvd ? "none" : "";
+	byId("advanced-avd-in-use").style.display = isAvd ? "" : "none";
+
+	renderRadioPills(byId("advanced-avd-preset"), AVD_PRESETS, settings.avdParams.preset, (v) => (activeSettings.avdParams.preset = v));
+
+	const avdDeviceIds = (await fetchAvdDevices()).map((d) => d.id);
+	const avdDeviceEl = byId("advanced-avd-device");
+	const avdDeviceHelp = byId("advanced-avd-device-help");
+	if (avdDeviceIds.length === 0) {
+		avdDeviceEl.innerHTML = "";
+		avdDeviceHelp.textContent = "av-denoise found no usable GPU. It has no CPU fallback, so jobs using these denoisers will fail.";
+	} else {
+		if (!avdDeviceIds.includes(settings.avdDevice)) settings.avdDevice = avdDeviceIds[0]!;
+		renderRadioPills(avdDeviceEl, avdDeviceIds, settings.avdDevice, (v) => (activeSettings.avdDevice = v));
+		avdDeviceHelp.textContent = "default lets av-denoise pick. There is no CPU fallback: the job fails if the device cannot be used.";
+	}
+
+	// Plain NLMeans needs its strength set by hand for each level.
+	byId("advanced-avd-strengths-help-avd-nlmeans").textContent = AVD_STRENGTH_HELP["avd-nlmeans"];
+	renderAutoThresholds(byId("advanced-avd-strengths-avd-nlmeans"), settings.avdParams.nlmeansStrength, (v) => (activeSettings.avdParams.nlmeansStrength = v), {
+		min: 0.1,
+		max: 10,
+		step: 0.05,
+	});
+
+	// The other two set their own strength per scene, so they take one scale for every level.
+	for (const engine of ["avd-nlmeans-hq", "avd-nl4d"] as const) {
+		byId(`advanced-avd-strengths-help-${engine}`).textContent = AVD_STRENGTH_HELP[engine];
+		renderScaleInput(byId(`advanced-avd-strengths-${engine}`), settings.avdParams.scales[engine], (v) => (activeSettings.avdParams.scales[engine] = v));
+	}
+
 	const cep = byId<HTMLTextAreaElement>("advanced-custom-encoder-params");
 	const s = getCurrentSettings();
 	if (s) {
@@ -149,7 +225,10 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 		const metric = settings!.autoDenoiseMetric;
 		byId("advanced-auto-denoise-metric-help").textContent = METRIC_HELP[metric];
 		byId("advanced-auto-thresholds-label").textContent = metric === "bitrate" ? "Auto Denoise Thresholds (x median bitrate)" : "Auto Denoise Thresholds (0-1)";
-		byId("advanced-auto-thresholds-hint").textContent = METRIC_HELP[metric];
+		byId("advanced-auto-thresholds-hint").textContent =
+			metric === "bitrate"
+				? "A scene whose bitrate reaches a multiple of the file's median gets that level. Scenes below light are not denoised."
+				: "A scene whose peak noise reading reaches a value gets that level. Scenes below light are not denoised.";
 		const thresholds = metric === "bitrate" ? settings!.autoDenoiseBitrateThresholds : settings!.autoDenoiseThresholds;
 		renderAutoThresholds(
 			byId("advanced-auto-thresholds"),
@@ -179,6 +258,10 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 
 export function closeAdvancedModal() {
 	byId("advanced-modal").style.display = "none";
+	// The engine or its expert scales may have changed, which decides whether the levels differ.
+	const target = appState.currentAdvancedTarget;
+	const edited = target === "default" ? window._tempDefaults : window._tempJobSettings;
+	if (target && edited) updateDenoiseLevelHint(target, edited);
 	appState.currentAdvancedTarget = null;
 }
 

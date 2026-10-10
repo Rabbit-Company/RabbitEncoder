@@ -8,7 +8,11 @@ import {
 	DEFAULT_AUTO_THRESHOLDS,
 	DEFAULT_BITRATE_THRESHOLDS,
 	DEFAULT_GRADFUN_PARAMS,
+	DEFAULT_AVD_PARAMS,
 	DEFAULT_NLMEANS_PARAMS,
+	DEFAULT_DENOISE_ENGINE,
+	DENOISE_ENGINES,
+	DENOISE_ENGINE_HELP,
 	DENOISE_LEVELS,
 	PIPELINE_PRESETS,
 	PIPELINE_PRESET_HELP,
@@ -98,6 +102,9 @@ export function cloneSettingsForEditing(base: JobSettings, audioBitratesFallback
 		autoDenoiseMetric: base.autoDenoiseMetric || "noise",
 		autoDenoiseThresholds: { ...(base.autoDenoiseThresholds || DEFAULT_AUTO_THRESHOLDS) },
 		autoDenoiseBitrateThresholds: { ...(base.autoDenoiseBitrateThresholds || DEFAULT_BITRATE_THRESHOLDS) },
+		denoiseEngine: base.denoiseEngine || DEFAULT_DENOISE_ENGINE,
+		avdParams: JSON.parse(JSON.stringify(base.avdParams || DEFAULT_AVD_PARAMS)),
+		avdDevice: base.avdDevice || "default",
 		nlmeansParams: base.nlmeansParams ? JSON.parse(JSON.stringify(base.nlmeansParams)) : JSON.parse(JSON.stringify(DEFAULT_NLMEANS_PARAMS)),
 		gradfunParams: base.gradfunParams ? JSON.parse(JSON.stringify(base.gradfunParams)) : JSON.parse(JSON.stringify(DEFAULT_GRADFUN_PARAMS)),
 		assRestyleTargets: Array.isArray(base.assRestyleTargets) ? [...base.assRestyleTargets] : ["full", "honorifics", "forced", "sdh", "commentary"],
@@ -173,6 +180,21 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 }
 
 /**
+ * Note under the Denoise level pills for the self-tuning av-denoise engines.
+ * NLMeans-HQ and NL4D set their own strength, so the level does not change how hard they denoise.
+ */
+export function updateDenoiseLevelHint(prefix: SettingsFormPrefix, settings: JobSettings): void {
+	const hint = byId(`${prefix}-denoise-hint`);
+	const engine = settings.denoiseEngine || DEFAULT_DENOISE_ENGINE;
+	const selfTuning = engine === "avd-nlmeans-hq" || engine === "avd-nl4d";
+
+	hint.style.display = selfTuning ? "" : "none";
+	if (!selfTuning) return;
+	const name = engine === "avd-nl4d" ? "AVD NL4D" : "AVD NLMeans-HQ";
+	hint.textContent = `${name} sets its own strength, so light, medium and heavy denoise identically. With auto, every scene at or above the light threshold is denoised.`;
+}
+
+/**
  * Render every control in a settings modal body. The default-settings and
  * job-settings modals share an identical form, differing only by element-id
  * prefix ("default-" vs "job-") and which temp object they mutate — both of
@@ -189,6 +211,15 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 	wireEncoderControls(prefix, settings);
 
 	renderRadioPills(el("denoise"), DENOISE_LEVELS, settings.denoise || "off", (v) => (settings.denoise = v));
+	updateDenoiseLevelHint(prefix, settings);
+
+	const engineHelp = el("denoise-engine-help");
+	engineHelp.textContent = DENOISE_ENGINE_HELP[settings.denoiseEngine || DEFAULT_DENOISE_ENGINE];
+	renderRadioPills(el("denoise-engine"), DENOISE_ENGINES, settings.denoiseEngine || DEFAULT_DENOISE_ENGINE, (v) => {
+		settings.denoiseEngine = v;
+		engineHelp.textContent = DENOISE_ENGINE_HELP[v];
+		updateDenoiseLevelHint(prefix, settings);
+	});
 	renderRadioPills(el("deband"), DEBAND_LEVELS, settings.deband || "off", (v) => (settings.deband = v));
 
 	const presetValue = inferPreset(settings);

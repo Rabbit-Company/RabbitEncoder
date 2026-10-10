@@ -8,9 +8,13 @@ import type {
 	GradfunParams,
 	GradfunLevelParams,
 	CropMode,
+	DenoiseEngine,
+	AvdEngine,
+	AvdParams,
 } from "../core/types";
 import { Logger } from "../core/logger";
-import { buildAutoDenoiseFilter, type DenoisePlan } from "./auto-denoise";
+import { buildAutoDenoiseFilter, describePlanLevels, type DenoisePlan, type DenoiseRange } from "./auto-denoise";
+import { avdEngineLabel, isAvdEngine } from "./avd";
 import { run } from "../core/process";
 
 /** Default nlmeans parameters per level. Used when env vars / settings don't override. */
@@ -149,6 +153,18 @@ export interface PrepareFilterConfig {
 		backend: GpuBackend;
 		gpuDevice: string;
 		nlmeansParams: NlmeansLevelParams;
+	};
+	/**
+	 * When set, the encoder runs av-denoise after the filter pass: the whole
+	 * video at `level`, or per-range via runSegmentedAutoDenoiseAvd when `plan` is set.
+	 */
+	deferredAvd?: {
+		engine: AvdEngine;
+		params: AvdParams;
+		device: string;
+		level?: DenoiseRange["level"];
+		plan?: DenoisePlan;
+		label: string;
 	};
 }
 
@@ -486,6 +502,9 @@ export function buildCropFilter(rect: CropRect): string {
  * config with deferredPlan set, this function leaves the denoise out of the
  * filter graph and surfaces deferredAutoDenoise on the returned config; the
  * encoder then runs runSegmentedAutoDenoiseGpu after the filter pass.
+ *
+ * The av-denoise engines are deferred the same way (deferredAvd), for both
+ * fixed levels and auto plans.
  */
 export interface PrepareFilterInput {
 	inputPath: string;
@@ -495,7 +514,10 @@ export interface PrepareFilterInput {
 	sourceHeight: number;
 	sourceWidth: number;
 	denoise: DenoiseLevel;
+	denoiseEngine: DenoiseEngine;
 	denoiseBackend: DenoiseBackend;
+	avdParams: AvdParams;
+	avdDevice: string;
 	deband: DebandLevel;
 	gpuDevice: string;
 	nlmeansParams: NlmeansLevelParams;
@@ -512,7 +534,10 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 		sourceHeight,
 		sourceWidth,
 		denoise,
+		denoiseEngine,
 		denoiseBackend,
+		avdParams,
+		avdDevice,
 		deband,
 		gpuDevice,
 		nlmeansParams,
@@ -543,8 +568,20 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 	let denoisePreInputArgs: string[] = [];
 	let denoiseLabel: string | null = null;
 	let deferredAutoDenoise: PrepareFilterConfig["deferredAutoDenoise"] = undefined;
+	let deferredAvd: PrepareFilterConfig["deferredAvd"] = undefined;
 
-	if (denoise === "auto") {
+	if (isAvdEngine(denoiseEngine)) {
+		// av-denoise is a separate program, so it always runs as its own pass after the -vf graph.
+		const name = avdEngineLabel(denoiseEngine);
+		if (denoise === "auto") {
+			if (autoPlan && autoPlan.length > 0) {
+				const label = `Auto denoise (${describePlanLevels(autoPlan, totalDuration).join(" + ")}, ${name})`;
+				deferredAvd = { engine: denoiseEngine, params: avdParams, device: avdDevice, plan: autoPlan, label };
+			}
+		} else if (denoise !== "off") {
+			deferredAvd = { engine: denoiseEngine, params: avdParams, device: avdDevice, level: denoise, label: `Denoising (${denoise}, ${name})` };
+		}
+	} else if (denoise === "auto") {
 		if (autoPlan && autoPlan.length > 0) {
 			const auto = await buildAutoDenoiseFilter(autoPlan, denoiseBackend, gpuDevice, nlmeansParams, totalDuration);
 			if (auto) {
@@ -609,7 +646,7 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 	}
 
 	// Return only if something changed
-	if (parts.length === 0 && !deferredAutoDenoise) return null;
+	if (parts.length === 0 && !deferredAutoDenoise && !deferredAvd) return null;
 
 	return {
 		filter: parts.join(","),
@@ -617,5 +654,6 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 		label: labelParts.join(" + "),
 		steps,
 		deferredAutoDenoise,
+		deferredAvd,
 	};
 }

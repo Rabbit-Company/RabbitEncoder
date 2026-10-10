@@ -308,7 +308,7 @@ async function probeSourceColor(inputPath: string): Promise<SourceColorTags> {
 			"-select_streams",
 			"v:0",
 			"-show_entries",
-			"stream=pix_fmt,color_range,color_primaries,color_trc,color_space",
+			"stream=pix_fmt,color_range,color_primaries,color_transfer,color_space",
 			"-of",
 			"json",
 			inputPath,
@@ -326,7 +326,7 @@ async function probeSourceColor(inputPath: string): Promise<SourceColorTags> {
 	const clean = (v: unknown): string | undefined => {
 		if (typeof v !== "string") return undefined;
 		const t = v.trim();
-		if (!t || t === "unknown" || t === "N/A") return undefined;
+		if (!t || t === "unknown" || t === "reserved" || t === "N/A") return undefined;
 		return t;
 	};
 
@@ -334,18 +334,26 @@ async function probeSourceColor(inputPath: string): Promise<SourceColorTags> {
 		pixFmt: clean(s.pix_fmt) ?? "yuv420p",
 		colorRange: clean(s.color_range),
 		colorPrimaries: clean(s.color_primaries),
-		colorTrc: clean(s.color_trc),
+		colorTrc: clean(s.color_transfer),
 		colorSpace: clean(s.color_space),
 	};
 }
 
+/**
+ * Re-tag the y4m stream with the source's color metadata.
+ *
+ * This must be a setparams filter and not the -colorspace output option: y4m
+ * arrives untagged, so FFmpeg treats an output -colorspace as a conversion
+ * target and rewrites the chroma planes, shifting colors. setparams only
+ * relabels the frames.
+ */
 function buildColorPassthroughArgs(c: SourceColorTags): string[] {
-	const args: string[] = [];
-	if (c.colorRange) args.push("-color_range", c.colorRange);
-	if (c.colorPrimaries) args.push("-color_primaries", c.colorPrimaries);
-	if (c.colorTrc) args.push("-color_trc", c.colorTrc);
-	if (c.colorSpace) args.push("-colorspace", c.colorSpace);
-	return args;
+	const params: string[] = [];
+	if (c.colorRange) params.push(`range=${c.colorRange}`);
+	if (c.colorPrimaries) params.push(`color_primaries=${c.colorPrimaries}`);
+	if (c.colorTrc) params.push(`color_trc=${c.colorTrc}`);
+	if (c.colorSpace) params.push(`colorspace=${c.colorSpace}`);
+	return params.length ? ["-vf", `setparams=${params.join(":")}`] : [];
 }
 
 /**

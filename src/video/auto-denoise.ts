@@ -34,7 +34,7 @@ export interface DenoiseRange {
 
 export const FFV1_ENCODE_ARGS = ["-c:v", "ffv1", "-level", "3", "-coder", "1", "-context", "1", "-g", "1", "-slices", "24", "-slicecrc", "1", "-threads", "0"];
 
-interface StreamFormat {
+export interface StreamFormat {
 	pixFmt: string;
 	colorRange?: string;
 	colorPrimaries?: string;
@@ -42,7 +42,7 @@ interface StreamFormat {
 	colorSpace?: string;
 }
 
-async function probeStreamFormat(inputPath: string): Promise<StreamFormat> {
+export async function probeStreamFormat(inputPath: string): Promise<StreamFormat> {
 	const proc = Bun.spawn(
 		[
 			"ffprobe",
@@ -51,7 +51,7 @@ async function probeStreamFormat(inputPath: string): Promise<StreamFormat> {
 			"-select_streams",
 			"v:0",
 			"-show_entries",
-			"stream=pix_fmt,color_range,color_primaries,color_trc,color_space",
+			"stream=pix_fmt,color_range,color_primaries,color_transfer,color_space",
 			"-of",
 			"json",
 			inputPath,
@@ -71,7 +71,7 @@ async function probeStreamFormat(inputPath: string): Promise<StreamFormat> {
 	const clean = (v: unknown): string | undefined => {
 		if (typeof v !== "string") return undefined;
 		const t = v.trim();
-		if (!t || t === "unknown" || t === "N/A") return undefined;
+		if (!t || t === "unknown" || t === "reserved" || t === "N/A") return undefined;
 		return t;
 	};
 
@@ -79,7 +79,7 @@ async function probeStreamFormat(inputPath: string): Promise<StreamFormat> {
 		pixFmt: clean(s.pix_fmt) ?? "yuv420p",
 		colorRange: clean(s.color_range),
 		colorPrimaries: clean(s.color_primaries),
-		colorTrc: clean(s.color_trc),
+		colorTrc: clean(s.color_transfer),
 		colorSpace: clean(s.color_space),
 	};
 }
@@ -447,23 +447,7 @@ export async function buildAutoDenoiseFilter(
 		else byLevel.set(r.level, [r]);
 	}
 
-	const counts: Record<DenoiseRange["level"], number> = { light: 0, medium: 0, heavy: 0 };
-	const seconds: Record<DenoiseRange["level"], number> = { light: 0, medium: 0, heavy: 0 };
-	for (const r of plan) {
-		counts[r.level]++;
-		seconds[r.level] += r.end - r.start;
-	}
-
-	const showPct = totalDuration !== undefined && totalDuration > 0;
-	const labelBits = (["light", "medium", "heavy"] as const)
-		.filter((l) => counts[l] > 0)
-		.map((l) => {
-			if (showPct) {
-				const pct = Math.round((100 * seconds[l]) / totalDuration!);
-				return `${counts[l]}×${l} (${pct}%)`;
-			}
-			return `${counts[l]}×${l}`;
-		});
+	const labelBits = describePlanLevels(plan, totalDuration);
 
 	const denoisedSeconds = plan.reduce((s, r) => s + (r.end - r.start), 0);
 
@@ -513,6 +497,27 @@ export async function buildAutoDenoiseFilter(
 		label: `Auto denoise (${labelBits.join(" + ")}, CPU)`,
 		denoisedSeconds,
 	};
+}
+
+/** Per-level summary of a plan, e.g. ["12×light (8%)", "3×medium (2%)"]. */
+export function describePlanLevels(plan: DenoisePlan, totalDuration?: number): string[] {
+	const counts: Record<DenoiseRange["level"], number> = { light: 0, medium: 0, heavy: 0 };
+	const seconds: Record<DenoiseRange["level"], number> = { light: 0, medium: 0, heavy: 0 };
+	for (const r of plan) {
+		counts[r.level]++;
+		seconds[r.level] += r.end - r.start;
+	}
+
+	const showPct = totalDuration !== undefined && totalDuration > 0;
+	return (["light", "medium", "heavy"] as const)
+		.filter((l) => counts[l] > 0)
+		.map((l) => {
+			if (showPct) {
+				const pct = Math.round((100 * seconds[l]) / totalDuration!);
+				return `${counts[l]}×${l} (${pct}%)`;
+			}
+			return `${counts[l]}×${l}`;
+		});
 }
 
 /**
@@ -567,6 +572,50 @@ export function buildSegmentList(plan: DenoisePlan, totalDuration: number): Deno
 	return out;
 }
 
+/** FFmpeg input-side cut for one segment: ["-ss", start, "-to", end]. */
+export function segmentCutArgs(seg: { start: number; end: number }): string[] {
+	return ["-ss", seg.start.toFixed(6), "-to", seg.end.toFixed(6)];
+}
+
+/**
+ * Move every segment boundary onto the timestamp of the frame shown at that time.
+ *
+ * FFmpeg's -ss starts with the frame being displayed at the cut, while -to
+ * stops before the first frame that starts at or after it. A cut that falls
+ * inside a frame (plan times are rounded, so this is common) therefore puts
+ * that frame in both neighbouring segments. With the cut exactly on a frame
+ * timestamp the two agree and each frame lands in exactly one segment.
+ */
+async function snapSegmentsToFrames(inputPath: string, segments: DenoiseSegment[], signal?: AbortSignal): Promise<DenoiseSegment[]> {
+	const res = await run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", inputPath], { signal });
+	const pts = res.stdout
+		.split("\n")
+		.map((l) => parseFloat(l))
+		.filter((n) => Number.isFinite(n))
+		.sort((a, b) => a - b);
+	if (res.code !== 0 || pts.length === 0) {
+		Logger.warn("[auto-denoise] Could not read frame timestamps; segment cuts are not frame-aligned");
+		return segments;
+	}
+
+	// Timestamp of the last frame starting at or before `t`.
+	const snap = (t: number): number => {
+		let lo = 0;
+		let hi = pts.length - 1;
+		while (lo < hi) {
+			const mid = (lo + hi + 1) >> 1;
+			if (pts[mid]! <= t + 0.0005) lo = mid;
+			else hi = mid - 1;
+		}
+		return pts[lo]!;
+	};
+
+	const last = segments.length - 1;
+	return segments
+		.map((seg, i) => ({ ...seg, start: i === 0 ? seg.start : snap(seg.start), end: i === last ? seg.end : snap(seg.end) }))
+		.filter((seg) => seg.end > seg.start);
+}
+
 async function encodeSegment(
 	inputPath: string,
 	outputPath: string,
@@ -583,7 +632,7 @@ async function encodeSegment(
 
 	if (seg.level === null) {
 		const res = await run(
-			["ffmpeg", "-y", "-ss", ss, "-to", to, "-i", inputPath, "-vf", `format=${pixFmt}`, ...FFV1_ENCODE_ARGS, ...colorArgs, "-an", "-sn", outputPath],
+			["ffmpeg", "-y", ...segmentCutArgs(seg), "-i", inputPath, "-vf", `format=${pixFmt}`, ...FFV1_ENCODE_ARGS, ...colorArgs, "-an", "-sn", outputPath],
 			{ signal },
 		);
 		if (res.code !== 0) {
@@ -603,10 +652,7 @@ async function encodeSegment(
 			deviceSpec,
 			"-filter_hw_device",
 			"gpu",
-			"-ss",
-			ss,
-			"-to",
-			to,
+			...segmentCutArgs(seg),
 			"-i",
 			inputPath,
 			"-vf",
@@ -622,6 +668,63 @@ async function encodeSegment(
 
 	if (res.code !== 0) {
 		throw new Error(`Denoise segment [${seg.level} ${ss} to ${to}] failed: ${res.stderr.slice(-500)}`);
+	}
+}
+
+/**
+ * Encode each segment independently with `encode` and concat the results via
+ * the concat demuxer. Every segment file must share one codec and pixel format.
+ */
+export async function runSegmentedPass(
+	inputPath: string,
+	outputPath: string,
+	segments: DenoiseSegment[],
+	tempDir: string,
+	encode: (seg: DenoiseSegment, segFile: string) => Promise<void>,
+	onProgress: (i: number, n: number, label: string) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	segments = await snapSegmentsToFrames(inputPath, segments, signal);
+	if (segments.length === 0) {
+		throw new Error("Segment list is empty. Nothing to denoise.");
+	}
+
+	const segDir = join(tempDir, "denoise_segments");
+	mkdirSync(segDir, { recursive: true });
+
+	const segFiles: string[] = [];
+	const listPath = join(segDir, "concat.txt");
+
+	try {
+		for (let i = 0; i < segments.length; i++) {
+			if (signal?.aborted) throw new CancelledError();
+			const seg = segments[i]!;
+			const segFile = join(segDir, `seg_${String(i).padStart(5, "0")}.mkv`);
+			const lvl = seg.level ?? "passthrough";
+			const label = `${lvl} ${seg.start.toFixed(1)} to ${seg.end.toFixed(1)}s`;
+
+			onProgress(i, segments.length, label);
+			Logger.debug(`[auto-denoise] Segment ${i + 1}/${segments.length}: ${label}`);
+
+			await encode(seg, segFile);
+			segFiles.push(segFile);
+		}
+
+		const list = segFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n") + "\n";
+		writeFileSync(listPath, list);
+
+		if (signal?.aborted) throw new CancelledError();
+
+		const res = await run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-an", "-sn", outputPath], { signal });
+		if (res.code !== 0) {
+			throw new Error(`Concat failed: ${res.stderr.slice(-500)}`);
+		}
+
+		onProgress(segments.length, segments.length, "Done");
+	} finally {
+		try {
+			rmSync(segDir, { recursive: true, force: true });
+		} catch {}
 	}
 }
 
@@ -650,11 +753,6 @@ export async function runSegmentedAutoDenoiseGpu(
 		throw new Error(`runSegmentedAutoDenoiseGpu requires a resolved backend (opencl|vulkan), got "auto"`);
 	}
 
-	const segments = buildSegmentList(plan, totalDuration);
-	if (segments.length === 0) {
-		throw new Error("Segment list is empty. Nothing to denoise.");
-	}
-
 	const sourceFmt = await probeStreamFormat(inputPath);
 	const effectivePixFmt = getEffectivePixFmt(sourceFmt.pixFmt);
 	const colorArgs = buildColorArgs(sourceFmt);
@@ -663,43 +761,15 @@ export async function runSegmentedAutoDenoiseGpu(
 		Logger.warn(`[auto-denoise] Source is ${sourceFmt.pixFmt}; converting to ${effectivePixFmt} for denoise. Output of the segmented stage will be 8-bit.`);
 	}
 
-	const segDir = join(tempDir, "denoise_segments");
-	mkdirSync(segDir, { recursive: true });
-
-	const segFiles: string[] = [];
-	const listPath = join(segDir, "concat.txt");
-
-	try {
-		for (let i = 0; i < segments.length; i++) {
-			if (signal?.aborted) throw new CancelledError();
-			const seg = segments[i]!;
-			const segFile = join(segDir, `seg_${String(i).padStart(5, "0")}.mkv`);
-			const lvl = seg.level ?? "passthrough";
-			const label = `${lvl} ${seg.start.toFixed(1)} to ${seg.end.toFixed(1)}s`;
-
-			onProgress(i, segments.length, label);
-			Logger.debug(`[auto-denoise] Segment ${i + 1}/${segments.length}: ${label}`);
-
-			await encodeSegment(inputPath, segFile, seg, backend, gpuDevice, effectivePixFmt, colorArgs, nlmeansParams, signal);
-			segFiles.push(segFile);
-		}
-
-		const list = segFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n") + "\n";
-		writeFileSync(listPath, list);
-
-		if (signal?.aborted) throw new CancelledError();
-
-		const res = await run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-an", "-sn", outputPath], { signal });
-		if (res.code !== 0) {
-			throw new Error(`Concat failed: ${res.stderr.slice(-500)}`);
-		}
-
-		onProgress(segments.length, segments.length, "Done");
-	} finally {
-		try {
-			rmSync(segDir, { recursive: true, force: true });
-		} catch {}
-	}
+	await runSegmentedPass(
+		inputPath,
+		outputPath,
+		buildSegmentList(plan, totalDuration),
+		tempDir,
+		(seg, segFile) => encodeSegment(inputPath, segFile, seg, backend, gpuDevice, effectivePixFmt, colorArgs, nlmeansParams, signal),
+		onProgress,
+		signal,
+	);
 }
 
 /**

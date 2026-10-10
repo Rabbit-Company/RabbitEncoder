@@ -171,32 +171,36 @@
 									<label>Encoder</label>
 									<div class="radio-group" id="default-encoder"></div>
 									<div class="setting-help" id="default-encoder-help"></div>
-								</div>
-								<div id="default-abe-controls">
-									<div class="setting-group">
-										<label>Video Quality</label>
-										<div class="radio-group" id="default-quality"></div>
-									</div>
-									<div class="setting-group">
-										<label>Encoder Speed</label>
-										<div class="radio-group" id="default-speed"></div>
-									</div>
-									<div class="setting-group">
-										<label>Boosting</label>
-										<div class="toggle-group" id="default-skip-boosting"></div>
-									</div>
-								</div>
-								<div id="default-manual-controls" style="display: none">
-									<div class="setting-group">
-										<label>CRF <span id="default-crf-val"></span></label>
-										<div class="slider-row">
-											<input type="range" id="default-crf-slider" min="1" max="70" step="1" />
-											<input type="number" id="default-crf-input" min="1" max="70" step="1" class="num-input" />
+
+									<!-- Settings of the selected encoder -->
+									<div class="nested-settings">
+										<div class="nested-settings-set" id="default-abe-controls">
+											<div class="setting-group">
+												<label>Video Quality</label>
+												<div class="radio-group" id="default-quality"></div>
+											</div>
+											<div class="setting-group">
+												<label>Encoder Speed</label>
+												<div class="radio-group" id="default-speed"></div>
+											</div>
+											<div class="setting-group">
+												<label>Boosting</label>
+												<div class="toggle-group" id="default-skip-boosting"></div>
+											</div>
 										</div>
-									</div>
-									<div class="setting-group">
-										<label>Preset <span id="default-preset-val"></span></label>
-										<input type="range" id="default-preset-slider" min="-1" max="13" step="1" />
+										<div class="nested-settings-set" id="default-manual-controls" style="display: none">
+											<div class="setting-group">
+												<label>CRF <span id="default-crf-val"></span></label>
+												<div class="slider-row">
+													<input type="range" id="default-crf-slider" min="1" max="70" step="1" />
+													<input type="number" id="default-crf-input" min="1" max="70" step="1" class="num-input" />
+												</div>
+											</div>
+											<div class="setting-group">
+												<label>Preset <span id="default-preset-val"></span></label>
+												<input type="range" id="default-preset-slider" min="-1" max="13" step="1" />
+											</div>
+										</div>
 									</div>
 								</div>
 								<div class="setting-group">
@@ -211,6 +215,15 @@
 								<div class="setting-group">
 									<label>Denoise</label>
 									<div class="radio-group" id="default-denoise"></div>
+									<div class="lang-filter-hint" id="default-denoise-hint" style="display: none"></div>
+
+									<div class="nested-settings">
+										<div class="setting-group">
+											<label>Denoiser</label>
+											<div class="radio-group" id="default-denoise-engine"></div>
+											<div class="lang-filter-hint" id="default-denoise-engine-help"></div>
+										</div>
+									</div>
 								</div>
 								<div class="setting-group">
 									<label>Deband</label>
@@ -441,32 +454,36 @@
 									<label>Encoder</label>
 									<div class="radio-group" id="job-encoder"></div>
 									<div class="setting-help" id="job-encoder-help"></div>
-								</div>
-								<div id="job-abe-controls">
-									<div class="setting-group">
-										<label>Video Quality</label>
-										<div class="radio-group" id="job-quality"></div>
-									</div>
-									<div class="setting-group">
-										<label>Encoder Speed</label>
-										<div class="radio-group" id="job-speed"></div>
-									</div>
-									<div class="setting-group">
-										<label>Boosting</label>
-										<div class="toggle-group" id="job-skip-boosting"></div>
-									</div>
-								</div>
-								<div id="job-manual-controls" style="display: none">
-									<div class="setting-group">
-										<label>CRF <span id="job-crf-val"></span></label>
-										<div class="slider-row">
-											<input type="range" id="job-crf-slider" min="1" max="70" step="1" />
-											<input type="number" id="job-crf-input" min="1" max="70" step="1" class="num-input" />
+
+									<!-- Settings of the selected encoder -->
+									<div class="nested-settings">
+										<div class="nested-settings-set" id="job-abe-controls">
+											<div class="setting-group">
+												<label>Video Quality</label>
+												<div class="radio-group" id="job-quality"></div>
+											</div>
+											<div class="setting-group">
+												<label>Encoder Speed</label>
+												<div class="radio-group" id="job-speed"></div>
+											</div>
+											<div class="setting-group">
+												<label>Boosting</label>
+												<div class="toggle-group" id="job-skip-boosting"></div>
+											</div>
 										</div>
-									</div>
-									<div class="setting-group">
-										<label>Preset <span id="job-preset-val"></span></label>
-										<input type="range" id="job-preset-slider" min="-1" max="13" step="1" />
+										<div class="nested-settings-set" id="job-manual-controls" style="display: none">
+											<div class="setting-group">
+												<label>CRF <span id="job-crf-val"></span></label>
+												<div class="slider-row">
+													<input type="range" id="job-crf-slider" min="1" max="70" step="1" />
+													<input type="number" id="job-crf-input" min="1" max="70" step="1" class="num-input" />
+												</div>
+											</div>
+											<div class="setting-group">
+												<label>Preset <span id="job-preset-val"></span></label>
+												<input type="range" id="job-preset-slider" min="-1" max="13" step="1" />
+											</div>
+										</div>
 									</div>
 								</div>
 								<div class="setting-group">
@@ -481,6 +498,15 @@
 								<div class="setting-group">
 									<label>Denoise</label>
 									<div class="radio-group" id="job-denoise"></div>
+									<div class="lang-filter-hint" id="job-denoise-hint" style="display: none"></div>
+
+									<div class="nested-settings">
+										<div class="setting-group">
+											<label>Denoiser</label>
+											<div class="radio-group" id="job-denoise-engine"></div>
+											<div class="lang-filter-hint" id="job-denoise-engine-help"></div>
+										</div>
+									</div>
 								</div>
 								<div class="setting-group">
 									<label>Deband</label>
@@ -683,43 +709,96 @@
 							<div class="setting-help">Raw CLI args appended verbatim to the encoder command.</div>
 						</div>
 
-						<!-- Denoise backend (cpu / auto / vulkan / opencl) -->
+						<!-- Settings of each denoiser. Which one runs is chosen in the main settings (Video handling -> Denoiser). -->
 						<div class="setting-group">
-							<label>Denoise Backend</label>
-							<div class="radio-group" id="advanced-denoise-backend"></div>
+							<label>av-denoise Settings <span class="denoiser-in-use" id="advanced-avd-in-use">selected denoiser</span></label>
 							<div class="lang-filter-hint">
-								<code>cpu</code> forces software nlmeans. <code>auto</code> probes Vulkan first, then OpenCL, falling back to CPU. <code>vulkan</code> /
-								<code>opencl</code> force that backend (still falls back to CPU if probe fails).
+								Used when the denoiser is <code>avd-nl4d</code>, <code>avd-nlmeans-hq</code> or <code>avd-nlmeans</code>. These run on the GPU only.
+							</div>
+
+							<div class="nested-settings">
+								<div class="setting-group">
+									<label>GPU Device</label>
+									<div class="radio-group" id="advanced-avd-device"></div>
+									<div class="lang-filter-hint" id="advanced-avd-device-help"></div>
+								</div>
+								<div class="setting-group">
+									<label>Speed Preset</label>
+									<div class="radio-group" id="advanced-avd-preset"></div>
+									<div class="lang-filter-hint">
+										Quality versus speed, mainly how many neighbouring frames are searched. Applies to <code>avd-nlmeans</code> and <code>avd-nlmeans-hq</code>.
+										<code>avd-nl4d</code> always runs at its default.
+									</div>
+								</div>
+								<details class="settings-subsection" id="advanced-avd-strengths-details-avd-nl4d">
+									<summary>avd-nl4d: expert strength scale</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-avd-strengths-avd-nl4d"></div>
+										<div class="lang-filter-hint" id="advanced-avd-strengths-help-avd-nl4d"></div>
+									</div>
+								</details>
+								<details class="settings-subsection" id="advanced-avd-strengths-details-avd-nlmeans-hq">
+									<summary>avd-nlmeans-hq: expert strength scale</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-avd-strengths-avd-nlmeans-hq"></div>
+										<div class="lang-filter-hint" id="advanced-avd-strengths-help-avd-nlmeans-hq"></div>
+									</div>
+								</details>
+								<details class="settings-subsection" id="advanced-avd-strengths-details-avd-nlmeans" open>
+									<summary>avd-nlmeans: strength per level</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-avd-strengths-avd-nlmeans"></div>
+										<div class="lang-filter-hint" id="advanced-avd-strengths-help-avd-nlmeans"></div>
+									</div>
+								</details>
 							</div>
 						</div>
 
-						<!-- GPU device picker (hidden when backend === "cpu") -->
-						<div class="setting-group" id="advanced-gpu-device-group">
-							<label>GPU Device</label>
-							<div class="radio-group radio-group-stacked" id="advanced-gpu-device"></div>
+						<div class="setting-group">
+							<label>FFmpeg NLMeans Settings <span class="denoiser-in-use" id="advanced-nlmeans-in-use">selected denoiser</span></label>
+							<div class="lang-filter-hint">Used when the denoiser is <code>nlmeans</code>.</div>
+
+							<div class="nested-settings">
+								<!-- Denoise backend (cpu / auto / vulkan / opencl) -->
+								<div class="setting-group">
+									<label>Backend</label>
+									<div class="radio-group" id="advanced-denoise-backend"></div>
+									<div class="lang-filter-hint">
+										<code>cpu</code> forces software nlmeans. <code>auto</code> probes Vulkan first, then OpenCL, falling back to CPU. <code>vulkan</code> /
+										<code>opencl</code> force that backend (still falls back to CPU if probe fails).
+									</div>
+								</div>
+
+								<!-- GPU device picker (hidden when backend === "cpu") -->
+								<div class="setting-group" id="advanced-gpu-device-group">
+									<label>GPU Device</label>
+									<div class="radio-group radio-group-stacked" id="advanced-gpu-device"></div>
+								</div>
+
+								<!-- nlmeans per-level params -->
+								<div class="setting-group">
+									<label>Parameters per Level</label>
+									<div id="advanced-nlmeans-params"></div>
+									<div class="lang-filter-hint">
+										<code>s</code> = strength [1.0 to 30.0], <code>p</code> = patch size (odd) [1 to 99], <code>r</code> = research size (odd) [1 to 99]. Larger
+										values denoise more aggressively but cost more time.
+									</div>
+								</div>
+							</div>
 						</div>
 
-						<!-- Auto-denoise metric -->
+						<!-- Auto-denoise metric, with the thresholds for the selected metric nested inside -->
 						<div class="setting-group">
 							<label>Auto Denoise Metric</label>
 							<div class="radio-group" id="advanced-auto-denoise-metric"></div>
 							<div class="lang-filter-hint" id="advanced-auto-denoise-metric-help"></div>
-						</div>
 
-						<!-- Auto-denoise thresholds -->
-						<div class="setting-group">
-							<label id="advanced-auto-thresholds-label">Auto Denoise Thresholds</label>
-							<div id="advanced-auto-thresholds"></div>
-							<div class="lang-filter-hint" id="advanced-auto-thresholds-hint"></div>
-						</div>
-
-						<!-- nlmeans per-level params -->
-						<div class="setting-group">
-							<label>NLMeans Parameters</label>
-							<div id="advanced-nlmeans-params"></div>
-							<div class="lang-filter-hint">
-								<code>s</code> = strength [1.0 to 30.0], <code>p</code> = patch size (odd) [1 to 99], <code>r</code> = research size (odd) [1 to 99]. Larger
-								values denoise more aggressively but cost more time.
+							<div class="nested-settings">
+								<div class="setting-group">
+									<label id="advanced-auto-thresholds-label">Auto Denoise Thresholds</label>
+									<div id="advanced-auto-thresholds"></div>
+									<div class="lang-filter-hint" id="advanced-auto-thresholds-hint"></div>
+								</div>
 							</div>
 						</div>
 
@@ -780,8 +859,10 @@
 					</div>
 					<div class="modal-body">
 						<p class="benchmark-intro">
-							Measures CPU vs GPU <code>nlmeans</code> performance at all three intensity levels using a 1920x1080 / 24 fps synthetic source.
+							Measures denoise speed at all three intensity levels using a 1920x1080 / 24 fps synthetic source. Pick the engines to compare.
 						</p>
+
+						<div class="radio-group" id="benchmark-modes"></div>
 
 						<div class="benchmark-hardware" id="benchmark-hardware">
 							<div class="benchmark-hardware-row">

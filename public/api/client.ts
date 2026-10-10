@@ -17,7 +17,7 @@ import type {
 	VsFilterEntry,
 	VsPresetManifest,
 } from "../types";
-import type { BenchmarkState, FetchOptions, GpuDevice, LibraryEntry, SystemStats } from "../ui/models";
+import type { AvdDevice, BenchmarkMode, BenchmarkState, FetchOptions, GpuDevice, LibraryEntry, SystemStats } from "../ui/models";
 import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
 import { buttonById, byId, inputById } from "../shared/dom";
@@ -403,13 +403,29 @@ export async function fetchSystemStats(): Promise<SystemStats> {
 	return res.json();
 }
 
+export async function fetchAvdDevices(): Promise<AvdDevice[]> {
+	if (appState.avdDevices !== null) return appState.avdDevices;
+	try {
+		const res = await authFetch(`${API}/api/avd-devices`);
+		const data = await res.json();
+		appState.avdDevices = data.devices || [];
+	} catch {
+		appState.avdDevices = [];
+	}
+	return appState.avdDevices ?? [];
+}
+
 export async function fetchBenchmark(): Promise<BenchmarkState> {
 	const res = await authFetch(`${API}/api/benchmark`);
 	return res.json();
 }
 
-export async function startBenchmarkRun() {
-	const res = await authFetch(`${API}/api/benchmark`, { method: "POST" });
+export async function startBenchmarkRun(modes: BenchmarkMode[]) {
+	const res = await authFetch(`${API}/api/benchmark`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ modes }),
+	});
 	return res.json();
 }
 

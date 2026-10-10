@@ -1,5 +1,6 @@
 import { DEFAULT_AUTO_THRESHOLDS, DEFAULT_BITRATE_THRESHOLDS } from "../video/auto-denoise";
 import { DEFAULT_NLMEANS_PARAMS, DEFAULT_GRADFUN_PARAMS } from "../video/filters";
+import { DEFAULT_AVD_DEVICE, DEFAULT_AVD_PARAMS } from "../video/avd";
 import { Logger } from "./logger";
 import { run } from "./process";
 import type { AppConfig, AudioChannelBitrates, JobSettings } from "./types";
@@ -39,6 +40,9 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	autoDenoiseBitrateThresholds: DEFAULT_BITRATE_THRESHOLDS,
 	nlmeansParams: DEFAULT_NLMEANS_PARAMS,
 	gradfunParams: DEFAULT_GRADFUN_PARAMS,
+	denoiseEngine: "avd-nl4d",
+	avdParams: DEFAULT_AVD_PARAMS,
+	avdDevice: DEFAULT_AVD_DEVICE,
 	denoiseBackend: "auto",
 	gpuDevice: "0.0",
 	deband: "off",

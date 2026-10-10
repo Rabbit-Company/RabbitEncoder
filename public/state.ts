@@ -1,5 +1,5 @@
 import type { JobSettings, VsPresetManifest } from "./types";
-import type { AdvancedTarget, GpuDevice, LibraryDir, LibraryNode, PreviewSampleCard } from "./ui/models";
+import type { AdvancedTarget, AvdDevice, GpuDevice, LibraryDir, LibraryNode, PreviewSampleCard } from "./ui/models";
 
 export const appState = {
 	queuePaused: false,
@@ -27,5 +27,6 @@ export const appState = {
 
 	openClDevices: null as GpuDevice[] | null,
 	vulkanDevices: null as GpuDevice[] | null,
+	avdDevices: null as AvdDevice[] | null,
 	lastJobsJson: "",
 };

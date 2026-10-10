@@ -25,6 +25,7 @@ import {
 	type PreviewEncodeOptions,
 } from "../pipeline/preview-encoder";
 import { normalizeVsFilterChain } from "../video/vs-filters";
+import { cloneAvdParams, isValidAvdDeviceSpec, normalizeAvdParams } from "../video/avd";
 import { getDefaultJobSettings } from "../core/config";
 import { isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
@@ -125,6 +126,9 @@ function loadQueue(): void {
 				...appConfig.defaults,
 				...restoredSettings,
 				audioBitrates: { ...appConfig.defaults.audioBitrates, ...restoredBitrates },
+				// Jobs queued before the denoiser was selectable ran FFmpeg nlmeans; keep them on it.
+				denoiseEngine: restoredSettings.denoiseEngine ?? "nlmeans",
+				avdParams: normalizeAvdParams(restoredSettings.avdParams, appConfig.defaults.avdParams),
 			};
 
 			jobs.set(raw.id, raw as Job);
@@ -161,6 +165,7 @@ function loadSettings(): void {
 			...appConfig.defaults,
 			...raw,
 			audioBitrates: { ...appConfig.defaults.audioBitrates, ...restoredBitrates },
+			avdParams: normalizeAvdParams(raw.avdParams, appConfig.defaults.avdParams),
 		};
 		Logger.info("[store] Restored defaults from settings.json");
 	} catch (err: any) {
@@ -215,6 +220,9 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	cropLimit: numIn(0, 1),
 	denoise: enumOf(["off", "auto", "light", "medium", "heavy"]),
 	deband: enumOf(["off", "light", "medium", "heavy"]),
+	denoiseEngine: enumOf(["nlmeans", "avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"]),
+	avdParams: (v, cur) => (v && typeof v === "object" ? normalizeAvdParams(v as any, cur) : undefined),
+	avdDevice: (v) => (typeof v === "string" && isValidAvdDeviceSpec(v) ? v : undefined),
 	denoiseBackend: enumOf(["cpu", "auto", "vulkan", "opencl"]),
 	gpuDevice: str(64),
 
@@ -395,6 +403,7 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 				medium: { ...appConfig.defaults.nlmeansParams.medium },
 				heavy: { ...appConfig.defaults.nlmeansParams.heavy },
 			},
+			avdParams: cloneAvdParams(appConfig.defaults.avdParams),
 			gradfunParams: {
 				light: { ...appConfig.defaults.gradfunParams.light },
 				medium: { ...appConfig.defaults.gradfunParams.medium },

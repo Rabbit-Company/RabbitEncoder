@@ -4,7 +4,8 @@ import { getAllJobs } from "../queue/store";
 import { getCpuName } from "../core/system";
 import { listOpenClDevices, type OpenClDevice } from "./opencl";
 import { listVulkanDevices, type VulkanDevice } from "./vulkan";
-import type { DenoiseBackend } from "../core/types";
+import { AVD_ENGINES, avdEngineLabel, benchmarkAvd, isAvdDeviceAvailable, isAvdEngine } from "./avd";
+import type { AvdEngine, DenoiseBackend } from "../core/types";
 
 const DURATION = 10;
 const SIZE = "1920x1080";
@@ -13,12 +14,16 @@ const TOTAL_FRAMES = DURATION * RATE;
 const VULKAN_T = "8";
 
 export type BenchmarkLevel = "light" | "medium" | "heavy";
-export type BenchmarkMode = "cpu" | "opencl" | "vulkan";
+export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | AvdEngine;
+export const BENCHMARK_MODES: readonly BenchmarkMode[] = ["cpu", "opencl", "vulkan", ...AVD_ENGINES];
 export type BenchmarkStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 
 export interface StartBenchmarkOptions {
 	gpuDevice: string;
 	denoiseBackend: DenoiseBackend;
+	avdDevice: string;
+	/** Which engines to benchmark. Omitted or empty means every engine available on this machine. */
+	modes?: BenchmarkMode[];
 }
 
 export interface BenchmarkResult {
@@ -47,6 +52,11 @@ export interface BenchmarkState {
 	results: BenchmarkResult[];
 	openclAvailable: boolean | null;
 	vulkanAvailable: boolean | null;
+	/** Whether av-denoise can see the configured device. */
+	avdAvailable: boolean | null;
+	avdDevice: string | null;
+	/** Engines included in the current / last run. */
+	modes: BenchmarkMode[];
 	error: string | null;
 	cpuName: string | null;
 	gpuName: string | null;
@@ -75,6 +85,9 @@ function newIdleState(): BenchmarkState {
 		results: [],
 		openclAvailable: null,
 		vulkanAvailable: null,
+		avdAvailable: null,
+		avdDevice: null,
+		modes: [],
 		error: null,
 		cpuName: getCpuName(),
 		gpuName: null,
@@ -115,11 +128,13 @@ function pickGpuName(
 	return { gpuName, openclName, vulkanName };
 }
 
-export async function getBenchmarkState(currentGpuDevice: string, currentBackend: DenoiseBackend): Promise<BenchmarkState> {
+export async function getBenchmarkState(currentGpuDevice: string, currentBackend: DenoiseBackend, currentAvdDevice: string): Promise<BenchmarkState> {
 	if (state.status !== "running") {
 		state.cpuName = getCpuName();
 		state.gpuDevice = currentGpuDevice;
 		state.denoiseBackend = currentBackend;
+		state.avdDevice = currentAvdDevice;
+		state.avdAvailable = await isAvdDeviceAvailable(currentAvdDevice);
 
 		const [oclDevices, vkDevices] = await Promise.all([listOpenClDevices(), listVulkanDevices()]);
 		const names = pickGpuName(currentBackend, currentGpuDevice, oclDevices, vkDevices);
@@ -188,7 +203,7 @@ async function runFfmpeg(args: string[], signal: AbortSignal): Promise<{ code: n
 	return { code, stderr };
 }
 
-function buildArgs(mode: BenchmarkMode, level: BenchmarkLevel, gpuDevice: string): string[] {
+function buildArgs(mode: Exclude<BenchmarkMode, AvdEngine>, level: BenchmarkLevel, gpuDevice: string): string[] {
 	// Use the defaults so benchmark numbers are comparable across installations regardless of user-supplied param overrides.
 	const params = formatNlmeansParams(DEFAULT_NLMEANS_PARAMS[level]);
 	const common = ["ffmpeg", "-hide_banner", "-benchmark", "-v", "info"];
@@ -230,7 +245,28 @@ function buildArgs(mode: BenchmarkMode, level: BenchmarkLevel, gpuDevice: string
 	];
 }
 
-async function runSingle(mode: BenchmarkMode, level: BenchmarkLevel, gpuDevice: string, signal: AbortSignal): Promise<BenchmarkResult> {
+async function runSingleAvd(mode: AvdEngine, level: BenchmarkLevel, avdDevice: string, signal: AbortSignal): Promise<BenchmarkResult> {
+	const { seconds, error } = await benchmarkAvd(mode, level, avdDevice, { size: SIZE, rate: RATE, duration: DURATION }, signal);
+	const fps = seconds && seconds > 0 ? Math.round((TOTAL_FRAMES / seconds) * 100) / 100 : null;
+	return {
+		mode,
+		level,
+		fps,
+		ffmpegFps: null,
+		speed: fps !== null ? `${(fps / RATE).toFixed(2)}x` : null,
+		rtime: seconds,
+		utime: null,
+		stime: null,
+		error,
+	};
+}
+
+function modeLabel(mode: BenchmarkMode): string {
+	if (isAvdEngine(mode)) return `GPU ${avdEngineLabel(mode)}`;
+	return mode === "vulkan" ? "GPU nlmeans_vulkan" : mode === "opencl" ? "GPU nlmeans_opencl" : "CPU nlmeans";
+}
+
+async function runSingle(mode: Exclude<BenchmarkMode, AvdEngine>, level: BenchmarkLevel, gpuDevice: string, signal: AbortSignal): Promise<BenchmarkResult> {
 	const args = buildArgs(mode, level, gpuDevice);
 	const { code, stderr } = await runFfmpeg(args, signal);
 
@@ -311,16 +347,26 @@ async function runBenchmarkAsync(signal: AbortSignal, options: StartBenchmarkOpt
 	state.openclName = names.openclName;
 	state.vulkanName = names.vulkanName;
 
+	const requested = options.modes && options.modes.length > 0 ? BENCHMARK_MODES.filter((m) => options.modes!.includes(m)) : [...BENCHMARK_MODES];
+	const wantsAvd = requested.some(isAvdEngine);
+
 	state.currentLabel = "Probing GPU backends";
 	const oclDevice = oclDevices.find((d) => d.id === options.gpuDevice)?.id ?? oclDevices[0]?.id ?? defaultDeviceFor("opencl");
 	const vkDevice = vkDevices.find((d) => d.id === options.gpuDevice)?.id ?? vkDevices[0]?.id ?? defaultDeviceFor("vulkan");
 
-	const [oclOk, vkOk] = await Promise.all([isOpenClAvailable(oclDevice), isVulkanAvailable(vkDevice)]);
+	const [oclOk, vkOk, avdOk] = await Promise.all([
+		requested.includes("opencl") ? isOpenClAvailable(oclDevice) : Promise.resolve(null),
+		requested.includes("vulkan") ? isVulkanAvailable(vkDevice) : Promise.resolve(null),
+		wantsAvd ? isAvdDeviceAvailable(options.avdDevice) : Promise.resolve(null),
+	]);
 	state.openclAvailable = oclOk;
 	state.vulkanAvailable = vkOk;
-	state.gpuAvailable = oclOk || vkOk;
-	if (!oclOk) Logger.warn(`[benchmark] OpenCL not available on device ${oclDevice}`);
-	if (!vkOk) Logger.warn(`[benchmark] Vulkan not available on device ${vkDevice}`);
+	state.avdAvailable = avdOk;
+	state.avdDevice = options.avdDevice;
+	state.gpuAvailable = !!oclOk || !!vkOk || !!avdOk;
+	if (oclOk === false) Logger.warn(`[benchmark] OpenCL not available on device ${oclDevice}`);
+	if (vkOk === false) Logger.warn(`[benchmark] Vulkan not available on device ${vkDevice}`);
+	if (avdOk === false) Logger.warn(`[benchmark] av-denoise cannot see device ${options.avdDevice}`);
 
 	if (signal.aborted) {
 		state.status = "cancelled";
@@ -329,14 +375,12 @@ async function runBenchmarkAsync(signal: AbortSignal, options: StartBenchmarkOpt
 	}
 
 	const levels: BenchmarkLevel[] = ["light", "medium", "heavy"];
-	const modes: BenchmarkMode[] = ["cpu"];
-	if (oclOk) modes.push("opencl");
-	if (vkOk) modes.push("vulkan");
+	const modes = requested.filter((m) => (m === "cpu" ? true : m === "opencl" ? !!oclOk : m === "vulkan" ? !!vkOk : !!avdOk));
 
+	state.modes = modes;
 	state.totalSteps = levels.length * modes.length;
 
 	for (const mode of modes) {
-		const deviceForMode = mode === "vulkan" ? vkDevice : oclDevice;
 		for (const level of levels) {
 			if (signal.aborted) {
 				state.status = "cancelled";
@@ -345,11 +389,17 @@ async function runBenchmarkAsync(signal: AbortSignal, options: StartBenchmarkOpt
 			}
 
 			state.currentStep++;
-			const labelMode = mode === "vulkan" ? "GPU nlmeans_vulkan" : mode === "opencl" ? "GPU nlmeans_opencl" : "CPU nlmeans";
-			state.currentLabel = `${labelMode} - ${level}`;
+			state.currentLabel = `${modeLabel(mode)} - ${level}`;
 			Logger.info(`[benchmark] ${state.currentLabel}`);
 
-			const result = await runSingle(mode, level, deviceForMode, signal);
+			const result = isAvdEngine(mode)
+				? await runSingleAvd(mode, level, options.avdDevice, signal)
+				: await runSingle(mode, level, mode === "vulkan" ? vkDevice : oclDevice, signal);
+			if (signal.aborted) {
+				state.status = "cancelled";
+				state.completedAt = Date.now();
+				return;
+			}
 			state.results.push(result);
 
 			if (result.error) {

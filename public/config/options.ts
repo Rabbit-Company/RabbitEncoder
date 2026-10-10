@@ -3,9 +3,13 @@ import type {
 	AudioCodecPriority,
 	AudioEncodeMode,
 	AutoDenoiseMetric,
+	AvdEngine,
+	AvdParams,
+	AvdPreset,
 	CropMode,
 	DebandLevel,
 	DenoiseBackend,
+	DenoiseEngine,
 	DenoiseLevel,
 	EncoderId,
 	EncoderQuality,
@@ -48,6 +52,33 @@ export const PARAM_LEVELS = ["light", "medium", "heavy"] as const;
 export const CROP_OPTIONS: readonly CropMode[] = ["off", "auto"];
 
 export const DENOISE_BACKENDS: readonly DenoiseBackend[] = ["cpu", "auto", "vulkan", "opencl"];
+
+export const DEFAULT_DENOISE_ENGINE: DenoiseEngine = "avd-nl4d";
+/** Ordered from best to worst quality. */
+export const DENOISE_ENGINES: readonly DenoiseEngine[] = ["avd-nl4d", "avd-nlmeans-hq", "avd-nlmeans", "nlmeans"];
+export const AVD_ENGINES: readonly AvdEngine[] = ["avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
+export const AVD_PRESETS: readonly AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
+export const DEFAULT_AVD_PARAMS: AvdParams = {
+	preset: "base",
+	nlmeansStrength: { light: 1.0, medium: 1.5, heavy: 2.0 },
+	scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0 },
+};
+export const DENOISE_ENGINE_HELP: Record<DenoiseEngine, string> = {
+	nlmeans: "FFmpeg nlmeans. Runs on CPU, OpenCL or Vulkan.",
+	"avd-nlmeans": "av-denoise fast NLMeans. GPU only. Hand-set strength per level, only suited to light denoising.",
+	"avd-nlmeans-hq": "av-denoise NLMeans-HQ. GPU only. Measures the noise in each scene and sets its own strength, so light, medium and heavy denoise the same.",
+	"avd-nl4d":
+		"av-denoise NL4D. GPU only. Best noise removal and detail retention, and the slowest. Models the noise in each scene and sets its own strength, so light, medium and heavy denoise the same.",
+};
+/** What the strength number means for each av-denoise engine. */
+export const AVD_STRENGTH_HELP: Record<AvdEngine, string> = {
+	"avd-nlmeans":
+		"Filter strength, same scale as FFmpeg nlmeans. Move in steps of about 0.1. Auto denoise uses the value of the level it assigns to each scene.",
+	"avd-nlmeans-hq":
+		"Sigma scale: one multiplier on the noise level the engine measures itself, used at every denoise level. 1.0 trusts the measurement, which is almost always right. Change it only in steps of 0.1 and judge by eye.",
+	"avd-nl4d":
+		"Threshold scale: one multiplier on the engine's own noise model, used at every denoise level. 1.0 trusts it, which is almost always right. Higher removes more noise and more fine detail. Change it only in steps of 0.05 to 0.1.",
+};
 
 export const DEFAULT_NLMEANS_PARAMS = {
 	light: { s: 1.0, p: 3, r: 7 },

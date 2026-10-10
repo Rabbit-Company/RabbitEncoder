@@ -1,4 +1,4 @@
-import type { BenchmarkResult, BenchmarkState, SystemStats } from "../ui/models";
+import type { BenchmarkMode, BenchmarkResult, BenchmarkState, SystemStats } from "../ui/models";
 import { cancelBenchmarkRun, fetchBenchmark, fetchSystemStats, startBenchmarkRun } from "../api/client";
 import { PARAM_LEVELS } from "../config/options";
 import { escapeHtml } from "./job-render";
@@ -113,66 +113,121 @@ export function stopSystemPolling() {
 	appState.systemPollTimer = null;
 }
 
+const BENCHMARK_MODE_LABELS: Record<BenchmarkMode, string> = {
+	cpu: "CPU nlmeans",
+	opencl: "OpenCL nlmeans",
+	vulkan: "Vulkan nlmeans",
+	"avd-nlmeans": "AVD NLMeans",
+	"avd-nlmeans-hq": "AVD NLMeans-HQ",
+	"avd-nl4d": "AVD NL4D",
+};
+const BENCHMARK_MODES = Object.keys(BENCHMARK_MODE_LABELS) as BenchmarkMode[];
+const BENCHMARK_MODES_STORAGE_KEY = "benchmarkModes";
+
+function loadSelectedBenchmarkModes(): Set<BenchmarkMode> {
+	try {
+		const saved = JSON.parse(localStorage.getItem(BENCHMARK_MODES_STORAGE_KEY) || "null");
+		if (Array.isArray(saved)) {
+			const valid = BENCHMARK_MODES.filter((m) => saved.includes(m));
+			if (valid.length > 0) return new Set(valid);
+		}
+	} catch {}
+	return new Set(BENCHMARK_MODES);
+}
+
+const selectedBenchmarkModes = loadSelectedBenchmarkModes();
+
+/** Checkbox per engine. Engines this machine cannot run are still listed, the run just skips them. */
+export function renderBenchmarkModes(state: BenchmarkState): void {
+	const container = byId("benchmark-modes");
+	const running = state.status === "running";
+	container.innerHTML = "";
+
+	for (const mode of BENCHMARK_MODES) {
+		const unavailable = mode.startsWith("avd-") && state.avdAvailable === false;
+		const label = document.createElement("label");
+		label.className = "radio-pill";
+		if (unavailable) label.title = "av-denoise found no usable GPU on this machine";
+
+		const input = document.createElement("input");
+		input.type = "checkbox";
+		input.checked = selectedBenchmarkModes.has(mode) && !unavailable;
+		input.disabled = running || unavailable;
+		input.onchange = () => {
+			if (input.checked) selectedBenchmarkModes.add(mode);
+			else selectedBenchmarkModes.delete(mode);
+			try {
+				localStorage.setItem(BENCHMARK_MODES_STORAGE_KEY, JSON.stringify([...selectedBenchmarkModes]));
+			} catch {}
+		};
+
+		const text = document.createElement("span");
+		text.textContent = BENCHMARK_MODE_LABELS[mode];
+		label.appendChild(input);
+		label.appendChild(text);
+		container.appendChild(label);
+	}
+}
+
 export function renderBenchmarkResults(state: BenchmarkState): void {
 	const container = byId("benchmark-results");
 	const levels = PARAM_LEVELS;
-
-	const cpuMap = new Map<BenchmarkResult["level"], BenchmarkResult>();
-	const oclMap = new Map<BenchmarkResult["level"], BenchmarkResult>();
-	const vkMap = new Map<BenchmarkResult["level"], BenchmarkResult>();
-	for (const r of state.results) {
-		const target = r.mode === "vulkan" ? vkMap : r.mode === "opencl" ? oclMap : cpuMap;
-		target.set(r.level, r);
-	}
 
 	if (state.results.length === 0 && state.status !== "completed") {
 		container.style.display = "none";
 		return;
 	}
-	const showOcl = state.openclAvailable === true || oclMap.size > 0;
-	const showVk = state.vulkanAvailable === true || vkMap.size > 0;
 
-	const cell = (entry: BenchmarkResult | undefined, fps: number | null | undefined): string => {
-		if (!entry) return `<td class="numeric cell-empty">N/A</td>`;
-		if (entry.error) return `<td class="numeric cell-failed" title="${escapeHtml(entry.error)}">failed</td>`;
-		if (fps === null || fps === undefined) return `<td class="numeric cell-empty">N/A</td>`;
-		const speed = entry.speed ? ` <span class="cell-empty">(${escapeHtml(entry.speed)})</span>` : "";
-		return `<td class="numeric">${fps.toFixed(2)}${speed}</td>`;
+	const byMode = new Map<BenchmarkMode, Map<BenchmarkResult["level"], BenchmarkResult>>();
+	for (const r of state.results) {
+		if (!byMode.has(r.mode)) byMode.set(r.mode, new Map());
+		byMode.get(r.mode)!.set(r.level, r);
+	}
+	// One column per engine of this run, in the fixed display order.
+	const modes = BENCHMARK_MODES.filter((m) => byMode.has(m) || (state.modes ?? []).includes(m));
+	const others = modes.filter((m) => m !== "cpu");
+	const hasCpu = modes.includes("cpu");
+
+	const fpsOf = (mode: BenchmarkMode, level: BenchmarkResult["level"]): number | null => {
+		const r = byMode.get(mode)?.get(level);
+		return r && !r.error && r.fps != null ? r.fps : null;
 	};
 
-	let oclSum = 0,
-		oclCount = 0;
-	let vkSum = 0,
-		vkCount = 0;
+	const cell = (mode: BenchmarkMode, level: BenchmarkResult["level"]): string => {
+		const entry = byMode.get(mode)?.get(level);
+		if (!entry) return `<td class="numeric cell-empty">N/A</td>`;
+		if (entry.error) return `<td class="numeric cell-failed" title="${escapeHtml(entry.error)}">failed</td>`;
+		if (entry.fps == null) return `<td class="numeric cell-empty">N/A</td>`;
+		const speed = entry.speed ? ` <span class="cell-empty">(${escapeHtml(entry.speed)})</span>` : "";
+		return `<td class="numeric">${entry.fps.toFixed(2)}${speed}</td>`;
+	};
+
+	const speedupSum = new Map<BenchmarkMode, { sum: number; count: number }>();
 
 	const rows = levels
 		.map((level) => {
-			const cpu = cpuMap.get(level);
-			const ocl = oclMap.get(level);
-			const vk = vkMap.get(level);
-			const cpuFps = cpu && !cpu.error ? cpu.fps : null;
-			const oclFps = ocl && !ocl.error ? ocl.fps : null;
-			const vkFps = vk && !vk.error ? vk.fps : null;
-
-			const oclSpeedup = cpuFps && oclFps ? oclFps / cpuFps : null;
-			const vkSpeedup = cpuFps && vkFps ? vkFps / cpuFps : null;
-			if (oclSpeedup !== null) {
-				oclSum += oclSpeedup;
-				oclCount++;
-			}
-			if (vkSpeedup !== null) {
-				vkSum += vkSpeedup;
-				vkCount++;
+			const cpuFps = fpsOf("cpu", level);
+			let best: number | null = null;
+			for (const mode of others) {
+				const fps = fpsOf(mode, level);
+				if (!cpuFps || !fps) continue;
+				const speedup = fps / cpuFps;
+				const acc = speedupSum.get(mode) ?? { sum: 0, count: 0 };
+				acc.sum += speedup;
+				acc.count++;
+				speedupSum.set(mode, acc);
+				if (best === null || speedup > best) best = speedup;
 			}
 
-			const best = vkSpeedup !== null && (oclSpeedup === null || vkSpeedup > oclSpeedup) ? vkSpeedup : oclSpeedup;
-			const speedupCell = best !== null ? `<td class="numeric ${classifySpeedup(best)}">${best.toFixed(2)}x</td>` : `<td class="numeric cell-empty">N/A</td>`;
+			const speedupCell = !hasCpu
+				? ""
+				: best !== null
+					? `<td class="numeric ${classifySpeedup(best)}">${best.toFixed(2)}x</td>`
+					: `<td class="numeric cell-empty">N/A</td>`;
 
 			return `<tr>
 				<td class="level-cell">${level}</td>
-				${cell(cpu, cpuFps)}
-				${showOcl ? cell(ocl, oclFps) : ""}
-				${showVk ? cell(vk, vkFps) : ""}
+				${modes.map((m) => cell(m, level)).join("")}
 				${speedupCell}
 			</tr>`;
 		})
@@ -180,13 +235,9 @@ export function renderBenchmarkResults(state: BenchmarkState): void {
 
 	const headers = [
 		`<th>Level</th>`,
-		`<th class="numeric">CPU fps</th>`,
-		showOcl ? `<th class="numeric">OpenCL fps</th>` : "",
-		showVk ? `<th class="numeric">Vulkan fps</th>` : "",
-		`<th class="numeric">Best speedup</th>`,
-	]
-		.filter(Boolean)
-		.join("");
+		...modes.map((m) => `<th class="numeric">${escapeHtml(BENCHMARK_MODE_LABELS[m])} fps</th>`),
+		hasCpu ? `<th class="numeric">Best vs CPU</th>` : "",
+	].join("");
 
 	container.innerHTML = `<table>
 		<thead><tr>${headers}</tr></thead>
@@ -194,22 +245,19 @@ export function renderBenchmarkResults(state: BenchmarkState): void {
 	</table>`;
 
 	if (state.status === "completed") {
-		const oclAvg = oclCount > 0 ? oclSum / oclCount : null;
-		const vkAvg = vkCount > 0 ? vkSum / vkCount : null;
 		let recHtml = "";
+		const averages = others
+			.map((m) => ({ mode: m, acc: speedupSum.get(m) }))
+			.filter((x) => x.acc && x.acc.count > 0)
+			.map((x) => ({ mode: x.mode, avg: x.acc!.sum / x.acc!.count }));
 
-		if (state.openclAvailable === false && state.vulkanAvailable === false) {
+		if (averages.length > 0) {
+			const top = Math.max(...averages.map((a) => a.avg));
+			const cls = top >= 2 ? "good" : top >= 1.2 ? "meh" : "bad";
+			const parts = averages.map((a) => `${BENCHMARK_MODE_LABELS[a.mode]} ${a.avg.toFixed(1)}x`);
+			recHtml = `<div class="benchmark-recommendation ${cls}">Speed vs CPU nlmeans: ${escapeHtml(parts.join(", "))}. The engines differ in quality, so faster is not the same as better.</div>`;
+		} else if (hasCpu && others.length === 0 && state.openclAvailable === false && state.vulkanAvailable === false) {
 			recHtml = `<div class="benchmark-recommendation meh">No GPU backend available. Denoising will run on CPU.</div>`;
-		} else if (vkAvg !== null && oclAvg !== null) {
-			const winnerSpeed = Math.max(vkAvg, oclAvg);
-			const cls = winnerSpeed >= 2 ? "good" : winnerSpeed >= 1.2 ? "meh" : "bad";
-			recHtml = `<div class="benchmark-recommendation ${cls}">Vulkan ${vkAvg.toFixed(1)}x, OpenCL ${oclAvg.toFixed(1)}x vs CPU.</div>`;
-		} else if (vkAvg !== null) {
-			const cls = vkAvg >= 2 ? "good" : vkAvg >= 1.2 ? "meh" : "bad";
-			recHtml = `<div class="benchmark-recommendation ${cls}">Vulkan is ${vkAvg.toFixed(1)}x faster than CPU.</div>`;
-		} else if (oclAvg !== null) {
-			const cls = oclAvg >= 2 ? "good" : oclAvg >= 1.2 ? "meh" : "bad";
-			recHtml = `<div class="benchmark-recommendation ${cls}">OpenCL is ${oclAvg.toFixed(1)}x faster than CPU.</div>`;
 		}
 
 		container.insertAdjacentHTML("beforeend", recHtml);
@@ -296,6 +344,7 @@ export function renderBenchmark(state: BenchmarkState): void {
 		noteEl.textContent = "";
 	}
 
+	renderBenchmarkModes(state);
 	renderBenchmarkResults(state);
 }
 
@@ -348,8 +397,14 @@ export async function handleBenchmarkRun() {
 	runBtn.disabled = true;
 	runBtn.textContent = "Starting...";
 	noteEl.textContent = "";
+	if (selectedBenchmarkModes.size === 0) {
+		noteEl.textContent = "Select at least one engine to benchmark";
+		runBtn.disabled = false;
+		runBtn.textContent = "Run Benchmark";
+		return;
+	}
 	try {
-		const result = await startBenchmarkRun();
+		const result = await startBenchmarkRun(BENCHMARK_MODES.filter((m) => selectedBenchmarkModes.has(m)));
 		if (result.error) {
 			noteEl.textContent = result.error;
 			runBtn.textContent = "Run Benchmark";

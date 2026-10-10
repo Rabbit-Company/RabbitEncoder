@@ -65,8 +65,15 @@ export interface GpuDevice {
 	deviceName: string;
 }
 
+export interface AvdDevice {
+	id: string;
+	backends: string[];
+}
+
+export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+
 export interface BenchmarkResult {
-	mode: "cpu" | "opencl" | "vulkan";
+	mode: BenchmarkMode;
 	level: "light" | "medium" | "heavy";
 	fps?: number;
 	speed?: string;
@@ -78,6 +85,10 @@ export interface BenchmarkState {
 	results: BenchmarkResult[];
 	openclAvailable?: boolean;
 	vulkanAvailable?: boolean;
+	avdAvailable?: boolean | null;
+	avdDevice?: string | null;
+	/** Engines included in the current / last run. */
+	modes?: BenchmarkMode[];
 	cpuName?: string;
 	gpuName?: string;
 	gpuDevice?: string;

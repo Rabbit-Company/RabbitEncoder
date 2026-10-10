@@ -19,8 +19,12 @@ import type {
 	SubtitleFormatPriority,
 	AudioCodecPriority,
 	CropMode,
+	DenoiseEngine,
+	AvdEngine,
+	AvdPreset,
 } from "../core/types";
 import { vsRegistry } from "../video/vs-filters";
+import { avdEngineUsesPreset, isAvdEngine, isAvdSelfTuningEngine } from "../video/avd";
 
 export const SETTINGS_CODE_FORMAT = 1;
 export const SETTINGS_CODE_PREFIX = `RE${SETTINGS_CODE_FORMAT}`;
@@ -54,6 +58,13 @@ const BASELINE: JobSettings = {
 		medium: { strength: 1.4, radius: 16 },
 		heavy: { strength: 2.8, radius: 24 },
 	},
+	denoiseEngine: "nlmeans",
+	avdParams: {
+		preset: "base",
+		nlmeansStrength: { light: 1.0, medium: 1.5, heavy: 2.0 },
+		scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0 },
+	},
+	avdDevice: "default",
 	denoiseBackend: "auto",
 	gpuDevice: "0.0",
 	crop: "off",
@@ -155,6 +166,9 @@ const CODE_TO_QUALITY = reverse(QUALITY_TO_CODE);
 const CODE_TO_SPEED = reverse(SPEED_TO_CODE);
 const CODE_TO_CROP = reverse(CROP_TO_CODE);
 const CODE_TO_DENOISE = reverse(DENOISE_TO_CODE);
+const AVD_ENGINE_TO_CODE: Record<AvdEngine, string> = { "avd-nlmeans": "an", "avd-nlmeans-hq": "ah", "avd-nl4d": "a4" };
+const CODE_TO_AVD_ENGINE = reverse(AVD_ENGINE_TO_CODE);
+const AVD_PRESET_VALUES: AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
 const CODE_TO_DEBAND = reverse(DEBAND_TO_CODE);
 
 const AUDIOCODEC_TO_CODE: Record<AudioCodecPriority, string> = { "lossless-first": "l", "smallest-first": "s" };
@@ -295,6 +309,15 @@ export function encodeSettingsCode(s: JobSettings): string {
 	if (s.denoise !== "off") {
 		const dn = new Section("dn");
 		dn.put("m", DENOISE_TO_CODE[s.denoise]);
+		// av-denoise engine: FFmpeg nlmeans is the baseline and is left out. The engine's own
+		// strength replaces the nlmeans triplets below, which it does not use: one scale ("x") for
+		// the self-tuning engines, per-level strengths for plain NLMeans.
+		const avd: AvdEngine | null = isAvdEngine(s.denoiseEngine) ? s.denoiseEngine : null;
+		if (avd) {
+			dn.put("e", AVD_ENGINE_TO_CODE[avd]);
+			if (avdEngineUsesPreset(avd) && s.avdParams.preset !== BASELINE.avdParams.preset) dn.put("ap", s.avdParams.preset);
+			if (isAvdSelfTuningEngine(avd) && s.avdParams.scales[avd] !== BASELINE.avdParams.scales[avd]) dn.put("x", s.avdParams.scales[avd]);
+		}
 		if (s.denoise === "auto") {
 			if (s.autoDenoiseMetric !== BASELINE.autoDenoiseMetric) {
 				dn.put("mt", s.autoDenoiseMetric);
@@ -318,10 +341,21 @@ export function encodeSettingsCode(s: JobSettings): string {
 				dn.put("tbh", s.autoDenoiseBitrateThresholds.heavy);
 			}
 
-			putNlmeansDiff(dn, "l", s.nlmeansParams.light, BASELINE.nlmeansParams.light);
-			putNlmeansDiff(dn, "m", s.nlmeansParams.medium, BASELINE.nlmeansParams.medium);
-			putNlmeansDiff(dn, "h", s.nlmeansParams.heavy, BASELINE.nlmeansParams.heavy);
-		} else {
+			if (avd === "avd-nlmeans") {
+				const cur = s.avdParams.nlmeansStrength;
+				const base = BASELINE.avdParams.nlmeansStrength;
+				if (cur.light !== base.light) dn.put("xl", cur.light);
+				if (cur.medium !== base.medium) dn.put("xm", cur.medium);
+				if (cur.heavy !== base.heavy) dn.put("xh", cur.heavy);
+			} else if (!avd) {
+				putNlmeansDiff(dn, "l", s.nlmeansParams.light, BASELINE.nlmeansParams.light);
+				putNlmeansDiff(dn, "m", s.nlmeansParams.medium, BASELINE.nlmeansParams.medium);
+				putNlmeansDiff(dn, "h", s.nlmeansParams.heavy, BASELINE.nlmeansParams.heavy);
+			}
+		} else if (avd === "avd-nlmeans") {
+			const cur = s.avdParams.nlmeansStrength[s.denoise];
+			if (cur !== BASELINE.avdParams.nlmeansStrength[s.denoise]) dn.put("x", cur);
+		} else if (!avd) {
 			const lvl = s.nlmeansParams[s.denoise];
 			const base = BASELINE.nlmeansParams[s.denoise];
 			putNlmeansDiff(dn, "", lvl, base);
@@ -560,6 +594,7 @@ export function decodeSettingsCode(code: string): Partial<JobSettings> {
 	const result: Partial<JobSettings> = { ...out };
 	delete (result as Partial<JobSettings>).denoiseBackend;
 	delete (result as Partial<JobSettings>).gpuDevice;
+	delete (result as Partial<JobSettings>).avdDevice;
 	delete (result as Partial<JobSettings>).fontGroup;
 	return result;
 }
@@ -661,6 +696,27 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 	out.denoise = mode;
 	if (mode === "off") return;
 
+	const avd: AvdEngine | null = kv.e && CODE_TO_AVD_ENGINE[kv.e] ? CODE_TO_AVD_ENGINE[kv.e]! : null;
+	const engine: DenoiseEngine = avd ?? "nlmeans";
+	out.denoiseEngine = engine;
+	if (avd) {
+		const preset = (AVD_PRESET_VALUES as string[]).includes(kv.ap ?? "") ? (kv.ap as AvdPreset) : out.avdParams.preset;
+		const scales = { ...out.avdParams.scales };
+		let nlmeansStrength = out.avdParams.nlmeansStrength;
+		if (isAvdSelfTuningEngine(avd)) {
+			scales[avd] = numOr(kv.x, scales[avd]);
+		} else if (mode === "auto") {
+			nlmeansStrength = {
+				light: numOr(kv.xl, nlmeansStrength.light),
+				medium: numOr(kv.xm, nlmeansStrength.medium),
+				heavy: numOr(kv.xh, nlmeansStrength.heavy),
+			};
+		} else {
+			nlmeansStrength = { ...nlmeansStrength, [mode]: numOr(kv.x, nlmeansStrength[mode]) };
+		}
+		out.avdParams = { preset, nlmeansStrength, scales };
+	}
+
 	if (mode === "auto") {
 		if (kv.mt === "noise" || kv.mt === "bitrate") out.autoDenoiseMetric = kv.mt;
 		out.autoDenoiseThresholds = {
@@ -673,12 +729,13 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 			medium: numOr(kv.tbm, out.autoDenoiseBitrateThresholds.medium),
 			heavy: numOr(kv.tbh, out.autoDenoiseBitrateThresholds.heavy),
 		};
+		if (avd) return;
 		out.nlmeansParams = {
 			light: readNlmeans(kv, "l", out.nlmeansParams.light),
 			medium: readNlmeans(kv, "m", out.nlmeansParams.medium),
 			heavy: readNlmeans(kv, "h", out.nlmeansParams.heavy),
 		};
-	} else {
+	} else if (!avd) {
 		// Fixed level: only that level's triplet was stored.
 		const triplet: NlmeansParams = {
 			s: numOr(kv.s, out.nlmeansParams[mode].s),
@@ -775,6 +832,8 @@ export function combineCumulativeSettings(prior: Partial<JobSettings> | null | u
 
 	if ((current.denoise ?? "off") === "off" && prior.denoise && prior.denoise !== "off") {
 		combined.denoise = prior.denoise;
+		if (prior.denoiseEngine) combined.denoiseEngine = prior.denoiseEngine;
+		if (prior.avdParams) combined.avdParams = prior.avdParams;
 	}
 	if ((current.deband ?? "off") === "off" && prior.deband && prior.deband !== "off") {
 		combined.deband = prior.deband;

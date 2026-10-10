@@ -30,6 +30,30 @@ export type DenoiseBackend = "cpu" | "auto" | "vulkan" | "opencl";
 
 export type GpuBackend = "auto" | "vulkan" | "opencl";
 
+/** Which denoiser runs when denoise is enabled. The avd-* engines are av-denoise and are GPU only. */
+export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+export type AvdEngine = Exclude<DenoiseEngine, "nlmeans">;
+export type AvdPreset = "veryfast" | "fast" | "base" | "slow" | "veryslow";
+
+export interface AvdLevelStrengths {
+	light: number;
+	medium: number;
+	heavy: number;
+}
+
+/** The av-denoise engines that measure the source's noise and set their own strength. */
+export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d";
+
+/** av-denoise settings. */
+export interface AvdParams {
+	/** Speed/quality ladder. Not used by avd-nl4d. */
+	preset: AvdPreset;
+	/** avd-nlmeans strength per denoise level. */
+	nlmeansStrength: AvdLevelStrengths;
+	/** One multiplier per self-tuning engine, applied at every denoise level. 1.0 trusts the engine's measurement. */
+	scales: Record<AvdSelfTuningEngine, number>;
+}
+
 export type JobStatus = "queued" | "probing" | "encoding_video" | "encoding_audio" | "muxing" | "done" | "error" | "cancelled";
 
 export const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".webm", ".flv", ".ts", ".mov"]);
@@ -135,6 +159,12 @@ export interface JobSettings {
 	nlmeansParams: NlmeansLevelParams;
 	/** Filter parameters used for gradfun at each level. */
 	gradfunParams: GradfunLevelParams;
+	/** Which denoiser to use. The av-denoise engines ignore denoiseBackend / gpuDevice / nlmeansParams. */
+	denoiseEngine: DenoiseEngine;
+	/** Preset, strengths and scales for the av-denoise engines. */
+	avdParams: AvdParams;
+	/** av-denoise --device spec ("default", "discrete:0", "integrated:0", ...). */
+	avdDevice: string;
 	/** Backend selection for nlmeans. "cpu" forces CPU; the others may fall back. */
 	denoiseBackend: DenoiseBackend;
 	/** Device id for vulkan/opencl backends (e.g. "0" / "0.0"); ignored for cpu. */

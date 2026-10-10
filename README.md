@@ -111,6 +111,32 @@ Use **Audit folder** to inspect every MKV directly inside a selected folder. Fil
 
 Choose **Edit group** beside a group to change subtitle names, languages, and flags for all of its files at once. Each subtitle row applies to the same ordered subtitle in every episode, using that episode's own track ID and preserving its compression. **Queue changes** validates the whole group against the audit before queueing one metadata repair per file. **Save changes to** defaults to **Existing MKV files**, updating each file after verification. Choose **New .repaired.mkv copies** if you prefer separate output files. Follow progress in the job list and audit again after completion to inspect the results.
 
+## Denoising
+
+Denoising runs in the **Prepare** step, after crop / downscale / deband. The **Denoise** setting picks the level (`off`, `auto`, `light`, `medium`, `heavy`) and **Video handling -> Denoiser** picks what does the work:
+
+| Engine           | Runs on               | Notes                                                                                                                                                        |
+| ---------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `avd-nl4d`       | GPU only              | [av-denoise](https://github.com/ChillFish8/av-denoise) NL4D spatio-temporal denoiser. The default. Best noise removal and detail retention, and the slowest. |
+| `avd-nlmeans-hq` | GPU only              | av-denoise NLMeans-HQ. Measures the noise level itself and keeps more detail than plain NLMeans.                                                             |
+| `avd-nlmeans`    | GPU only              | av-denoise fast NLMeans. Hand-set strength, light denoising only.                                                                                            |
+| `nlmeans`        | CPU, OpenCL or Vulkan | FFmpeg's nlmeans. Falls back to CPU when no GPU backend works.                                                                                               |
+
+The av-denoise engines use Vulkan (or CUDA when an NVIDIA GPU is passed through to the container) and have no CPU fallback: if av-denoise cannot use the selected device, the job fails instead of encoding without denoising. Vulkan works with the `/dev/dri` device mapping from the stock `docker-compose.yml` on AMD and Intel GPUs.
+
+The engines differ in how the level is used:
+
+- **`avd-nl4d`** (the default denoiser) and **`avd-nlmeans-hq`** model the noise in each scene themselves and set their own strength. `light`, `medium` and `heavy` therefore denoise identically, and the level only decides whether a scene is denoised. Each has a single expert scale in Advanced Settings (`--lambda-ht-scale` / `--hq-sigma-scale`, default 1.0) that applies at every level.
+- **`avd-nlmeans`** needs its strength set by hand, like FFmpeg nlmeans, so `light` / `medium` / `heavy` map to `--strength` 1.0 / 1.5 / 2.0, the same values as the FFmpeg nlmeans levels. The value applies to both luma and chroma.
+
+The two NLMeans engines also have an **AVD Speed Preset** (`veryfast` to `veryslow`) that trades speed for quality. NL4D always runs at its default preset.
+
+**Auto denoise** works with every engine. Scenes are classified by noise or by bitrate against your thresholds exactly as before, then each classified range is denoised by the selected engine and untouched ranges are passed through. With `avd-nl4d` and `avd-nlmeans-hq` every scene at or above the light threshold is denoised the same way, and neighbouring ranges are denoised as one stretch.
+
+The first run with a new combination of av-denoise settings compiles GPU kernels, which takes a few seconds. They are cached in `/config/vapoursynth/av-denoise-cache` (override with `AV_DENOISE_COMPILATION_CACHE`).
+
+The **Benchmark** dialog measures every engine at all three levels. Tick the engines you want to compare before running it.
+
 ## VapourSynth Filters
 
 Rabbit Encoder ships with a VapourSynth filter system that lets you stack arbitrary preprocessing passes in front of the main encode. Each filter runs as its own `vspipe` pass.
@@ -314,6 +340,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/system`                               | Current system resource usage (CPU, RAM, temp-partition disk, network, GPU)    |
 | `GET`    | `/api/opencl-devices`                       | List available OpenCL devices                                                  |
 | `GET`    | `/api/vulkan-devices`                       | List available Vulkan devices                                                  |
+| `GET`    | `/api/avd-devices`                          | List GPU devices usable by av-denoise                                          |
 | `GET`    | `/api/benchmark`                            | Get current benchmark state                                                    |
 | `POST`   | `/api/benchmark`                            | Start a denoise benchmark run                                                  |
 | `DELETE` | `/api/benchmark`                            | Cancel a running benchmark                                                     |

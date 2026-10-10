@@ -2553,7 +2553,37 @@ code {
 }
 
 .benchmark-modal {
-	width: min(700px, calc(100vw - 32px));
+	width: min(1200px, calc(100vw - 32px));
+}
+
+#benchmark-modes {
+	gap: 8px;
+	margin: 12px 0 16px;
+}
+
+#benchmark-modes .radio-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	line-height: 1;
+}
+
+#benchmark-modes .radio-pill input {
+	margin: 0;
+	flex-shrink: 0;
+	accent-color: var(--accent);
+	cursor: inherit;
+}
+
+#benchmark-modes .radio-pill:has(input:checked) {
+	border-color: var(--accent);
+	background: var(--accent-glow);
+	color: var(--accent);
+}
+
+#benchmark-modes .radio-pill:has(input:disabled) {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .benchmark-intro {
@@ -3897,4 +3927,57 @@ code {
 	margin-right: auto;
 	font-size: 0.7rem;
 	color: var(--text-2);
+}
+
+/* Settings forms: each setting is its own card, so sections read as separate without relying on spacing. */
+#advanced-modal .modal-body,
+.settings-section-body {
+	gap: 14px;
+}
+
+#advanced-modal .modal-body > .setting-group,
+.settings-section-body > .setting-group {
+	margin-top: 0;
+	padding: 14px 16px;
+	background: var(--bg-0);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+/* Settings that depend on the choice made in a card sit inside that card, indented behind an accent rule. */
+.nested-settings {
+	margin-top: 14px;
+	padding-left: 14px;
+	border-left: 2px solid var(--accent);
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+/* A group of nested settings that is shown or hidden as one (e.g. the controls of one encoder family). */
+.nested-settings-set {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.nested-settings .setting-group {
+	margin-top: 0;
+}
+
+.nested-settings .setting-group > label {
+	font-size: 0.72rem;
+	color: var(--text-2);
+}
+
+/* Marks the settings card of the denoiser currently selected in the main settings. */
+.denoiser-in-use {
+	margin-left: 8px;
+	padding: 2px 8px;
+	border-radius: 10px;
+	border: 1px solid var(--accent);
+	background: var(--accent-glow);
+	color: var(--accent);
+	font-size: 0.62rem;
+	letter-spacing: 0.04em;
 }

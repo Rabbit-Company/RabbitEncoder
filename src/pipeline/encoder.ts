@@ -44,6 +44,7 @@ import pkg from "../../package.json";
 import { buildPrepareFilterConfig } from "../video/filters";
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
 import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
+import { runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
 import { combineCumulativeSettings, encodeSettingsCode } from "../settings/settings-code";
@@ -513,7 +514,10 @@ export async function encodeJob(
 			sourceHeight: probe.height,
 			sourceWidth: probe.width,
 			denoise: job.settings.denoise,
+			denoiseEngine: job.settings.denoiseEngine,
 			denoiseBackend: job.settings.denoiseBackend,
+			avdParams: job.settings.avdParams,
+			avdDevice: job.settings.avdDevice,
 			deband: job.settings.deband,
 			gpuDevice: job.settings.gpuDevice,
 			nlmeansParams: job.settings.nlmeansParams,
@@ -522,7 +526,11 @@ export async function encodeJob(
 			totalDuration: probe.duration,
 		});
 
-		if (prepareFilter) {
+		// The segmented stages cut by time, which is only frame-accurate on the intra-only FFV1 this pass writes,
+		// so it also runs with an empty filter when one of them follows.
+		const needsFilterPass = !!prepareFilter && (!!prepareFilter.filter || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd?.plan);
+
+		if (prepareFilter && needsFilterPass) {
 			checkCancelled();
 
 			const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
@@ -648,6 +656,60 @@ export async function encodeJob(
 			renameSync(denoisedVideo, preparedVideo);
 
 			Logger.info(`[prepare] Segmented GPU auto-denoise complete`);
+		}
+
+		if (prepareFilter?.deferredAvd) {
+			checkCancelled();
+			const { engine, params, device, level, plan, label } = prepareFilter.deferredAvd;
+			const denoisedVideo = join(tempDir, "source_video_denoised.mkv");
+
+			if (plan) {
+				Logger.info(`[prepare] Running segmented av-denoise auto-denoise (${plan.length} ranges, ${engine} on device ${device})`);
+
+				await runSegmentedAutoDenoiseAvd(
+					preparedVideo,
+					denoisedVideo,
+					plan,
+					probe.duration,
+					engine,
+					params,
+					device,
+					tempDir,
+					(i, n, segLabel) => {
+						setStep(S_PREPARE, {
+							progress: 5 + (95 * i) / n,
+							detail: `${label}, segment ${i}/${n} (${segLabel})`,
+						});
+					},
+					signal,
+				);
+			} else if (level) {
+				const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
+				Logger.info(`[prepare] Running av-denoise (${engine}, level=${level}, device ${device})`);
+				setStep(S_PREPARE, { progress: 5, detail: `${label}: analyzing scenes` });
+
+				await runAvdPass({
+					inputPath: preparedVideo,
+					outputPath: denoisedVideo,
+					engine,
+					level,
+					params,
+					device,
+					signal,
+					onProgress: (current, fps) => {
+						setStep(S_PREPARE, {
+							progress: 5 + pct2(current, totalFrames) * 0.95,
+							detail: `${label}: ${fmtFrames(current, totalFrames)}${fps ? ` (${fps} fps)` : ""}`,
+						});
+					},
+				});
+			}
+
+			if (existsSync(denoisedVideo)) {
+				unlinkSync(preparedVideo);
+				renameSync(denoisedVideo, preparedVideo);
+				Logger.info(`[prepare] av-denoise complete`);
+			}
 		}
 
 		if (sink) await sink.capture(preparedVideo, "prepare.png", "none");
