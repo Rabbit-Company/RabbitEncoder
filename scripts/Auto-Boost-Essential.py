@@ -69,7 +69,7 @@ parser.add_argument("-i", "--input", required=True, help = "Video input filepath
 parser.add_argument("-t", "--temp", help = "The temporary directory for the script to store files in | Default: video input filename")
 parser.add_argument("--fast-speed", help = "Fast encode speed (Allowed: medium, fast, faster) | Default: faster", default="faster")
 parser.add_argument("--final-speed", help = "Final encode speed (Allowed: slower, slow, medium, fast, faster) | Default: slow", default="slow")
-parser.add_argument("--quality", help = "Base encoder --quality (Allowed: low, medium, high) | Default: medium", default="medium")
+parser.add_argument("--quality", help = "Base encoder --quality (Allowed: lower, low, medium, high, higher) | Default: medium", default="medium")
 parser.add_argument("-a", "--aggressive", action='store_true', help = "More aggressive boosting | Default: not active")
 parser.add_argument("-u", "--unshackle", action='store_true', help = "Less restrictive boosting | Default: not active")
 parser.add_argument("--fast-params", help="Custom fast encoding parameters")
@@ -254,8 +254,8 @@ if "--crf" in fast_params:
                 print("CRF must have 0, 1 or 2 decimals.")
                 raise SystemExit(1)
 else:
-    if quality not in ["low", "medium", "high"]:
-        print("The quality preset must be either low, medium or high.")
+    if quality not in ["lower", "low", "medium", "high", "higher"]:
+        print("The quality preset must be lower, low, medium, high or higher.")
         raise SystemExit(1)
 
 if stage != 0 and resume:
@@ -1048,12 +1048,16 @@ def calculate_zones(ranges: list[float], hr: bool, nframe: int) -> None:
                       f'Worst scoring frame: {index_min} ({metric_scores[index_min]:.4f})')
 
     match quality:
+        case "lower":
+            crf = 45 if hr else 40
         case "low":
             crf = 40 if hr else 35
         case "medium":
             crf = 35 if hr else 30
         case "high":
             crf = 30 if hr else 25
+        case "higher":
+            crf = 25 if hr else 20
         case _:
             crf = quality
 

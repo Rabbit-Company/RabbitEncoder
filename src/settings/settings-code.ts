@@ -151,7 +151,7 @@ const BASELINE: JobSettings = {
 	vsFilters: [],
 };
 
-const QUALITY_TO_CODE: Record<EncoderQuality, string> = { low: "l", medium: "m", high: "h" };
+const QUALITY_TO_CODE: Record<EncoderQuality, string> = { lower: "lr", low: "l", medium: "m", high: "h", higher: "hr" };
 const SPEED_TO_CODE: Record<EncoderSpeed, string> = { slower: "sr", slow: "s", medium: "m", fast: "f", faster: "fr" };
 const DENOISE_TO_CODE: Record<DenoiseLevel, string> = { off: "o", light: "l", medium: "m", heavy: "h", auto: "a" };
 const DEBAND_TO_CODE: Record<DebandLevel, string> = { off: "o", light: "l", medium: "m", heavy: "h" };

@@ -211,7 +211,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	manualPreset: intIn(-1, 13), // original rounded preset
 	customEncoderParams: str(2000),
 
-	quality: enumOf(["low", "medium", "high"]),
+	quality: enumOf(["lower", "low", "medium", "high", "higher"]),
 	finalSpeed: enumOf(["slower", "slow", "medium", "fast", "faster"]),
 	videoEncode: enumOf(["av1", "off"]),
 	audioEncode: enumOf(["opus", "copy"]),

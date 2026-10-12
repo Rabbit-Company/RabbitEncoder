@@ -44,7 +44,7 @@ export const ENCODER_HELP: Record<EncoderId, string> = {
 	"svt-av1-5fish": "Recommended for anime and animation.",
 };
 
-export const QUALITIES: readonly EncoderQuality[] = ["low", "medium", "high"];
+export const QUALITIES: readonly EncoderQuality[] = ["lower", "low", "medium", "high", "higher"];
 export const SPEEDS: readonly EncoderSpeed[] = ["slower", "slow", "medium", "fast", "faster"];
 export const DENOISE_LEVELS: readonly DenoiseLevel[] = ["off", "auto", "light", "medium", "heavy"];
 export const DEBAND_LEVELS: readonly DebandLevel[] = ["off", "light", "medium", "heavy"];

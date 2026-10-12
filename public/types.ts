@@ -1,5 +1,5 @@
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish";
-export type EncoderQuality = "low" | "medium" | "high";
+export type EncoderQuality = "lower" | "low" | "medium" | "high" | "higher";
 export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
 export type DenoiseLevel = "off" | "light" | "medium" | "heavy" | "auto";
 export type DebandLevel = "off" | "light" | "medium" | "heavy";

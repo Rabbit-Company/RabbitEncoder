@@ -3,6 +3,16 @@ import { getDefaultJobSettings } from "../../src/core/config";
 import type { JobSettings } from "../../src/core/types";
 import { combineCumulativeSettings, encodeSettingsCode, decodeSettingsCode } from "../../src/settings/settings-code";
 
+describe("settings code — Essential quality presets", () => {
+	for (const quality of ["lower", "low", "medium", "high", "higher"] as const) {
+		it(`round-trips ${quality}`, () => {
+			const settings = getDefaultJobSettings();
+			settings.quality = quality;
+			expect(decodeSettingsCode(encodeSettingsCode(settings)).quality).toBe(quality);
+		});
+	}
+});
+
 describe("settings code — font/style not carried (RE1 compat)", () => {
 	it("never emits font/style/group fields", () => {
 		const s: JobSettings = { ...getDefaultJobSettings(), fontGroup: "Anime old", convertSrtToAss: true };
