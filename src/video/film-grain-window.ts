@@ -18,7 +18,14 @@ export function representativeFilmGrainWindow(duration: number, fps: number): Fi
 	return { startSeconds: (duration - WINDOW_SECONDS) / 2, frames: Math.round(WINDOW_SECONDS * fps) };
 }
 
-export async function cutFilmGrainWindow(inputPath: string, outputPath: string, window: FilmGrainWindow, signal?: AbortSignal): Promise<void> {
+/** Write a lossless copy for measuring. A null window keeps the whole video, and a filter crops it. */
+export async function cutFilmGrainWindow(
+	inputPath: string,
+	outputPath: string,
+	window: FilmGrainWindow | null,
+	signal?: AbortSignal,
+	videoFilter?: string,
+): Promise<void> {
 	const result = await run(
 		[
 			"ffmpeg",
@@ -26,14 +33,13 @@ export async function cutFilmGrainWindow(inputPath: string, outputPath: string, 
 			"-loglevel",
 			"error",
 			"-y",
-			"-ss",
-			window.startSeconds.toFixed(6),
+			...(window ? ["-ss", window.startSeconds.toFixed(6)] : []),
 			"-i",
 			inputPath,
 			"-map",
 			"0:V:0",
-			"-frames:v",
-			String(window.frames),
+			...(window ? ["-frames:v", String(window.frames)] : []),
+			...(videoFilter ? ["-vf", videoFilter] : []),
 			"-c:v",
 			"ffv1",
 			"-level",

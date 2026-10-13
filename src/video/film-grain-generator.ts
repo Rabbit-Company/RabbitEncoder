@@ -6,6 +6,8 @@ import { CancelledError, run } from "../core/process";
 import { probeFile } from "../pipeline/probe";
 import { filmGrainSegmentCount } from "./film-grain-table";
 import { parseFilmGrainProgress, type FilmGrainProgress } from "./film-grain-progress";
+import { Logger } from "../core/logger";
+import { detectFilmGrainCrop, filmGrainCropFilter } from "./film-grain-crop";
 import { cutFilmGrainWindow, representativeFilmGrainWindow, verifyFilmGrainWindows } from "./film-grain-window";
 
 export interface GeneratedFilmGrainTable {
@@ -176,17 +178,35 @@ async function generate(
 	try {
 		const original = await probeFile(sourcePath);
 		const denoised = job.probe ?? (await probeFile(job.inputPath));
-		if (original.width !== denoised.width || original.height !== denoised.height || Math.abs(original.videoStreamFps - denoised.videoStreamFps) > 0.01)
-			throw new Error("Original and denoised videos must have the same dimensions and frame rate");
+		if (Math.abs(original.videoStreamFps - denoised.videoStreamFps) > 0.01) throw new Error("Original and denoised videos must have the same frame rate");
+		if (denoised.width > original.width || denoised.height > original.height)
+			throw new Error("Denoised video is larger than the original, so it cannot be a crop of it");
 		if (signal?.aborted) throw new CancelledError();
+		// A denoising server that crops first hands back a smaller frame. The original
+		// gets the same crop here so both sides of the diff cover the same pixels.
+		let cropFilter: string | undefined;
+		if (original.width !== denoised.width || original.height !== denoised.height) {
+			const crop = await detectFilmGrainCrop(sourcePath, job.inputPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal);
+			cropFilter = filmGrainCropFilter(crop);
+			Logger.info(
+				`[film-grain] Denoised input is ${crop.w}x${crop.h}. Cropping the ${original.width}x${original.height} original at +${crop.x}+${crop.y} to match.`,
+			);
+		}
 		let measuredSource = sourcePath;
 		let measuredDenoised = job.inputPath;
 		const window = range === "representative" ? representativeFilmGrainWindow(Math.min(original.duration, denoised.duration), denoised.videoStreamFps) : null;
 		if (window) {
 			measuredSource = join(workDir, "original-window.mkv");
 			measuredDenoised = join(workDir, "denoised-window.mkv");
-			await Promise.all([cutFilmGrainWindow(sourcePath, measuredSource, window, signal), cutFilmGrainWindow(job.inputPath, measuredDenoised, window, signal)]);
+			await Promise.all([
+				cutFilmGrainWindow(sourcePath, measuredSource, window, signal, cropFilter),
+				cutFilmGrainWindow(job.inputPath, measuredDenoised, window, signal),
+			]);
 			await verifyFilmGrainWindows(measuredSource, measuredDenoised, workDir, window.frames, signal);
+		} else if (cropFilter) {
+			// grav1synth reads files only, so a full measurement needs a lossless cropped copy of the whole original.
+			measuredSource = join(workDir, "original-cropped.mkv");
+			await cutFilmGrainWindow(sourcePath, measuredSource, null, signal, cropFilter);
 		}
 		if (signal?.aborted) throw new CancelledError();
 		const tempTable = join(workDir, "grain.tbl");
