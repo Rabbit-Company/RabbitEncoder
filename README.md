@@ -293,6 +293,8 @@ The settings code stores the actual underlying values, including every nlmeans a
 
 To restore settings from a code, paste it into the **Settings Code** field in either the Default Settings panel or the per-job settings panel. Codes are portable across machines because GPU-specific choices, such as the denoise backend and GPU device, are intentionally left out. This prevents an imported code from overwriting the target machine’s hardware configuration.
 
+When an AV1 film grain table was used for the encode, the code carries `fg=1` in its core section, for example `RE1|c~fg=1`. The flag is left out when no table was used. It only records that a table was used. The table itself and its path are not stored, so importing a code never changes a job's film grain table.
+
 The format is versioned with an `RE<n>` prefix, so older codes continue to work as the format evolves. Fields that match the shipped baseline are omitted, which means a stock-default configuration is represented simply as `RE1`.
 
 ## Supported Input Formats

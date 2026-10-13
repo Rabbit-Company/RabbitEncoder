@@ -145,3 +145,22 @@ describe("settings code — cumulative settings", () => {
 		expect(combined.cropLimit).toBe(current.cropLimit);
 	});
 });
+
+describe("settings code - film grain table flag", () => {
+	it("flags a used table without storing its path", () => {
+		const code = encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainTablePath: "/tables/episode 01.tbl" });
+		expect(code).toMatch(/\bfg=1\b/);
+		expect(code).not.toContain("tables");
+	});
+
+	it("leaves the flag out when no table is used or video is not encoded", () => {
+		expect(encodeSettingsCode(getDefaultJobSettings())).not.toMatch(/\bfg=/);
+		const skipped: JobSettings = { ...getDefaultJobSettings(), filmGrainTablePath: "/tables/e01.tbl", videoEncode: "off" };
+		expect(encodeSettingsCode(skipped)).not.toMatch(/\bfg=/);
+	});
+
+	it("does not touch a job's table path when a code is imported", () => {
+		expect("filmGrainTablePath" in decodeSettingsCode("RE1|c~fg=1")).toBe(false);
+		expect("filmGrainTablePath" in decodeSettingsCode("RE1")).toBe(false);
+	});
+});

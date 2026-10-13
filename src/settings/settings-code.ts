@@ -305,6 +305,7 @@ export function encodeSettingsCode(s: JobSettings): string {
 	if (s.dedupeSubtitles !== BASELINE.dedupeSubtitles) core.put("dd", s.dedupeSubtitles);
 	if (s.keepBestAudioChannelsOnly !== BASELINE.keepBestAudioChannelsOnly) core.put("kc", s.keepBestAudioChannelsOnly);
 	if (s.removeCommentaryAudio !== BASELINE.removeCommentaryAudio) core.put("rc", s.removeCommentaryAudio);
+	if (s.videoEncode !== "off" && s.filmGrainTablePath?.trim()) core.put("fg", true);
 	if (!core.empty) sections.push(core.toString());
 
 	// denoise
@@ -598,6 +599,7 @@ export function decodeSettingsCode(code: string): Partial<JobSettings> {
 	delete (result as Partial<JobSettings>).gpuDevice;
 	delete (result as Partial<JobSettings>).avdDevice;
 	delete (result as Partial<JobSettings>).fontGroup;
+	delete (result as Partial<JobSettings>).filmGrainTablePath;
 	return result;
 }
 
