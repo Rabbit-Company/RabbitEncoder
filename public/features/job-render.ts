@@ -385,9 +385,17 @@ export function renderJobCard(job: Job): string {
 	if (job.kind !== "repair" && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
 	if (job.kind !== "repair" && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
 	if (job.kind !== "repair" && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
+	if (job.kind !== "repair" && job.originalSourcePath) {
+		const originalName = job.originalSourcePath.split("/").pop() || job.originalSourcePath;
+		meta += `<span title="Original: ${escapeHtml(job.originalSourcePath)}">Original: ${escapeHtml(originalName)}</span>`;
+		if (job.settings.videoEncode !== "off" && job.settings.subtitleProcessing !== "translate") {
+			if (job.settings.filmGrainTablePath) meta += `<span>FGS ready</span>`;
+			else if (job.autoFilmGrain && !done)
+				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${job.settings.filmGrainSampling === "half" ? "Half" : job.settings.filmGrainSampling === "quarter" ? "Quarter" : "All"}</span>`;
+		}
+	}
 
 	const stepsHtml = active || done || err ? renderSteps(job.steps) : "";
-
 	let result = "";
 	if (done) {
 		const elapsed = job.finishedAt && job.startedAt ? formatDuration(job.finishedAt - job.startedAt) : "N/A";

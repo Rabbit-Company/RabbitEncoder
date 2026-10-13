@@ -10,9 +10,9 @@ import {
 	renderLibraryView,
 	updateLibrarySearchPlaceholder,
 } from "./library-search";
-import { update } from "./polling";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { appState } from "../state";
+import { openQueueSetup } from "./library-queue-setup";
 
 /**
  * In translate-only mode, already-encoded files are the primary target
@@ -33,15 +33,6 @@ export async function fetchLibraryDirs() {
 
 export async function fetchLibraryBrowse(path?: string | null): Promise<{ entries: LibraryEntry[] }> {
 	const res = await authFetch(`${API}/api/library/browse?path=${encodeURIComponent(path ?? "")}`);
-	return res.json();
-}
-
-export async function postLibraryEncodePaths(paths: string[]): Promise<{ added: number; skipped: number; alreadyEncoded: number }> {
-	const res = await authFetch(`${API}/api/library/encode`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ paths }),
-	});
 	return res.json();
 }
 
@@ -373,29 +364,5 @@ export function closeLibraryIfOutside(e: MouseEvent): void {
 export async function handleLibraryEncode() {
 	const paths = getCheckedPaths();
 	if (paths.length === 0) return;
-
-	const encodeBtn = buttonById("library-encode-btn");
-	encodeBtn.disabled = true;
-	encodeBtn.textContent = "Starting...";
-
-	try {
-		const result = await postLibraryEncodePaths(paths);
-		const note = byId("library-note");
-		const parts: string[] = [];
-		if (result.added > 0) parts.push(`Queued ${result.added} file${result.added !== 1 ? "s" : ""}`);
-		if (result.skipped > 0) parts.push(`${result.skipped} already queued`);
-		if (result.alreadyEncoded > 0) parts.push(`${result.alreadyEncoded} already encoded`);
-		if (parts.length === 0) parts.push("No video files found to encode");
-		note.textContent = parts.join(", ");
-
-		if (result.added > 0) {
-			closeLibrary();
-			update();
-		}
-	} catch {
-		byId("library-note").textContent = "Failed to start encoding";
-	} finally {
-		encodeBtn.textContent = "Encode Selected";
-		encodeBtn.disabled = getCheckedPaths().length === 0;
-	}
+	openQueueSetup(paths);
 }

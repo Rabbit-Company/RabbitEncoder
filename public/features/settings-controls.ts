@@ -191,12 +191,18 @@ export function clampToRange(v: number, min?: number, max?: number): number {
 	if (typeof max === "number" && v > max) v = max;
 	return v;
 }
-export function renderRadioPills<T extends string>(container: HTMLElement, options: readonly T[], selected: T, onChange: (value: T) => void): void {
+export function renderRadioPills<T extends string>(
+	container: HTMLElement,
+	options: readonly T[],
+	selected: T,
+	onChange: (value: T) => void,
+	label: (value: T) => string = (value) => value,
+): void {
 	container.innerHTML = "";
 	options.forEach((opt) => {
 		const pill = document.createElement("div");
 		pill.className = `radio-pill${opt === selected ? " selected" : ""}`;
-		pill.textContent = opt;
+		pill.textContent = label(opt);
 		pill.onclick = () => {
 			container.querySelectorAll(".radio-pill").forEach((p) => p.classList.remove("selected"));
 			pill.classList.add("selected");

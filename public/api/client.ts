@@ -3,6 +3,8 @@ import type {
 	AutoDenoiseMetric,
 	AutoDenoiseThresholds,
 	BitrateAnalysisResult,
+	FilmGrainSampling,
+	FilmGrainRun,
 	FontAxis,
 	GroupStyleConfig,
 	Job,
@@ -215,8 +217,9 @@ export async function fetchRepairRoots(): Promise<{ path: string; name: string }
 	return data.roots || [];
 }
 
-export async function fetchRepairBrowse(path: string): Promise<LibraryEntry[]> {
+export async function fetchRepairBrowse(path: string, allMedia = false): Promise<LibraryEntry[]> {
 	const query = new URLSearchParams({ path });
+	if (allMedia) query.set("allMedia", "1");
 	const response = await authFetch(`${API}/api/repair/browse?${query}`);
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not browse media folder");
@@ -479,7 +482,36 @@ export async function patchJob(id: string, settings: JobSettings): Promise<Job> 
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(settings),
 	});
-	return res.json();
+	const data = await res.json();
+	if (!res.ok) throw new Error(data.error || "Could not save job settings");
+	return data;
+}
+
+export async function startFilmGrainTable(
+	id: string,
+	sourcePath: string,
+	sampling: FilmGrainSampling,
+	range: "representative" | "full",
+): Promise<FilmGrainRun> {
+	const res = await authFetch(`${API}/api/jobs/${id}/film-grain-table`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ sourcePath, noiseSampling: sampling, range }),
+	});
+	const data = await res.json();
+	if (!res.ok) throw new Error(data.error || "Could not generate film grain table");
+	return data;
+}
+
+export async function fetchFilmGrainRun(id: string): Promise<FilmGrainRun> {
+	const res = await authFetch(`${API}/api/jobs/${id}/film-grain-table`);
+	const data = await res.json();
+	if (!res.ok) throw new Error(data.error || "Could not read film grain table progress");
+	return data;
+}
+
+export async function cancelFilmGrainTable(id: string): Promise<void> {
+	await authFetch(`${API}/api/jobs/${id}/film-grain-table`, { method: "DELETE" });
 }
 
 export async function deleteJob(id: string): Promise<void> {

@@ -24,6 +24,15 @@ import {
 import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, removeJobs, saveJobSettings } from "../features/job-settings";
 import { openFolderFromSearch, renderLibraryView } from "../features/library-search";
 import { closeLibrary, closeLibraryIfOutside, handleLibraryEncode, openLibrary, toggleNodeCheck, toggleNodeExpand } from "../features/library";
+import {
+	changeQueuePair,
+	clearQueueOriginal,
+	closeQueueSetup,
+	closeQueueSetupIfOutside,
+	pickQueueOriginalFile,
+	pickQueueOriginalFolder,
+	submitQueueSetup,
+} from "../features/library-queue-setup";
 import { handlePauseToggle, update } from "../features/polling";
 import {
 	closePreviewFullscreen,
@@ -356,6 +365,14 @@ export function initEventListeners() {
 	byId("close-subtitle-preview-btn").addEventListener("click", closeSubPreview);
 	byId("library-modal").addEventListener("click", closeLibraryIfOutside);
 	byId("library-encode-btn").addEventListener("click", handleLibraryEncode);
+	byId("library-queue-close").addEventListener("click", closeQueueSetup);
+	byId("library-queue-cancel").addEventListener("click", closeQueueSetup);
+	byId("library-queue-modal").addEventListener("click", closeQueueSetupIfOutside);
+	byId("library-queue-file").addEventListener("click", pickQueueOriginalFile);
+	byId("library-queue-folder").addEventListener("click", pickQueueOriginalFolder);
+	byId("library-queue-clear").addEventListener("click", clearQueueOriginal);
+	byId("library-queue-pairs").addEventListener("change", changeQueuePair);
+	byId("library-queue-submit").addEventListener("click", submitQueueSetup);
 
 	byId("library-content").addEventListener("click", (e) => {
 		const target = asElementTarget(e.target);

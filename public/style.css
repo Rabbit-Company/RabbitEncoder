@@ -351,6 +351,41 @@ code {
 	gap: 0;
 }
 
+.film-grain-source-row {
+	display: flex;
+	gap: 6px;
+}
+
+.film-grain-source-row .btn {
+	flex-shrink: 0;
+}
+
+.film-grain-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 10px;
+}
+
+.fgs-progress {
+	margin-top: 10px;
+}
+
+.fgs-progress-head {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	font-size: 0.72rem;
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.fgs-progress-detail {
+	margin-top: 4px;
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	color: var(--text-2);
+}
+
 .step {
 	padding: 5px 0;
 	border-left: 2px solid var(--border-subtle);
@@ -1868,6 +1903,24 @@ code {
 
 .repair-picker-overlay {
 	z-index: 230;
+}
+
+.library-queue-overlay {
+	z-index: 220;
+}
+
+.library-queue-fgs {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 16px;
+}
+
+.library-queue-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .repair-picker-file {

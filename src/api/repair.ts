@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } fr
 import { randomUUID } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, RepairAuditGroupEdit, RepairPlan } from "../core/types";
+import { MEDIA_EXTENSIONS, type AppConfig, type RepairAuditGroupEdit, type RepairPlan } from "../core/types";
 import {
 	buildRepairAuditGroupPlans,
 	buildSourceReplacementPlan,
@@ -24,17 +24,23 @@ function allowedRoots(config: AppConfig): string[] {
 	return [config.inputDir, config.outputDir, ...config.libraryDirs].filter((root) => existsSync(root)).map((root) => realpathSync(root));
 }
 
-export function resolveAllowedMkv(raw: unknown, config: AppConfig, label: string): string {
+export function resolveAllowedMediaFile(raw: unknown, config: AppConfig, label: string): string {
 	if (typeof raw !== "string" || !raw.trim()) throw new Error(`${label} path is required`);
 	const candidate = resolve(raw.trim());
 	if (!existsSync(candidate) || !statSync(candidate).isFile()) throw new Error(`${label} file does not exist`);
 	const real = realpathSync(candidate);
 	if (!allowedRoots(config).some((root) => isInside(real, root))) throw new Error(`${label} must be inside an input, output, or configured library directory`);
+	if (!MEDIA_EXTENSIONS.has(extname(real).toLowerCase())) throw new Error(`${label} must be a supported video file`);
+	return real;
+}
+
+export function resolveAllowedMkv(raw: unknown, config: AppConfig, label: string): string {
+	const real = resolveAllowedMediaFile(raw, config, label);
 	if (extname(real).toLowerCase() !== ".mkv") throw new Error(`${label} must be an MKV file`);
 	return real;
 }
 
-function resolveAllowedDirectory(raw: unknown, config: AppConfig): string {
+export function resolveAllowedDirectory(raw: unknown, config: AppConfig): string {
 	if (typeof raw !== "string" || !raw.trim()) throw new Error("Folder path is required");
 	const candidate = resolve(raw.trim());
 	if (!existsSync(candidate) || !statSync(candidate).isDirectory()) throw new Error("Folder does not exist");
@@ -92,7 +98,10 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/repair/browse", (c) => {
 		try {
 			const path = resolveAllowedDirectory(c.query().get("path"), config);
-			const entries = browseFolder(path, config.organization).filter((entry) => entry.type === "directory" || extname(entry.name).toLowerCase() === ".mkv");
+			const allMedia = c.query().get("allMedia") === "1";
+			const entries = browseFolder(path, config.organization).filter(
+				(entry) => entry.type === "directory" || allMedia || extname(entry.name).toLowerCase() === ".mkv",
+			);
 			return c.json({ path, entries });
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);

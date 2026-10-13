@@ -34,6 +34,7 @@ import { cloneSettingsForEditing, renderSettingsForm, updateDenoiseLevelHint } f
 import { renderVsChainEditor } from "./vapoursynth";
 import { byId } from "../shared/dom";
 import { appState } from "../state";
+import { initFilmGrainSettings, stopFilmGrainSettings } from "./film-grain-settings";
 
 export { applyPresetToSettings, inferPreset } from "./settings-form";
 
@@ -210,6 +211,7 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 			s.customEncoderParams = cep.value;
 		};
 	}
+	initFilmGrainSettings(target, settings);
 
 	const METRIC_HELP: Record<AutoDenoiseMetric, string> = {
 		noise: "Classifies scenes by peak bit-plane noise reading (0-1). Good for classic sensor/film grain.",
@@ -258,6 +260,7 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 
 export function closeAdvancedModal() {
 	byId("advanced-modal").style.display = "none";
+	stopFilmGrainSettings();
 	// The engine or its expert scales may have changed, which decides whether the levels differ.
 	const target = appState.currentAdvancedTarget;
 	const edited = target === "default" ? window._tempDefaults : window._tempJobSettings;

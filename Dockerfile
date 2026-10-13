@@ -139,7 +139,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	libwebp7 \
 	libwebpmux3 \
 	libx264-165 \
-	libx265-216 \
+	libx265-217 \
 	libxavs2-13 \
 	libxvidcore4 \
 	libzimg2 \
@@ -261,6 +261,22 @@ RUN set -eux; \
 		LD_LIBRARY_PATH="/opt/ffmpeg-$level/lib" ldd "/opt/ffmpeg-$level/bin/ffprobe" | tee "/tmp/ldd-ffprobe-$level.txt"; \
 		! grep -q "not found" "/tmp/ldd-ffprobe-$level.txt"; \
 	done
+
+# grav1synth v0.3.8 is built against this FFmpeg 9.0.2 archive.
+ARG GRAV1SYNTH_VERSION=0.3.8
+ARG GRAV1SYNTH_SHA256=6f7a19b1adc6bbeb0b6ad15632a08d148c53be4089e2c7de23f3fcdb9c5b6916
+RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
+	"https://github.com/Rabbit-Company/grav1synth/releases/download/v${GRAV1SYNTH_VERSION}/grav1synth-v${GRAV1SYNTH_VERSION}-linux-x86_64-ffmpeg9.0.2" \
+	-o /usr/local/bin/grav1synth \
+ && echo "${GRAV1SYNTH_SHA256}  /usr/local/bin/grav1synth" | sha256sum -c - \
+ && chmod +x /usr/local/bin/grav1synth \
+ && for level in x86-64-v2 x86-64-v3 x86-64-v4; do \
+	LD_LIBRARY_PATH="/opt/ffmpeg-$level/lib" ldd /usr/local/bin/grav1synth > "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
+	cat "/tmp/ldd-grav1synth-$level.txt"; \
+	! grep -q "not found" "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
+	grep -q "libavcodec.so.63 => /opt/ffmpeg-$level/lib/" "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
+	done \
+ && LD_LIBRARY_PATH=/opt/ffmpeg-x86-64-v2/lib grav1synth --help >/dev/null
 
 # Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh

@@ -33,8 +33,9 @@ export async function run(cmd: string[], opts?: { cwd?: string; signal?: AbortSi
 		}
 	}
 
-	const stdoutText = await new Response(proc.stdout).text().catch(() => "");
-	const stderrText = await new Response(proc.stderr).text().catch(() => "");
+	// Drain both pipes while the child is running. Analysis tools and encoders can
+	// write enough diagnostics to fill stderr before they exit.
+	const [stdoutText, stderrText] = await Promise.all([new Response(proc.stdout).text().catch(() => ""), new Response(proc.stderr).text().catch(() => "")]);
 	const code = await proc.exited;
 
 	if (onAbort && opts?.signal) {

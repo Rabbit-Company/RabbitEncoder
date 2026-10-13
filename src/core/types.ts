@@ -6,6 +6,11 @@ export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
 export type EncodeMode = "full" | "preview";
 export type VideoEncodeMode = "av1" | "off";
+/** How many noise observations grav1synth samples. Every frame is decoded at each level. */
+export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter"] as const;
+export type FilmGrainSampling = (typeof FILM_GRAIN_SAMPLINGS)[number];
+export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
+export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
@@ -178,6 +183,10 @@ export interface JobSettings {
 	manualCrf: number;
 	manualPreset: number;
 	customEncoderParams: string;
+	filmGrainTablePath: string;
+	filmGrainSampling: FilmGrainSampling;
+	/** Missing on older saved settings, which measured the full video. */
+	filmGrainRange?: FilmGrainRange;
 	videoEncode: VideoEncodeMode;
 	audioEncode: AudioEncodeMode;
 	subtitleProcessing: SubtitleProcessingMode;
@@ -535,6 +544,10 @@ export interface Job {
 	id: string;
 	filename: string;
 	inputPath: string;
+	/** Aligned grainy original for an externally denoised input. */
+	originalSourcePath?: string;
+	/** Generate a measured FGS table as a step of the encode for this mapped input. */
+	autoFilmGrain?: boolean;
 	relativePath: string;
 	status: JobStatus;
 	progress: number;

@@ -276,7 +276,7 @@ function renderPickerNode(node: PickerNode): string {
 				<div class="tree-row" style="padding-left:${node.depth * 24 + 40}px">
 					<svg class="tree-icon tree-icon-file" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
 					<span class="tree-name tree-name-file" title="${escapeHtml(node.path)}">${escapeHtml(node.name)}</span>
-					<span class="tree-meta">${node.size ? humanFileSize(node.size) : "MKV"}</span>
+					<span class="tree-meta">${node.size ? humanFileSize(node.size) : "Video"}</span>
 				</div>
 			</div>`;
 		}
@@ -285,7 +285,7 @@ function renderPickerNode(node: PickerNode): string {
 			<div class="tree-row" style="padding-left:${node.depth * 24 + 40}px">
 				<svg class="tree-icon tree-icon-file" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
 				<span class="tree-name tree-name-file" title="${escapeHtml(node.path)}">${escapeHtml(node.name)}</span>
-				<span class="tree-meta">${node.size ? humanFileSize(node.size) : "MKV"}</span>
+				<span class="tree-meta">${node.size ? humanFileSize(node.size) : "Video"}</span>
 			</div>
 		</div>`;
 	}
@@ -297,7 +297,8 @@ function renderPickerNode(node: PickerNode): string {
 			.filter((child): child is PickerNode => !!child)
 			.map(renderPickerNode)
 			.join("");
-		if (!children) children = `<div class="tree-empty" style="padding-left:${node.depth * 24 + 56}px">No MKV files</div>`;
+		if (!children)
+			children = `<div class="tree-empty" style="padding-left:${node.depth * 24 + 56}px">No ${pickerPurpose === "preview-reference" ? "video" : "MKV"} files</div>`;
 	}
 	const selected = pickerPurpose === "folder" && node.path === pickerSelectedPath ? " is-selected" : "";
 	const chooseFolder =
@@ -356,7 +357,7 @@ async function togglePickerFolder(path: string): Promise<void> {
 		node.loading = true;
 		renderPicker();
 		try {
-			const entries = await fetchRepairBrowse(node.path);
+			const entries = await fetchRepairBrowse(node.path, pickerPurpose === "preview-reference");
 			node.children = entries.map((entry) => {
 				pickerNodes.set(entry.path, {
 					...entry,
@@ -427,7 +428,12 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 					: purpose === "preview-reference"
 						? "Choose comparison video"
 						: "Choose folder to audit";
-	inputById("repair-picker-search").placeholder = purpose === "folder" ? "Filter loaded folders..." : "Filter loaded folders and MKV files...";
+	inputById("repair-picker-search").placeholder =
+		purpose === "folder"
+			? "Filter loaded folders..."
+			: purpose === "preview-reference"
+				? "Filter loaded folders and videos..."
+				: "Filter loaded folders and MKV files...";
 	byId("repair-picker-error").style.display = "none";
 	byId("repair-picker-content").innerHTML = '<div class="library-loading">Loading media folders...</div>';
 	byId("repair-picker-modal").style.display = "";

@@ -48,6 +48,10 @@ export function previewSettingsFingerprint(s: JobSettings): string {
 	return JSON.stringify({
 		quality: s.quality,
 		finalSpeed: s.finalSpeed,
+		customEncoderParams: s.customEncoderParams,
+		filmGrainTablePath: s.filmGrainTablePath,
+		filmGrainSampling: s.filmGrainSampling,
+		filmGrainRange: s.filmGrainRange,
 		denoise: s.denoise,
 		denoiseEngine: s.denoiseEngine,
 		avdParams: s.avdParams,

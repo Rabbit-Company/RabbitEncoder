@@ -43,12 +43,16 @@ export async function openPreviewModal(jobId: string): Promise<void> {
 	byId("preview-modal").style.display = "";
 
 	// Start from the comparison sources of this job's last run, if it had any.
-	appState.previewReferences = [];
+	appState.previewReferences = job.originalSourcePath ? [{ path: job.originalSourcePath, label: "Original" }] : [];
 	renderPreviewReferences();
 	try {
 		const state = await fetchPreviewState(jobId);
 		if (appState.currentPreviewJobId !== jobId) return;
-		appState.previewReferences = (state.references || []).map((r) => ({ path: r.path, label: r.label }));
+		const previous = (state.references || []).map((r) => ({ path: r.path, label: r.label }));
+		appState.previewReferences =
+			job.originalSourcePath && !previous.some((r) => r.path === job.originalSourcePath)
+				? [{ path: job.originalSourcePath, label: "Original" }, ...previous].slice(0, MAX_PREVIEW_REFERENCES)
+				: previous;
 		renderPreviewReferences();
 	} catch {
 		// The poll below reports load problems.

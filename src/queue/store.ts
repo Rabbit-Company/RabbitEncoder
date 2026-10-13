@@ -7,6 +7,10 @@ import {
 	type DenoiseBackend,
 	type PreviewState,
 	MEDIA_EXTENSIONS,
+	FILM_GRAIN_SAMPLINGS,
+	FILM_GRAIN_RANGES,
+	type FilmGrainSampling,
+	type FilmGrainRange,
 	type VideoEncodeMode,
 	type AudioEncodeMode,
 	type SubtitleProcessingMode,
@@ -32,6 +36,8 @@ import { isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
 import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 import { compareQueuedJobs, queuePriority } from "./priority";
+import { ensureFilmGrainTable, generateFilmGrainTable, type FilmGrainRun } from "../video/film-grain-generator";
+import { formatFilmGrainProgress } from "../video/film-grain-progress";
 
 const jobs = new Map<string, Job>();
 let paused = false;
@@ -42,6 +48,9 @@ let queueFile = "";
 let settingsFile = "";
 let activeAbortController: AbortController | null = null;
 let activeJobId: string | null = null;
+
+const filmGrainRuns = new Map<string, FilmGrainRun>();
+let activeFilmGrainRun: { jobId: string; abort: AbortController } | null = null;
 
 const previews = new Map<string, PreviewState>();
 let activePreviewJobId: string | null = null;
@@ -130,6 +139,7 @@ function loadQueue(): void {
 				// Jobs queued before the denoiser was selectable ran FFmpeg nlmeans; keep them on it.
 				denoiseEngine: restoredSettings.denoiseEngine ?? "nlmeans",
 				avdParams: normalizeAvdParams(restoredSettings.avdParams, appConfig.defaults.avdParams),
+				filmGrainRange: restoredSettings.filmGrainRange ?? "full",
 			};
 
 			jobs.set(raw.id, raw as Job);
@@ -167,6 +177,7 @@ function loadSettings(): void {
 			...raw,
 			audioBitrates: { ...appConfig.defaults.audioBitrates, ...restoredBitrates },
 			avdParams: normalizeAvdParams(raw.avdParams, appConfig.defaults.avdParams),
+			filmGrainRange: raw.filmGrainRange ?? "full",
 		};
 		Logger.info("[store] Restored defaults from settings.json");
 	} catch (err: any) {
@@ -210,6 +221,9 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	manualCrf: numIn(1, 70), // NOTE: original did not round CRF — numIn preserves that
 	manualPreset: intIn(-1, 13), // original rounded preset
 	customEncoderParams: str(2000),
+	filmGrainTablePath: str(2000),
+	filmGrainSampling: enumOf(FILM_GRAIN_SAMPLINGS),
+	filmGrainRange: enumOf(FILM_GRAIN_RANGES),
 
 	quality: enumOf(["lower", "low", "medium", "high", "higher"]),
 	finalSpeed: enumOf(["slower", "slow", "medium", "fast", "faster"]),
@@ -376,7 +390,16 @@ export function getJob(id: string): Job | undefined {
 	return jobs.get(id);
 }
 
-export function addJob(filename: string, inputPath: string, relativePath: string = "", replaceSource: boolean = false): Job {
+export function addJob(
+	filename: string,
+	inputPath: string,
+	relativePath: string = "",
+	replaceSource: boolean = false,
+	originalSourcePath?: string,
+	autoFilmGrain = false,
+	filmGrainSampling?: FilmGrainSampling,
+	filmGrainRange?: FilmGrainRange,
+): Job {
 	for (const job of jobs.values()) {
 		if (job.inputPath === inputPath && job.status !== "error" && job.status !== "done") {
 			return job;
@@ -388,6 +411,8 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 		id,
 		filename,
 		inputPath,
+		originalSourcePath,
+		autoFilmGrain: Boolean(originalSourcePath && autoFilmGrain),
 		relativePath,
 		status: "queued",
 		progress: 0,
@@ -410,6 +435,8 @@ export function addJob(filename: string, inputPath: string, relativePath: string
 				medium: { ...appConfig.defaults.gradfunParams.medium },
 				heavy: { ...appConfig.defaults.gradfunParams.heavy },
 			},
+			...(filmGrainSampling ? { filmGrainSampling } : {}),
+			...(filmGrainRange ? { filmGrainRange } : {}),
 		},
 		replaceSource,
 	};
@@ -449,7 +476,13 @@ export function addRepairJob(rawPlan: RepairPlan): Job {
 	return job;
 }
 
-export function scanLibraryFolder(folderPath: string): { added: number; skipped: number; alreadyEncoded: number } {
+export function scanLibraryFolder(
+	folderPath: string,
+	sourceMap: Record<string, string> = {},
+	autoFilmGrain = false,
+	filmGrainSampling?: FilmGrainSampling,
+	filmGrainRange?: FilmGrainRange,
+): { added: number; skipped: number; alreadyEncoded: number } {
 	let added = 0;
 	let skipped = 0;
 	let alreadyEncoded = 0;
@@ -492,7 +525,7 @@ export function scanLibraryFolder(folderPath: string): { added: number; skipped:
 				const displayName = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
 				Logger.info(`[library] Queuing: ${displayName}`);
-				addJob(entry.name, fullPath, relativePath, true);
+				addJob(entry.name, fullPath, relativePath, true, sourceMap[fullPath], autoFilmGrain, filmGrainSampling, filmGrainRange);
 				added++;
 			}
 		} catch (err: any) {
@@ -504,13 +537,19 @@ export function scanLibraryFolder(folderPath: string): { added: number; skipped:
 	return { added, skipped, alreadyEncoded };
 }
 
-export function scanLibraryPath(targetPath: string): { added: number; skipped: number; alreadyEncoded: number } {
+export function scanLibraryPath(
+	targetPath: string,
+	sourceMap: Record<string, string> = {},
+	autoFilmGrain = false,
+	filmGrainSampling?: FilmGrainSampling,
+	filmGrainRange?: FilmGrainRange,
+): { added: number; skipped: number; alreadyEncoded: number } {
 	const resolved = resolve(targetPath);
 
 	try {
 		const stat = statSync(resolved);
 		if (stat.isDirectory()) {
-			return scanLibraryFolder(resolved);
+			return scanLibraryFolder(resolved, sourceMap, autoFilmGrain, filmGrainSampling, filmGrainRange);
 		}
 	} catch {
 		return { added: 0, skipped: 0, alreadyEncoded: 0 };
@@ -536,7 +575,7 @@ export function scanLibraryPath(targetPath: string): { added: number; skipped: n
 
 	const dir = dirname(resolved);
 	const folderName = basename(dir);
-	addJob(filename, resolved, folderName, true);
+	addJob(filename, resolved, folderName, true, sourceMap[resolved], autoFilmGrain, filmGrainSampling, filmGrainRange);
 	return { added: 1, skipped: 0, alreadyEncoded: 0 };
 }
 
@@ -546,6 +585,7 @@ export function removeJob(id: string): boolean {
 	if (job.status !== "queued" && job.status !== "done" && job.status !== "error" && job.status !== "cancelled") return false;
 	jobs.delete(id);
 	clearPreviewFor(id);
+	clearFilmGrainRunFor(id);
 	saveQueue();
 	return true;
 }
@@ -631,6 +671,7 @@ async function processQueue() {
 	if (!next) return;
 
 	clearPreviewFor(next.id);
+	clearFilmGrainRunFor(next.id);
 
 	processing = true;
 	next.startedAt = Date.now();
@@ -680,6 +721,66 @@ async function processQueue() {
 	processQueue();
 }
 
+export function getFilmGrainRun(jobId: string): FilmGrainRun | null {
+	return filmGrainRuns.get(jobId) ?? null;
+}
+
+export type StartFilmGrainRunResult = { ok: true; run: FilmGrainRun } | { ok: false; error: string; status: 400 | 404 | 409 };
+
+/** Measure a table for a queued job on request. The modal that asked polls the run for progress. */
+export function startFilmGrainRun(jobId: string, sourcePath: string, sampling: FilmGrainSampling, range: FilmGrainRange): StartFilmGrainRunResult {
+	if (activeFilmGrainRun) return { ok: false, error: "Another film grain table is already being generated", status: 409 };
+	const job = jobs.get(jobId);
+	if (!job) return { ok: false, error: "Job not found", status: 404 };
+	if (job.status !== "queued") return { ok: false, error: "Film grain tables can only be generated for queued jobs", status: 400 };
+
+	const controller = new AbortController();
+	const run: FilmGrainRun = { status: "running", sourcePath, sampling, range, startedAt: Date.now() };
+	filmGrainRuns.set(jobId, run);
+	activeFilmGrainRun = { jobId, abort: controller };
+
+	(async () => {
+		try {
+			const generated = await generateFilmGrainTable(job, appConfig, sourcePath, sampling, range, controller.signal, (progress) => {
+				run.progress = progress;
+			});
+			if (controller.signal.aborted || jobs.get(jobId) !== job || job.status !== "queued") {
+				try {
+					unlinkSync(generated.tablePath);
+				} catch {}
+				throw controller.signal.aborted ? new CancelledError() : new Error("Job is no longer queued");
+			}
+			job.originalSourcePath = sourcePath;
+			job.settings.filmGrainTablePath = generated.tablePath;
+			saveQueue();
+			Object.assign(run, { status: "done", tablePath: generated.tablePath, segments: generated.segments });
+		} catch (err) {
+			if (err instanceof CancelledError) run.status = "cancelled";
+			else {
+				run.status = "error";
+				run.error = err instanceof Error ? err.message : String(err);
+				Logger.warn(`[store] Film grain table generation failed for job ${jobId}: ${run.error}`);
+			}
+		} finally {
+			run.finishedAt = Date.now();
+			if (activeFilmGrainRun?.abort === controller) activeFilmGrainRun = null;
+		}
+	})();
+
+	return { ok: true, run };
+}
+
+export function cancelFilmGrainRun(jobId: string): boolean {
+	if (activeFilmGrainRun?.jobId !== jobId) return false;
+	activeFilmGrainRun.abort.abort();
+	return true;
+}
+
+function clearFilmGrainRunFor(jobId: string): void {
+	cancelFilmGrainRun(jobId);
+	filmGrainRuns.delete(jobId);
+}
+
 export function getPreviewState(jobId: string): PreviewState | null {
 	return previews.get(jobId) ?? null;
 }
@@ -700,6 +801,7 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 	if (job.status === "done") return { ok: false, error: "Preview only available for unfinished jobs", status: 400 };
 
 	const opts: PreviewEncodeOptions = { ...DEFAULT_PREVIEW_OPTIONS, ...(options || {}) };
+	if (options?.references === undefined && job.originalSourcePath) opts.references = [{ path: job.originalSourcePath, label: "Original" }];
 
 	const controller = new AbortController();
 	activePreviewJobId = jobId;
@@ -719,8 +821,19 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 	};
 	previews.set(jobId, state);
 
+	const tableBefore = job.settings.filmGrainTablePath;
 	(async () => {
 		try {
+			// A job that measures its own table needs it before any clip can be encoded with it.
+			await ensureFilmGrainTable(job, appConfig, controller.signal, (progress) => {
+				const cur = previews.get(jobId);
+				if (cur) cur.currentDetail = `Generating film grain table: ${formatFilmGrainProgress(progress)}`;
+			});
+			if (job.settings.filmGrainTablePath !== tableBefore) {
+				saveQueue();
+				const cur = previews.get(jobId);
+				if (cur) cur.settingsFingerprint = previewSettingsFingerprint(job.settings);
+			}
 			await runPreviewEncode({
 				job,
 				config: appConfig,

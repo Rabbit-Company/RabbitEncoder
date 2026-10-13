@@ -151,6 +151,8 @@ export function previewSettingsFingerprintFE(s: JobSettings): string {
 	return JSON.stringify({
 		quality: s.quality,
 		finalSpeed: s.finalSpeed,
+		customEncoderParams: s.customEncoderParams,
+		filmGrainTablePath: s.filmGrainTablePath,
 		denoise: s.denoise,
 		denoiseEngine: s.denoiseEngine,
 		avdParams: s.avdParams,
@@ -166,6 +168,11 @@ export function previewSettingsFingerprintFE(s: JobSettings): string {
 		autoDenoiseThresholds: s.autoDenoiseThresholds,
 		autoDenoiseBitrateThresholds: s.autoDenoiseBitrateThresholds,
 		vsFilters: s.vsFilters ?? [],
+		subtitleProcessing: s.subtitleProcessing,
+		audioEncode: s.audioEncode,
+		convertSrtToAss: s.convertSrtToAss,
+		restyleAssFont: s.restyleAssFont,
+		removeUnusedFonts: s.removeUnusedFonts,
 	});
 }
 

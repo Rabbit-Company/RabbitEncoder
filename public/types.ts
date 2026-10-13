@@ -5,6 +5,7 @@ export type DenoiseLevel = "off" | "light" | "medium" | "heavy" | "auto";
 export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
 export type VideoEncodeMode = "av1" | "off";
+export type FilmGrainSampling = "all" | "half" | "quarter";
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
@@ -141,6 +142,9 @@ export interface JobSettings {
 	manualCrf: number;
 	manualPreset: number;
 	customEncoderParams: string;
+	filmGrainTablePath: string;
+	filmGrainSampling: FilmGrainSampling;
+	filmGrainRange?: "representative" | "full";
 	videoEncode: VideoEncodeMode;
 	audioEncode: AudioEncodeMode;
 	subtitleProcessing: SubtitleProcessingMode;
@@ -494,6 +498,9 @@ export interface Job {
 	id: string;
 	filename: string;
 	inputPath: string;
+	/** Aligned grainy original for an externally denoised input. */
+	originalSourcePath?: string;
+	autoFilmGrain?: boolean;
 	relativePath: string;
 	status: JobStatus;
 	progress: number;
@@ -705,6 +712,20 @@ export interface PreviewSample {
 	prepareFrames: PreviewSamplePrepareFrame[];
 	/** Indices into PreviewState.references whose still was captured for this sample. */
 	refFrames: number[];
+}
+
+/** A film grain table generation started by hand from a job's advanced settings. */
+export interface FilmGrainRun {
+	status: "idle" | "running" | "done" | "error" | "cancelled";
+	sourcePath?: string;
+	sampling?: FilmGrainSampling;
+	range?: "representative" | "full";
+	startedAt?: number;
+	finishedAt?: number;
+	progress?: { frames: number; totalFrames?: number; percent?: number; speed?: string; eta?: string };
+	tablePath?: string;
+	segments?: number;
+	error?: string;
 }
 
 export interface PreviewState {

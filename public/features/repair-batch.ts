@@ -97,7 +97,7 @@ function renderPairs(): void {
 	const parts = [`${paired} of ${rows.length} encode${rows.length === 1 ? "" : "s"} paired`];
 	if (unresolved) parts.push(`${unresolved} skipped`);
 	if (duplicates.size) parts.push(`${duplicates.size} source${duplicates.size === 1 ? "" : "s"} used twice`);
-	byId("repair-batch-summary").textContent = rows.length ? parts.join(" · ") : "";
+	byId("repair-batch-summary").textContent = rows.length ? parts.join(" | ") : "";
 
 	buttonById("repair-batch-queue-btn").disabled = paired === 0 || duplicates.size > 0;
 	buttonById("repair-batch-queue-btn").textContent = paired ? `Queue ${paired} replacement${paired === 1 ? "" : "s"}` : "Queue replacements";

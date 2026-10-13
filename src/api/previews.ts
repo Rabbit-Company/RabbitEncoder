@@ -2,7 +2,7 @@ import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
 import { cancelPreview, clearPreviewFor, getPreviewState, startPreview } from "../queue/store";
 import { MAX_PREVIEW_REFERENCES, resolvePreviewArtifact, type PreviewEncodeOptions, type PreviewReferenceInput } from "../pipeline/preview-encoder";
-import { resolveAllowedMkv } from "./repair";
+import { resolveAllowedMediaFile } from "./repair";
 
 export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/jobs/:id/preview", (c) => {
@@ -46,7 +46,7 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 				const entry = (raw ?? {}) as { path?: unknown; label?: unknown };
 				let path: string;
 				try {
-					path = resolveAllowedMkv(entry.path, config, "Comparison source");
+					path = resolveAllowedMediaFile(entry.path, config, "Comparison source");
 				} catch (err) {
 					return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
 				}

@@ -101,6 +101,20 @@ Each sample starts from an exact, lossless FFV1 video window rather than a strea
 
 Intermediate VapourSynth and prepare-filter stills are also exposed when those stages are active.
 
+### Film grain tables
+
+When adding externally denoised videos from the Library, choose an original file or a folder of originals in **Queue Videos**. Rabbit proposes unique episode or filename matches. Review the pairs and adjust any unmatched rows. **Generate FGS tables automatically for mapped videos** is on by default when a match is found and can be turned off. Mapped originals are also preselected in Preview. Unmapped videos encode without automatic FGS. Each mapped video measures its table as a **Film Grain** step of its own encode, right after **Analyze**. `grav1synth` uses every CPU core, so the step never runs beside another job's denoise or encode. The step shows frame progress, speed, and ETA. If generation fails, the job fails with the error, and retrying the job retries generation. Starting a Preview for a mapped job measures the table first when it does not exist yet.
+
+**Measurement range** controls how much video is analyzed. **Quick** is the default for new jobs: Rabbit cuts a matching, lossless 30-second window near the middle of the original and denoised videos, checks frame alignment, and measures that window. Videos shorter than a minute use the full video. **Full video** retains the earlier behavior. The resulting table is stored on the job and reused for every Preview and the final encode. Existing saved jobs and defaults retain full-video measurement until changed.
+
+**Noise sampling** controls how much of each frame's noise correlation data `grav1synth` samples: All uses every observation, Half about half, and Quarter about one quarter. Grain strength is measured in every flat block. The two controls are independent and are available in **Queue Videos** and **Advanced Settings → AV1 film grain table**. Changing them does not regenerate a table that already exists; generate it again to use the new choices.
+
+For an individual queued video, **Advanced Settings → AV1 film grain table** can generate a table from its aligned grainy original, or accept an existing table path inside the encoder container. Generation runs right away and shows frame progress, speed, and ETA in that window. It can be cancelled, and it continues if the window is closed. Run it while no encode is active, because it uses every CPU core. Rabbit runs `grav1synth diff` on the selected range and stores the resulting AV1 film grain table in the mounted temp directory. The original and denoised files must have matching dimensions, frame rate, and frame alignment. Run **Preview** before the full encode.
+
+Rabbit chooses the middle measured segment, writes a single-segment table, and passes it to SVT-AV1 as `--fgs-table` for previews and full encodes. Keep the source table available until encoding finishes. SVT-AV1 currently supports one table for an entire encode, so scene-varying grain cannot be reproduced frame by frame in this workflow. A measured segment may fit the source better than the generic noise model from one `--photon-noise` ISO value when the files are aligned, but the result is not guaranteed (compare previews). Do not combine the table with `--photon-noise`, `--film-grain`, or another `--fgs-table` in custom encoder parameters.
+
+The container downloads the checksum-verified [grav1synth v0.3.8 release](https://github.com/Rabbit-Company/grav1synth/releases/tag/v0.3.8), which is built against RabbitEncoder's FFmpeg 9.0.2 libraries. The container selects matching FFmpeg libraries for its CPU variant at startup.
+
 ## Subtitle Repair / Remux
 
 Open **Repair** in the dashboard, select an encoded MKV and optionally its original source MKV, then inspect their subtitle tracks. The output plan can keep or remove target tracks, import source tracks, reorder them, edit names/languages and Matroska flags, and choose `zlib`, uncompressed, or the track's current compression. Text tracks can either be copied unchanged or processed with the current Rabbit ASS/SRT styling defaults.

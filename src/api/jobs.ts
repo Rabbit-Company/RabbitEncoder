@@ -1,13 +1,34 @@
 import { existsSync, mkdtempSync, rmSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, BitrateAnalysisResult, JobSettings } from "../core/types";
-import { cancelJob, getAllJobs, getJob, moveJob, removeJob, reorderJobs, retryJob, updateJobSettings } from "../queue/store";
+import {
+	FILM_GRAIN_RANGES,
+	FILM_GRAIN_SAMPLINGS,
+	type AppConfig,
+	type BitrateAnalysisResult,
+	type FilmGrainRange,
+	type FilmGrainSampling,
+	type JobSettings,
+} from "../core/types";
+import {
+	cancelFilmGrainRun,
+	cancelJob,
+	getAllJobs,
+	getFilmGrainRun,
+	getJob,
+	moveJob,
+	removeJob,
+	reorderJobs,
+	retryJob,
+	startFilmGrainRun,
+	updateJobSettings,
+} from "../queue/store";
 import { probeFile } from "../pipeline/probe";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewAudio, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
 import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
+import { resolveAllowedMediaFile } from "./repair";
 
 /**
  * Completed bitrate-analysis results, keyed by `${jobId}:${mode}[:${metric}]`.
@@ -25,6 +46,40 @@ function clearBitrateAnalysisCache(jobId: string): void {
 }
 
 export function registerJobRoutes(app: Web, config: AppConfig): void {
+	app.post("/api/jobs/:id/film-grain-table", async (c) => {
+		const job = getJob(c.params.id!);
+		if (!job) return c.json({ error: "Job not found" }, 404);
+		if (!existsSync(job.inputPath)) return c.json({ error: "Job input is no longer accessible" }, 400);
+		let body: { sourcePath?: unknown; noiseSampling?: unknown; range?: unknown };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Choose an original source video" }, 400);
+		}
+		const sampling = body.noiseSampling ?? job.settings.filmGrainSampling ?? "all";
+		if (!FILM_GRAIN_SAMPLINGS.includes(sampling as FilmGrainSampling)) return c.json({ error: "Noise sampling must be all, half, or quarter" }, 400);
+		const range = body.range ?? job.settings.filmGrainRange ?? "full";
+		if (!FILM_GRAIN_RANGES.includes(range as FilmGrainRange)) return c.json({ error: "Measurement range must be representative or full" }, 400);
+		let sourcePath: string;
+		try {
+			sourcePath = resolveAllowedMediaFile(body.sourcePath, config, "Original source");
+		} catch (err) {
+			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+		}
+		const result = startFilmGrainRun(job.id, sourcePath, sampling as FilmGrainSampling, range as FilmGrainRange);
+		if (!result.ok) return c.json({ error: result.error }, result.status);
+		return c.json(result.run, 202);
+	});
+
+	app.get("/api/jobs/:id/film-grain-table", (c) => {
+		return c.json(getFilmGrainRun(c.params.id!) ?? { status: "idle" });
+	});
+
+	app.delete("/api/jobs/:id/film-grain-table", (c) => {
+		if (!cancelFilmGrainRun(c.params.id!)) return c.json({ error: "No film grain table is being generated for this job" }, 404);
+		return c.json({ ok: true });
+	});
+
 	app.get("/api/jobs", (c) => {
 		return c.json(getAllJobs());
 	});

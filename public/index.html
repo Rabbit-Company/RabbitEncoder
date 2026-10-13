@@ -708,6 +708,84 @@
 							<textarea id="advanced-custom-encoder-params" rows="3" placeholder="--film-grain 12 --min-qp 8"></textarea>
 							<div class="setting-help">Raw CLI args appended verbatim to the encoder command.</div>
 						</div>
+						<div class="setting-group">
+							<label>AV1 film grain table</label>
+							<div class="lang-filter-hint">
+								A table measured from the grainy original lets SVT-AV1 put matching synthetic grain back on an externally denoised input. Rabbit uses the
+								table's middle segment for the whole encode and passes it as <code>--fgs-table</code>. Do not also set photon noise or film grain in custom
+								parameters.
+							</div>
+							<div class="nested-settings">
+								<div class="setting-group">
+									<label>Measurement range</label>
+									<div class="radio-group" id="advanced-film-grain-range"></div>
+									<div class="lang-filter-hint">
+										Quick measures a 30-second window near the middle of both videos. The resulting table is reused for Preview and the final encode. Full video
+										measures every frame.
+									</div>
+								</div>
+								<div class="setting-group">
+									<label>Noise sampling</label>
+									<div class="radio-group" id="advanced-film-grain-sampling"></div>
+									<div class="lang-filter-hint">
+										All uses every noise observation, Half uses about half, Quarter uses about one quarter. This is separate from measurement range. Changing
+										either setting does not regenerate an existing table.
+									</div>
+								</div>
+								<div class="nested-settings-set" id="advanced-film-grain-job" style="display: none">
+									<div class="setting-group">
+										<label for="advanced-film-grain-table">Table path</label>
+										<input
+											class="repair-input"
+											id="advanced-film-grain-table"
+											type="text"
+											placeholder="/data/temp/film-grain-tables/example.tbl"
+											autocomplete="off"
+											spellcheck="false"
+										/>
+										<div class="lang-filter-hint">
+											Path inside the encoder container to an existing AV1 film grain table. Leave empty to encode without one.
+										</div>
+									</div>
+									<div class="setting-group">
+										<label for="advanced-film-grain-original">Generate from original</label>
+										<div class="film-grain-source-row">
+											<input
+												class="repair-input"
+												id="advanced-film-grain-original"
+												type="text"
+												placeholder="Original video path inside container"
+												autocomplete="off"
+												spellcheck="false"
+											/>
+											<button class="btn btn-ghost" type="button" id="advanced-film-grain-choose">Choose...</button>
+										</div>
+										<div class="lang-filter-hint">
+											The aligned grainy original of this denoised input. Generation uses every CPU core, so run it while no encode is active.
+										</div>
+										<div class="film-grain-actions">
+											<button class="btn btn-primary" type="button" id="advanced-film-grain-generate-btn">Generate table</button>
+											<button class="btn btn-ghost" type="button" id="advanced-film-grain-cancel-btn" style="display: none">Cancel</button>
+										</div>
+										<div class="fgs-progress" id="advanced-film-grain-progress" style="display: none">
+											<div class="fgs-progress-head"><span>Generating film grain table</span><span id="advanced-film-grain-progress-pct"></span></div>
+											<div
+												class="step-bar"
+												id="advanced-film-grain-progress-bar"
+												role="progressbar"
+												aria-label="Film grain table generation"
+												aria-valuemin="0"
+												aria-valuemax="100"
+											>
+												<div class="step-bar-fill" id="advanced-film-grain-progress-fill"></div>
+											</div>
+											<div class="fgs-progress-detail" id="advanced-film-grain-progress-detail"></div>
+										</div>
+										<div id="advanced-film-grain-result" class="lang-filter-hint" role="status" aria-live="polite"></div>
+									</div>
+								</div>
+							</div>
+						</div>
 
 						<!-- Settings of each denoiser. Which one runs is chosen in the main settings (Video handling -> Denoiser). -->
 						<div class="setting-group">
@@ -846,6 +924,54 @@
 					<div class="modal-footer">
 						<span class="modal-note" id="library-note">Select folders or files to encode</span>
 						<button class="btn btn-primary" id="library-encode-btn" disabled>Encode Selected</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="library-queue-modal" class="modal-overlay library-queue-overlay" style="display: none">
+				<div class="modal repair-audit-modal">
+					<div class="modal-header">
+						<div>
+							<h2>Queue Videos</h2>
+							<div class="repair-subtitle" id="library-queue-count"></div>
+						</div>
+						<button class="btn-close" id="library-queue-close" aria-label="Close">&times;</button>
+					</div>
+					<div class="modal-body repair-audit-body">
+						<div class="repair-file-choice">
+							<span class="repair-file-label">Aligned grainy originals (optional)</span>
+							<div class="repair-file-selection" id="library-queue-source"></div>
+							<div class="repair-file-buttons">
+								<button class="btn btn-ghost" id="library-queue-file" type="button">Choose file...</button>
+								<button class="btn btn-ghost" id="library-queue-folder" type="button">Choose folder...</button>
+								<button class="btn btn-ghost" id="library-queue-clear" type="button">No originals</button>
+							</div>
+						</div>
+						<div class="library-queue-fgs">
+							<label class="library-queue-toggle"><input type="checkbox" id="library-queue-fgs" /> Generate FGS tables automatically for mapped videos</label>
+							<label class="library-queue-toggle"
+								>Measurement range
+								<select class="select-input" id="library-queue-range">
+									<option value="representative">Quick (30s near middle)</option>
+									<option value="full">Full video</option>
+								</select>
+							</label>
+							<label class="library-queue-toggle"
+								>Noise sampling
+								<select class="select-input" id="library-queue-sampling">
+									<option value="all">All observations</option>
+									<option value="half">Half</option>
+									<option value="quarter">Quarter</option>
+								</select>
+							</label>
+						</div>
+						<div class="repair-audit-summary" id="library-queue-summary"></div>
+						<div class="repair-batch-pairs" id="library-queue-pairs"></div>
+						<div class="sub-preview-error" id="library-queue-error" style="display: none"></div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-ghost" id="library-queue-cancel">Cancel</button>
+						<button class="btn btn-primary" id="library-queue-submit">Queue videos</button>
 					</div>
 				</div>
 			</div>

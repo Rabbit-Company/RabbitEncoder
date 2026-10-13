@@ -56,6 +56,9 @@ import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
+import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
+import { ensureFilmGrainTable, needsFilmGrainTable } from "../video/film-grain-generator";
+import { formatFilmGrainProgress } from "../video/film-grain-progress";
 
 export { CancelledError } from "../core/process";
 
@@ -314,15 +317,26 @@ export async function encodeJob(
 	const sink = opts.preview ?? null;
 	const tempDir = join(config.tempDir, job.id);
 	mkdirSync(tempDir, { recursive: true });
+	// A preview clip never measures a table itself: the preview does that on the full video first.
+	const generateFilmGrain = !previewMode && needsFilmGrainTable(job);
+	if (
+		(generateFilmGrain || job.settings.filmGrainTablePath?.trim()) &&
+		job.settings.videoEncode !== "off" &&
+		/--(?:photon-noise|film-grain|fgs-table)(?:\s|=|$)/.test(job.settings.customEncoderParams || "")
+	)
+		throw new Error("Remove --photon-noise, --film-grain, or --fgs-table from custom encoder parameters when using a film grain table");
 
 	const stem = parsePath(job.filename).name;
 	const releaseGroup = detectReleaseGroup(stem);
 	const baseTitle = extractBaseTitle(stem);
 
 	const steps = makeSteps();
+	// Shown after Analyze, and only on jobs that measure their own table.
+	const filmGrainStep: JobStep | null = generateFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
+	const shownSteps = (): JobStep[] => (filmGrainStep ? [steps[S_PROBE]!, filmGrainStep, ...steps.slice(S_PREPARE)] : [...steps]);
 
-	function setStep(idx: number, partial: Partial<JobStep>) {
-		const step = steps[idx]!;
+	function setStep(target: number | JobStep, partial: Partial<JobStep>) {
+		const step = typeof target === "number" ? steps[target]! : target;
 
 		if (partial.status === "active" && step.status !== "active") {
 			step.startedAt = Date.now();
@@ -338,11 +352,12 @@ export async function encodeJob(
 		}
 
 		Object.assign(step, partial);
-		const overall = steps.reduce((sum, s) => sum + s.progress, 0) / steps.length;
-		const activeStep = steps.find((s) => s.status === "active");
+		const shown = shownSteps();
+		const overall = shown.reduce((sum, s) => sum + s.progress, 0) / shown.length;
+		const activeStep = shown.find((s) => s.status === "active");
 
 		updateJob({
-			steps: [...steps],
+			steps: shown,
 			progress: Math.round(overall * 100) / 100,
 			currentStage: activeStep?.label || job.currentStage,
 		});
@@ -371,6 +386,23 @@ export async function encodeJob(
 		}
 
 		setStep(S_PROBE, { status: "done", progress: 100 });
+
+		// Film grain table. grav1synth uses every core, so it runs here and not beside another job.
+		if (filmGrainStep) {
+			checkCancelled();
+			setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring film grain" });
+			await ensureFilmGrainTable(job, config, signal, (progress) => {
+				setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) });
+			});
+			checkCancelled();
+			setStep(filmGrainStep, { status: "done", progress: 100 });
+		}
+		const filmGrainTablePath = job.settings.videoEncode !== "off" ? job.settings.filmGrainTablePath?.trim() : "";
+		if (filmGrainTablePath) {
+			if (!existsSync(filmGrainTablePath) || statSync(filmGrainTablePath).size === 0)
+				throw new Error(`Film grain table is missing or empty: ${filmGrainTablePath}`);
+			writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"));
+		}
 
 		// Prepare
 		checkCancelled();
@@ -802,7 +834,7 @@ export async function encodeJob(
 				if (enc.usesAutoBoost) {
 					const colorParams = svtColorParamsFromProbe(probe);
 					const custom = job.settings.customEncoderParams?.trim() ?? "";
-					const finalParams = custom ? `${colorParams} ${custom}` : colorParams;
+					const finalParams = `${colorParams}${filmGrainTablePath ? " --fgs-table film-grain.tbl" : ""}${custom ? ` ${custom}` : ""}`;
 
 					const abeArgs = [
 						"python3",
@@ -1015,6 +1047,7 @@ export async function encodeJob(
 
 					const customParams = (job.settings.customEncoderParams || "").trim();
 					const customList = customParams.length > 0 ? customParams.split(/\s+/) : [];
+					if (filmGrainTablePath) customList.push("--fgs-table", "film-grain.tbl");
 
 					const y4mFifo = join(tempDir, "direct_y4m.fifo");
 					try {
@@ -2101,20 +2134,20 @@ export async function encodeJob(
 		}
 	} catch (err: any) {
 		Logger.error(err?.message);
-		const activeIdx = steps.findIndex((s) => s.status === "active");
-		if (activeIdx >= 0) steps[activeIdx]!.status = "error";
+		const failedStep = shownSteps().find((s) => s.status === "active");
+		if (failedStep) failedStep.status = "error";
 
 		if (err instanceof CancelledError) {
 			updateJob({
 				status: "cancelled",
 				currentStage: "Cancelled",
-				steps: [...steps],
+				steps: shownSteps(),
 			});
 		} else {
 			updateJob({
 				status: "error",
 				currentStage: "Failed",
-				steps: [...steps],
+				steps: shownSteps(),
 				error: err?.message || String(err),
 			});
 		}

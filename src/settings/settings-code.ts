@@ -39,6 +39,8 @@ const BASELINE: JobSettings = {
 	manualCrf: 24,
 	manualPreset: 4,
 	customEncoderParams: "",
+	filmGrainTablePath: "",
+	filmGrainSampling: "all",
 	videoEncode: "av1",
 	audioEncode: "opus",
 	subtitleProcessing: "full",

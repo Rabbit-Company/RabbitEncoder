@@ -32,6 +32,33 @@ export function isPathAllowed(requestedPath: string, libraryDirs: string[]): boo
 	});
 }
 
+/** List video files under a selected file or folder, without following folder symlinks. */
+export function listMediaFiles(selectedPath: string): string[] {
+	const files: string[] = [];
+	function visit(path: string): void {
+		let entries;
+		try {
+			const stat = statSync(path);
+			if (stat.isFile()) {
+				if (MEDIA_EXTENSIONS.has(extname(path).toLowerCase())) files.push(path);
+				return;
+			}
+			if (!stat.isDirectory()) return;
+			entries = readdirSync(path, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (entry.name.startsWith(".")) continue;
+			const fullPath = join(path, entry.name);
+			if (entry.isDirectory()) visit(fullPath);
+			else if (entry.isFile() && MEDIA_EXTENSIONS.has(extname(entry.name).toLowerCase())) files.push(fullPath);
+		}
+	}
+	visit(resolve(selectedPath));
+	return files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
 /**
  * List the contents of a directory within a library path.
  * Returns folders and video files, marking already-encoded files.
