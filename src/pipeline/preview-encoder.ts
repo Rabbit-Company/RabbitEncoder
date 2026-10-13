@@ -410,7 +410,7 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 
 			const clipJob: Job = { ...job, id: `${job.id}__pv${i}`, inputPath: clipPath, probe: undefined, replaceSource: false };
 			report("Encoding clip");
-			await encodeJob(clipJob, config, () => {}, signal, { mode: "preview", precomputed: plan, preview: sink });
+			await encodeJob(clipJob, config, () => {}, signal, { mode: "preview", precomputed: plan, preview: sink, clipStartSeconds: stamps[i]! });
 
 			const encodedClip = join(sampleDir, "encoded.mkv");
 			const sizeBytes = existsSync(encodedClip) ? statSync(encodedClip).size : 0;

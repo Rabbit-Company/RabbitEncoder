@@ -401,7 +401,7 @@ export async function encodeJob(
 		if (filmGrainTablePath) {
 			if (!existsSync(filmGrainTablePath) || statSync(filmGrainTablePath).size === 0)
 				throw new Error(`Film grain table is missing or empty: ${filmGrainTablePath}`);
-			writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"));
+			writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"), opts.clipStartSeconds);
 		}
 
 		// Prepare
@@ -835,7 +835,7 @@ export async function encodeJob(
 				if (enc.usesAutoBoost) {
 					const colorParams = svtColorParamsFromProbe(probe);
 					const custom = job.settings.customEncoderParams?.trim() ?? "";
-					const finalParams = `${colorParams}${filmGrainTablePath ? " --fgs-table film-grain.tbl" : ""}${custom ? ` ${custom}` : ""}`;
+					const finalParams = `${colorParams}${custom ? ` ${custom}` : ""}`;
 
 					const abeArgs = [
 						"python3",
@@ -1048,7 +1048,6 @@ export async function encodeJob(
 
 					const customParams = (job.settings.customEncoderParams || "").trim();
 					const customList = customParams.length > 0 ? customParams.split(/\s+/) : [];
-					if (filmGrainTablePath) customList.push("--fgs-table", "film-grain.tbl");
 
 					const y4mFifo = join(tempDir, "direct_y4m.fifo");
 					try {
@@ -1222,6 +1221,25 @@ export async function encodeJob(
 
 				if (!existsSync(ivfFile)) {
 					throw new Error("Encoder did not produce output .ivf file");
+				}
+
+				// SVT-AV1 reads only the first entry of a table, so the grain is written into the
+				// finished stream instead. That keeps every scene's own grain.
+				if (filmGrainTablePath) {
+					checkCancelled();
+					const encodeDetail = steps[S_FINAL]!.detail;
+					setStep(S_FINAL, { detail: "Applying film grain" });
+					const grainIvf = join(tempDir, "source_video_grain.ivf");
+					rmSync(grainIvf, { force: true });
+					const grainRes = await run(["grav1synth", "apply", ivfFile, "-o", grainIvf, "--grain", join(tempDir, "film-grain.tbl"), "--replace", "--overwrite"], {
+						signal: stageSignal,
+					});
+					checkCancelled();
+					if (grainRes.code !== 0 || !existsSync(grainIvf) || statSync(grainIvf).size === 0) {
+						throw new Error(`grav1synth apply failed: ${(grainRes.stderr || grainRes.stdout).trim().slice(-500) || `exit ${grainRes.code}`}`);
+					}
+					renameSync(grainIvf, ivfFile);
+					setStep(S_FINAL, { detail: encodeDetail });
 				}
 
 				videoMkv = join(tempDir, "video_only.mkv");

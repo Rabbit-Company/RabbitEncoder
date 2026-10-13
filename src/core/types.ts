@@ -46,6 +46,8 @@ export interface EncodeJobOptions {
 	precomputed?: SourceTrackPlan;
 	/** Preview-only artifact sink. Presence implies preview mode. */
 	preview?: PreviewFrameSink;
+	/** Where a preview clip starts in its source video, in seconds. */
+	clipStartSeconds?: number;
 }
 
 /**

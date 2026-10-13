@@ -4,7 +4,7 @@ import { join } from "path";
 import type { AppConfig, FilmGrainSampling, FilmGrainRange, Job } from "../core/types";
 import { CancelledError, run } from "../core/process";
 import { probeFile } from "../pipeline/probe";
-import { filmGrainSegmentCount } from "./film-grain-table";
+import { filmGrainSegmentCount, writeRepresentativeFilmGrainTable } from "./film-grain-table";
 import { parseFilmGrainProgress, type FilmGrainProgress } from "./film-grain-progress";
 import { Logger } from "../core/logger";
 import { detectFilmGrainCrop, filmGrainCropFilter } from "./film-grain-crop";
@@ -222,8 +222,11 @@ async function generate(
 		if (/Videos did not have equal frame counts/i.test(result.stderr)) throw new Error("Original and denoised videos have different frame counts");
 		if (result.code !== 0) throw new Error(diffErrorText(result.stderr || result.stdout) || `grav1synth exited with code ${result.code}`);
 		if (!existsSync(tempTable) || statSync(tempTable).size <= "filmgrn1\n".length) throw new Error("grav1synth produced no film grain parameters");
-		const segments = filmGrainSegmentCount(tempTable);
 		const tablePath = join(tableDir, `${job.id}-${randomUUID()}.tbl`);
+		// The encode applies a stored table scene by scene, so a table has to cover the whole video.
+		// A window's timestamps do not, and it is stored as its one representative segment.
+		if (window) return { tablePath, segments: writeRepresentativeFilmGrainTable(tempTable, tablePath) };
+		const segments = filmGrainSegmentCount(tempTable);
 		renameSync(tempTable, tablePath);
 		return { tablePath, segments };
 	} finally {

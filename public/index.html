@@ -711,9 +711,9 @@
 						<div class="setting-group">
 							<label>AV1 film grain table</label>
 							<div class="lang-filter-hint">
-								A table measured from the grainy original lets SVT-AV1 put matching synthetic grain back on an externally denoised input. Rabbit uses the
-								table's middle segment for the whole encode and passes it as <code>--fgs-table</code>. Do not also set photon noise or film grain in custom
-								parameters.
+								A table measured from the grainy original puts matching synthetic grain back on an externally denoised input. Rabbit writes it into the encoded
+								video with <code>grav1synth apply</code>. A Full video table keeps each scene's own grain, and a Quick table uses its middle segment for the
+								whole encode. Do not also set photon noise or film grain in custom parameters.
 							</div>
 							<div class="nested-settings">
 								<div class="setting-group">
