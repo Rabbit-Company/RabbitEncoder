@@ -8,8 +8,13 @@ describe("snapCropToStandardAspect", () => {
 		expect(snapCropToStandardAspect({ w: 1444, h: 1080, x: 238, y: 0 }, HD)).toEqual({ w: 1440, h: 1080, x: 240, y: 0 });
 	});
 
-	it("trims a letterboxed picture a few rows over 2.39:1", () => {
-		expect(snapCropToStandardAspect({ w: 1920, h: 810, x: 0, y: 134 }, HD)).toEqual({ w: 1920, h: 804, x: 0, y: 136 });
+	it("trims only the smeared side when the other edge is already clean", () => {
+		expect(snapCropToStandardAspect({ w: 1442, h: 1080, x: 238, y: 0 }, HD)).toEqual({ w: 1440, h: 1080, x: 240, y: 0 });
+		expect(snapCropToStandardAspect({ w: 1442, h: 1080, x: 240, y: 0 }, HD)).toEqual({ w: 1440, h: 1080, x: 240, y: 0 });
+	});
+
+	it("trims a letterboxed picture a few rows over 2.39:1 toward the frame center", () => {
+		expect(snapCropToStandardAspect({ w: 1920, h: 810, x: 0, y: 134 }, HD)).toEqual({ w: 1920, h: 804, x: 0, y: 138 });
 	});
 
 	it("leaves a rect that already sits on a standard ratio", () => {
@@ -18,6 +23,7 @@ describe("snapCropToStandardAspect", () => {
 			{ w: 1920, h: 804, x: 0, y: 138 },
 			{ w: 1920, h: 816, x: 0, y: 132 },
 			{ w: 1920, h: 1036, x: 0, y: 22 },
+			{ w: 1920, h: 1040, x: 0, y: 20 },
 		]) {
 			expect(snapCropToStandardAspect(rect, HD)).toBe(rect);
 		}

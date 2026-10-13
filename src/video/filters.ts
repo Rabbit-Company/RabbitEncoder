@@ -493,12 +493,12 @@ function roundEven(n: number): number {
 
 /**
  * Upscaled masters smear the picture edge a pixel or two into the bars, so
- * cropdetect lands just outside the real frame (1444x1080 for a 4:3 picture
- * that is really 1440x1080). When the detected rect is only slightly larger
- * than a standard aspect ratio, trim it inward to that ratio. Only the axis
- * that actually has bars is trimmed, the rect never grows (that would pull
- * bar back in), and a rect already within rounding of a standard ratio is
- * left alone.
+ * cropdetect lands just outside the real frame (1444x1080 or 1442x1080 for a
+ * 4:3 picture that is really 1440x1080). When the detected rect is only
+ * slightly larger than a standard aspect ratio, trim it inward to that ratio.
+ * Only the axis that actually has bars is trimmed, and the rect never grows
+ * (that would pull bar back in). The trim goes to whichever edges bring the
+ * rect closest to centered in the frame, since the smear is often one-sided.
  */
 export function snapCropToStandardAspect(rect: CropRect, frame: FrameSize, sar: Rational = { num: 1, den: 1 }): CropRect {
 	const pixelShape = sar.num / sar.den;
@@ -507,21 +507,30 @@ export function snapCropToStandardAspect(rect: CropRect, frame: FrameSize, sar: 
 	const hasSideBars = rect.w < frame.width - FULL_FRAME_TOLERANCE_PX;
 	const hasTopBottomBars = rect.h < frame.height - FULL_FRAME_TOLERANCE_PX;
 
+	// Offsets stay even so the crop never lands between chroma samples.
+	const centered = (frameSize: number, size: number, min: number, trim: number) => Math.min(min + trim, Math.max(min, roundEven((frameSize - size) / 2)));
+
 	let best: CropRect | null = null;
 	let bestTrim = Infinity;
 	for (const ratio of STANDARD_ASPECT_RATIOS) {
 		const trimW = rect.w - roundEven((rect.h * ratio) / pixelShape);
 		const trimH = rect.h - roundEven((rect.w * pixelShape) / ratio);
-		if (Math.abs(trimW) <= 2 || Math.abs(trimH) <= 2) return rect;
 
-		// Offsets stay even so the crop never lands between chroma samples.
+		// Already on a standard ratio. Letterbox heights get 2px of slack:
+		// unlike a pillarbox width they are not pinned by the frame height,
+		// and masters round them differently (1.85:1 ships as 1038 and 1040).
+		if (hasSideBars && trimW === 0) return rect;
+		if (hasTopBottomBars && Math.abs(trimH) <= 2) return rect;
+
 		if (hasSideBars && trimW > 0 && trimW <= ASPECT_SNAP_TOLERANCE_PX && trimW < bestTrim) {
 			bestTrim = trimW;
-			best = { ...rect, x: rect.x + Math.floor(trimW / 4) * 2, w: rect.w - trimW };
+			const w = rect.w - trimW;
+			best = { ...rect, x: centered(frame.width, w, rect.x, trimW), w };
 		}
 		if (hasTopBottomBars && trimH > 0 && trimH <= ASPECT_SNAP_TOLERANCE_PX && trimH < bestTrim) {
 			bestTrim = trimH;
-			best = { ...rect, y: rect.y + Math.floor(trimH / 4) * 2, h: rect.h - trimH };
+			const h = rect.h - trimH;
+			best = { ...rect, y: centered(frame.height, h, rect.y, trimH), h };
 		}
 	}
 	return best ?? rect;
