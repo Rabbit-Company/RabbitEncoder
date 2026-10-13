@@ -74,7 +74,8 @@ function renderFileList(): void {
 		? audit.files
 				.map((file) => {
 					const selected = file.path === selectedPath ? " is-selected" : "";
-					const summary = file.group === 0 ? "Matches majority layout" : file.differences[0] || "Different track layout";
+					const more = file.differences.length > 1 ? ` (+${file.differences.length - 1} more)` : "";
+					const summary = file.group === 0 ? "Matches majority layout" : file.differences[0] ? file.differences[0] + more : "Different track layout";
 					return `<button class="repair-audit-file${selected}" type="button" data-audit-select="${escapeHtml(file.path)}">
 						<span class="repair-audit-group-badge ${groupClass(file.group)}">${escapeHtml(file.groupLabel)}</span>
 						<span class="repair-audit-file-text">

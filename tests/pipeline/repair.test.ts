@@ -54,6 +54,36 @@ describe("subtitle repair plans", () => {
 		expect(audit.files[3]!.differences.some((difference) => difference.includes("Subtitle 1 title"))).toBe(true);
 	});
 
+	test("reports one missing track instead of a mismatch on every later track", () => {
+		const languages = ["ja", "ar", "de", "es-419", "fr"];
+		const majorityTracks = [
+			auditTrack("subtitles", "en", "Full Subtitles", { isDefault: true }),
+			auditTrack("subtitles", "en", "SDH", { isHearingImpaired: true }),
+			auditTrack("subtitles", "en", "Signs & Songs", { isForced: true }),
+			...languages.map((language) => auditTrack("subtitles", language, "Full Subtitles")),
+		];
+		const audit = groupRepairAuditFiles([
+			{ path: "/show/e01.mkv", filename: "e01.mkv", tracks: majorityTracks },
+			{ path: "/show/e02.mkv", filename: "e02.mkv", tracks: majorityTracks.map((track) => ({ ...track })) },
+			{ path: "/show/e03.mkv", filename: "e03.mkv", tracks: majorityTracks.filter((_, index) => index !== 1) },
+			{
+				path: "/show/e04.mkv",
+				filename: "e04.mkv",
+				tracks: majorityTracks.filter((_, index) => index !== 1).map((track) => (track.language === "de" ? { ...track, title: "German" } : track)),
+			},
+			{ path: "/show/e05.mkv", filename: "e05.mkv", tracks: [majorityTracks[1]!, majorityTracks[0]!, ...majorityTracks.slice(2)] },
+			{ path: "/show/e06.mkv", filename: "e06.mkv", tracks: [...majorityTracks, auditTrack("subtitles", "ko", "Full Subtitles")] },
+		]);
+
+		expect(audit.files[2]!.differences).toEqual(["Missing Subtitle 2: en (SDH)"]);
+		expect(audit.files[3]!.differences).toEqual([
+			"Missing Subtitle 2: en (SDH)",
+			"Subtitle 5 (Subtitle 6 in group A) title is “German”. Group A uses “Full Subtitles”.",
+		]);
+		expect(audit.files[4]!.differences).toEqual(["Subtitle 2 is Subtitle 1 in group A: en (Full Subtitles)"]);
+		expect(audit.files[5]!.differences).toEqual(["Extra Subtitle 9: ko (Full Subtitles)"]);
+	});
+
 	test("uses spreadsheet-style audit group labels", () => {
 		expect([0, 25, 26, 27, 51, 52].map(repairAuditGroupLabel)).toEqual(["A", "Z", "AA", "AB", "AZ", "BA"]);
 	});

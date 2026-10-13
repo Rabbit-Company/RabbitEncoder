@@ -236,30 +236,87 @@ function shortTrack(track: RepairAuditTrack): string {
 	return `${track.language}${title}`;
 }
 
+const AUDIT_GAP_COST = 10;
+
+/** How unlike two tracks are. Tracks that differ in both language and title cost more than a missing plus an extra track. */
+function auditTrackDistance(actual: RepairAuditTrack, expected: RepairAuditTrack): number {
+	return (
+		(actual.language !== expected.language ? 12 : 0) +
+		(actual.title !== expected.title ? 9 : 0) +
+		(JSON.stringify(auditFlags(actual)) !== JSON.stringify(auditFlags(expected)) ? 3 : 0)
+	);
+}
+
+/**
+ * Pair up the tracks of a file with the tracks of the majority layout by edit distance,
+ * so one missing or extra track does not shift every later track into a mismatch.
+ * Each pair holds the indexes of the matched tracks, or undefined on the side that has none.
+ */
+function alignAuditTracks(actual: RepairAuditTrack[], expected: RepairAuditTrack[]): [number | undefined, number | undefined][] {
+	const cost: number[][] = Array.from({ length: actual.length + 1 }, () => new Array<number>(expected.length + 1).fill(0));
+	for (let i = 1; i <= actual.length; i++) cost[i]![0] = i * AUDIT_GAP_COST;
+	for (let j = 1; j <= expected.length; j++) cost[0]![j] = j * AUDIT_GAP_COST;
+	for (let i = 1; i <= actual.length; i++) {
+		for (let j = 1; j <= expected.length; j++) {
+			cost[i]![j] = Math.min(
+				cost[i - 1]![j - 1]! + auditTrackDistance(actual[i - 1]!, expected[j - 1]!),
+				cost[i - 1]![j]! + AUDIT_GAP_COST,
+				cost[i]![j - 1]! + AUDIT_GAP_COST,
+			);
+		}
+	}
+	const pairs: [number | undefined, number | undefined][] = [];
+	let i = actual.length;
+	let j = expected.length;
+	while (i > 0 || j > 0) {
+		if (i > 0 && j > 0 && cost[i]![j] === cost[i - 1]![j - 1]! + auditTrackDistance(actual[i - 1]!, expected[j - 1]!)) {
+			pairs.push([--i, --j]);
+		} else if (i > 0 && cost[i]![j] === cost[i - 1]![j]! + AUDIT_GAP_COST) {
+			pairs.push([--i, undefined]);
+		} else {
+			pairs.push([undefined, --j]);
+		}
+	}
+	return pairs.reverse();
+}
+
 function auditDifferences(file: Pick<RepairAuditFile, "tracks">, majority: Pick<RepairAuditFile, "tracks">): string[] {
 	const differences: string[] = [];
 	for (const type of ["audio", "subtitles"] as const) {
 		const actualTracks = file.tracks.filter((track) => track.type === type);
 		const expectedTracks = majority.tracks.filter((track) => track.type === type);
-		const max = Math.max(actualTracks.length, expectedTracks.length);
-		for (let index = 0; index < max; index++) {
-			const actual = actualTracks[index];
-			const expected = expectedTracks[index];
-			const label = `${type === "audio" ? "Audio" : "Subtitle"} ${index + 1}`;
-			if (!actual && expected) {
-				differences.push(`Missing ${label}: ${shortTrack(expected)}`);
-				continue;
-			}
-			if (actual && !expected) {
-				differences.push(`Extra ${label}: ${shortTrack(actual)}`);
-				continue;
-			}
-			if (!actual || !expected) continue;
-			if (actual.language !== expected.language) differences.push(`${label} language is ${actual.language}. Group A uses ${expected.language}.`);
+		const label = (index: number) => `${type === "audio" ? "Audio" : "Subtitle"} ${index + 1}`;
+		const pairs = alignAuditTracks(actualTracks, expectedTracks);
+		const missing = pairs.filter(([actual]) => actual === undefined).map(([, expected]) => expected!);
+		const extra = pairs.filter(([, expected]) => expected === undefined).map(([actual]) => actual!);
+
+		// An extra track that is identical to a missing one is the same track in another position.
+		const moved: [number, number][] = [];
+		for (const actualIndex of [...extra]) {
+			const match = missing.find((expectedIndex) => auditTrackDistance(actualTracks[actualIndex]!, expectedTracks[expectedIndex]!) === 0);
+			if (match === undefined) continue;
+			moved.push([actualIndex, match]);
+			extra.splice(extra.indexOf(actualIndex), 1);
+			missing.splice(missing.indexOf(match), 1);
+		}
+
+		for (const index of missing) differences.push(`Missing ${label(index)}: ${shortTrack(expectedTracks[index]!)}`);
+		for (const index of extra) differences.push(`Extra ${label(index)}: ${shortTrack(actualTracks[index]!)}`);
+		for (const [actualIndex, expectedIndex] of moved) {
+			differences.push(`${label(actualIndex)} is ${label(expectedIndex)} in group A: ${shortTrack(actualTracks[actualIndex]!)}`);
+		}
+
+		for (const [actualIndex, expectedIndex] of pairs) {
+			if (actualIndex === undefined || expectedIndex === undefined) continue;
+			const actual = actualTracks[actualIndex]!;
+			const expected = expectedTracks[expectedIndex]!;
+			// Name the group A position too when the matched track sits somewhere else there.
+			const name = actualIndex === expectedIndex ? label(actualIndex) : `${label(actualIndex)} (${label(expectedIndex)} in group A)`;
+			if (actual.language !== expected.language) differences.push(`${name} language is ${actual.language}. Group A uses ${expected.language}.`);
 			if (actual.title !== expected.title)
-				differences.push(`${label} title is “${actual.title || "untitled"}”. Group A uses “${expected.title || "untitled"}”.`);
+				differences.push(`${name} title is “${actual.title || "untitled"}”. Group A uses “${expected.title || "untitled"}”.`);
 			if (JSON.stringify(auditFlags(actual)) !== JSON.stringify(auditFlags(expected))) {
-				differences.push(`${label} flags are ${auditFlagNames(actual)}. Group A uses ${auditFlagNames(expected)}.`);
+				differences.push(`${name} flags are ${auditFlagNames(actual)}. Group A uses ${auditFlagNames(expected)}.`);
 			}
 		}
 	}
