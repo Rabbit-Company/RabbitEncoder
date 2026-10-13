@@ -545,6 +545,7 @@ export async function encodeJob(
 			downscale: job.settings.downscale,
 			sourceHeight: probe.height,
 			sourceWidth: probe.width,
+			sourceSar: resolveSourceSar(probe),
 			denoise: job.settings.denoise,
 			denoiseEngine: job.settings.denoiseEngine,
 			denoiseBackend: job.settings.denoiseBackend,

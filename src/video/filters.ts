@@ -16,6 +16,7 @@ import { Logger } from "../core/logger";
 import { buildAutoDenoiseFilter, describePlanLevels, type DenoisePlan, type DenoiseRange } from "./auto-denoise";
 import { avdEngineLabel, isAvdEngine } from "./avd";
 import { run } from "../core/process";
+import type { Rational } from "./aspect";
 
 /** Default nlmeans parameters per level. Used when env vars / settings don't override. */
 export const DEFAULT_NLMEANS_PARAMS: NlmeansLevelParams = {
@@ -480,6 +481,52 @@ export async function detectCrop(inputPath: string, limit: number, signal?: Abor
 	return union;
 }
 
+/** Display aspect ratios that masters are actually framed for. */
+const STANDARD_ASPECT_RATIOS = [4 / 3, 1.66, 16 / 9, 1.85, 2.0, 2.2, 2.35, 2.39, 2.4];
+
+/** Max px (both edges combined) a detected crop may be trimmed to land on a standard ratio. */
+const ASPECT_SNAP_TOLERANCE_PX = 6;
+
+function roundEven(n: number): number {
+	return Math.round(n / 2) * 2;
+}
+
+/**
+ * Upscaled masters smear the picture edge a pixel or two into the bars, so
+ * cropdetect lands just outside the real frame (1444x1080 for a 4:3 picture
+ * that is really 1440x1080). When the detected rect is only slightly larger
+ * than a standard aspect ratio, trim it inward to that ratio. Only the axis
+ * that actually has bars is trimmed, the rect never grows (that would pull
+ * bar back in), and a rect already within rounding of a standard ratio is
+ * left alone.
+ */
+export function snapCropToStandardAspect(rect: CropRect, frame: FrameSize, sar: Rational = { num: 1, den: 1 }): CropRect {
+	const pixelShape = sar.num / sar.den;
+	if (!Number.isFinite(pixelShape) || pixelShape <= 0) return rect;
+
+	const hasSideBars = rect.w < frame.width - FULL_FRAME_TOLERANCE_PX;
+	const hasTopBottomBars = rect.h < frame.height - FULL_FRAME_TOLERANCE_PX;
+
+	let best: CropRect | null = null;
+	let bestTrim = Infinity;
+	for (const ratio of STANDARD_ASPECT_RATIOS) {
+		const trimW = rect.w - roundEven((rect.h * ratio) / pixelShape);
+		const trimH = rect.h - roundEven((rect.w * pixelShape) / ratio);
+		if (Math.abs(trimW) <= 2 || Math.abs(trimH) <= 2) return rect;
+
+		// Offsets stay even so the crop never lands between chroma samples.
+		if (hasSideBars && trimW > 0 && trimW <= ASPECT_SNAP_TOLERANCE_PX && trimW < bestTrim) {
+			bestTrim = trimW;
+			best = { ...rect, x: rect.x + Math.floor(trimW / 4) * 2, w: rect.w - trimW };
+		}
+		if (hasTopBottomBars && trimH > 0 && trimH <= ASPECT_SNAP_TOLERANCE_PX && trimH < bestTrim) {
+			bestTrim = trimH;
+			best = { ...rect, y: rect.y + Math.floor(trimH / 4) * 2, h: rect.h - trimH };
+		}
+	}
+	return best ?? rect;
+}
+
 export function buildCropFilter(rect: CropRect): string {
 	return `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y}`;
 }
@@ -513,6 +560,8 @@ export interface PrepareFilterInput {
 	cropLimit: number;
 	sourceHeight: number;
 	sourceWidth: number;
+	/** Source pixel aspect ratio. Square pixels when omitted. */
+	sourceSar?: Rational;
 	denoise: DenoiseLevel;
 	denoiseEngine: DenoiseEngine;
 	denoiseBackend: DenoiseBackend;
@@ -557,6 +606,14 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 		if (cropRect && isFullFrameCrop(cropRect, frame)) cropRect = null;
 
 		if (cropRect) {
+			const snapped = snapCropToStandardAspect(cropRect, frame, input.sourceSar);
+			if (snapped !== cropRect) {
+				Logger.info(
+					`[crop] Snapping detected ${cropRect.w}x${cropRect.h}+${cropRect.x}+${cropRect.y} to standard aspect ` +
+						`${snapped.w}x${snapped.h}+${snapped.x}+${snapped.y}`,
+				);
+				cropRect = snapped;
+			}
 			cropFilter = buildCropFilter(cropRect);
 			cropLabel = `Cropping to ${cropRect.w}x${cropRect.h}`;
 		} else {
