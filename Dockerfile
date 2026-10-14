@@ -262,21 +262,18 @@ RUN set -eux; \
 		! grep -q "not found" "/tmp/ldd-ffprobe-$level.txt"; \
 	done
 
-# grav1synth v0.3.8 is built against this FFmpeg 9.0.2 archive.
-ARG GRAV1SYNTH_VERSION=0.3.8
-ARG GRAV1SYNTH_SHA256=6f7a19b1adc6bbeb0b6ad15632a08d148c53be4089e2c7de23f3fcdb9c5b6916
+# regrain measures film grain and writes it into the AV1 encode. It is a static binary
+# and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
+ARG REGRAIN_VERSION=0.1.1
+ARG REGRAIN_SHA256=bd35ffab2678940442fc2d8041ffebbcf9b63eb250a6eed059b81ad4fbe4263e
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
-	"https://github.com/Rabbit-Company/grav1synth/releases/download/v${GRAV1SYNTH_VERSION}/grav1synth-v${GRAV1SYNTH_VERSION}-linux-x86_64-ffmpeg9.0.2" \
-	-o /usr/local/bin/grav1synth \
- && echo "${GRAV1SYNTH_SHA256}  /usr/local/bin/grav1synth" | sha256sum -c - \
- && chmod +x /usr/local/bin/grav1synth \
- && for level in x86-64-v2 x86-64-v3 x86-64-v4; do \
-	LD_LIBRARY_PATH="/opt/ffmpeg-$level/lib" ldd /usr/local/bin/grav1synth > "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
-	cat "/tmp/ldd-grav1synth-$level.txt"; \
-	! grep -q "not found" "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
-	grep -q "libavcodec.so.63 => /opt/ffmpeg-$level/lib/" "/tmp/ldd-grav1synth-$level.txt" || exit 1; \
-	done \
- && LD_LIBRARY_PATH=/opt/ffmpeg-x86-64-v2/lib grav1synth --help >/dev/null
+	"https://github.com/Rabbit-Company/regrain/releases/download/v${REGRAIN_VERSION}/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2.tar.gz" \
+	-o /tmp/regrain.tar.gz \
+ && echo "${REGRAIN_SHA256}  /tmp/regrain.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/regrain.tar.gz -C /tmp \
+ && install -m 755 "/tmp/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2/regrain" /usr/local/bin/regrain \
+ && rm -rf /tmp/regrain.tar.gz "/tmp/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2" \
+ && regrain --version
 
 # Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh

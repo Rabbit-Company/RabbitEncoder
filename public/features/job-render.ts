@@ -391,7 +391,7 @@ export function renderJobCard(job: Job): string {
 		if (job.settings.videoEncode !== "off" && job.settings.subtitleProcessing !== "translate") {
 			if (job.settings.filmGrainTablePath) meta += `<span>FGS ready</span>`;
 			else if (job.autoFilmGrain && !done)
-				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${job.settings.filmGrainSampling === "half" ? "Half" : job.settings.filmGrainSampling === "quarter" ? "Quarter" : "All"}</span>`;
+				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${({ all: "Every frame", half: "Half", quarter: "Quarter", eighth: "Eighth" } as const)[job.settings.filmGrainSampling] ?? "Every frame"}</span>`;
 		}
 	}
 

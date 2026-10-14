@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, symlinkSync, renameSync } from "fs";
-import { join, parse as parsePath, dirname, extname, basename, resolve } from "path";
+import { join, parse as parsePath, extname, basename } from "path";
 import type { Job, JobStep, AppConfig, EncodeJobOptions, SubtitleBurnMode, AudioStreamInfo, SubtitleStreamInfo } from "../core/types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
 import { Logger } from "../core/logger";
@@ -58,7 +58,7 @@ import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { ensureFilmGrainTable, needsFilmGrainTable } from "../video/film-grain-generator";
-import { formatFilmGrainProgress } from "../video/film-grain-progress";
+import { formatFilmGrainProgress, parseRegrainEvent } from "../video/film-grain-progress";
 
 export { CancelledError } from "../core/process";
 
@@ -387,7 +387,7 @@ export async function encodeJob(
 
 		setStep(S_PROBE, { status: "done", progress: 100 });
 
-		// Film grain table. grav1synth uses every core, so it runs here and not beside another job.
+		// Film grain table. regrain uses every core, so it runs here and not beside another job.
 		if (filmGrainStep) {
 			checkCancelled();
 			setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring film grain" });
@@ -397,11 +397,12 @@ export async function encodeJob(
 			checkCancelled();
 			setStep(filmGrainStep, { status: "done", progress: 100 });
 		}
-		const filmGrainTablePath = job.settings.videoEncode !== "off" ? job.settings.filmGrainTablePath?.trim() : "";
+		let filmGrainTablePath = job.settings.videoEncode !== "off" ? job.settings.filmGrainTablePath?.trim() : "";
 		if (filmGrainTablePath) {
 			if (!existsSync(filmGrainTablePath) || statSync(filmGrainTablePath).size === 0)
 				throw new Error(`Film grain table is missing or empty: ${filmGrainTablePath}`);
-			writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"), opts.clipStartSeconds);
+			// A table without entries means the denoiser removed no measurable grain, so there is nothing to add.
+			if (writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"), opts.clipStartSeconds) === 0) filmGrainTablePath = "";
 		}
 
 		// Prepare
@@ -1231,12 +1232,18 @@ export async function encodeJob(
 					setStep(S_FINAL, { detail: "Applying film grain" });
 					const grainIvf = join(tempDir, "source_video_grain.ivf");
 					rmSync(grainIvf, { force: true });
-					const grainRes = await run(["grav1synth", "apply", ivfFile, "-o", grainIvf, "--grain", join(tempDir, "film-grain.tbl"), "--replace", "--overwrite"], {
-						signal: stageSignal,
-					});
+					const grainRes = await run(
+						["regrain", "apply", ivfFile, "-o", grainIvf, "-t", join(tempDir, "film-grain.tbl"), "-y", "--verify", "--progress", "json"],
+						{ signal: stageSignal },
+					);
 					checkCancelled();
 					if (grainRes.code !== 0 || !existsSync(grainIvf) || statSync(grainIvf).size === 0) {
-						throw new Error(`grav1synth apply failed: ${(grainRes.stderr || grainRes.stdout).trim().slice(-500) || `exit ${grainRes.code}`}`);
+						const failure = grainRes.stdout
+							.split("\n")
+							.map(parseRegrainEvent)
+							.find((event) => event?.event === "error");
+						const reason = failure?.event === "error" ? failure.message : (grainRes.stderr || grainRes.stdout).trim().slice(-500) || `exit ${grainRes.code}`;
+						throw new Error(`Adding film grain failed: ${reason}`);
 					}
 					renameSync(grainIvf, ivfFile);
 					setStep(S_FINAL, { detail: encodeDetail });
@@ -1892,6 +1899,16 @@ export async function encodeJob(
 			"<Name>LANGUAGE_DETECTOR</Name>",
 			`<Simple><Name>VERSION</Name><String>${escapeXml(config.languageDetector.version || "unknown")}</String></Simple>`,
 			"</Simple>",
+
+			// Only when grain from a table was written into the video.
+			...(filmGrainTablePath
+				? [
+						"<Simple>",
+						"<Name>REGRAIN</Name>",
+						`<Simple><Name>VERSION</Name><String>${escapeXml(config.regrain.version || "unknown")}</String></Simple>`,
+						"</Simple>",
+					]
+				: []),
 
 			...(effectiveSourceTag ? [`<Simple><Name>SOURCE</Name><String>${escapeXml(effectiveSourceTag)}</String></Simple>`] : []),
 			"</Tag></Tags>",

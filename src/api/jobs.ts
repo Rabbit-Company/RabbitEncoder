@@ -57,7 +57,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 			return c.json({ error: "Choose an original source video" }, 400);
 		}
 		const sampling = body.noiseSampling ?? job.settings.filmGrainSampling ?? "all";
-		if (!FILM_GRAIN_SAMPLINGS.includes(sampling as FilmGrainSampling)) return c.json({ error: "Noise sampling must be all, half, or quarter" }, 400);
+		if (!FILM_GRAIN_SAMPLINGS.includes(sampling as FilmGrainSampling)) return c.json({ error: "Noise sampling must be all, half, quarter, or eighth" }, 400);
 		const range = body.range ?? job.settings.filmGrainRange ?? "full";
 		if (!FILM_GRAIN_RANGES.includes(range as FilmGrainRange)) return c.json({ error: "Measurement range must be representative or full" }, 400);
 		let sourcePath: string;

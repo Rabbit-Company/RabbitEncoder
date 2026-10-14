@@ -28,7 +28,7 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		FILM_GRAIN_SAMPLINGS,
 		settings.filmGrainSampling || "all",
 		(v) => (settings.filmGrainSampling = v),
-		(v) => ({ all: "All", half: "Half", quarter: "Quarter" })[v],
+		(v) => ({ all: "Every frame", half: "Half", quarter: "Quarter", eighth: "Eighth" })[v],
 	);
 	renderRadioPills(
 		byId("advanced-film-grain-range"),
@@ -76,7 +76,9 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		if (run.status === "done" && run.tablePath) {
 			settings.filmGrainTablePath = run.tablePath;
 			tableInput.value = run.tablePath;
-			result.textContent = `Table generated (${run.segments} ${run.segments === 1 ? "segment" : "segments"}) and set on this job. Run Preview to inspect the grain.`;
+			result.textContent = run.segments
+				? `Table generated (${run.segments} ${run.segments === 1 ? "segment" : "segments"}) and set on this job. Run Preview to inspect the grain.`
+				: "The denoiser removed no measurable grain, so this job encodes without film grain.";
 		} else if (run.status === "error") result.textContent = run.error || "Film grain table generation failed.";
 		else if (run.status === "cancelled") result.textContent = "Generation cancelled.";
 	};

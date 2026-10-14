@@ -1,14 +1,14 @@
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "fs";
 import { join } from "path";
 import type { AppConfig, FilmGrainSampling, FilmGrainRange, Job } from "../core/types";
-import { CancelledError, run } from "../core/process";
+import { CancelledError } from "../core/process";
 import { probeFile } from "../pipeline/probe";
 import { filmGrainSegmentCount, writeRepresentativeFilmGrainTable } from "./film-grain-table";
-import { parseFilmGrainProgress, type FilmGrainProgress } from "./film-grain-progress";
+import { parseRegrainEvent, progressFromEvent, type FilmGrainProgress, type RegrainEvent } from "./film-grain-progress";
 import { Logger } from "../core/logger";
-import { detectFilmGrainCrop, filmGrainCropFilter } from "./film-grain-crop";
-import { cutFilmGrainWindow, representativeFilmGrainWindow, verifyFilmGrainWindows } from "./film-grain-window";
+import { detectFilmGrainCrop } from "./film-grain-crop";
+import { representativeFilmGrainWindow } from "./film-grain-window";
 
 export interface GeneratedFilmGrainTable {
 	tablePath: string;
@@ -51,7 +51,7 @@ export async function generateFilmGrainTable(
 	signal?: AbortSignal,
 	onProgress?: (progress: FilmGrainProgress) => void,
 ): Promise<GeneratedFilmGrainTable> {
-	// grav1synth uses every core, so a job never has two runs at once. A run that
+	// regrain uses every core, so a job never has two runs at once. A run that
 	// is being cancelled has to stop before the next one starts.
 	while (active.has(job.id)) await active.get(job.id)!.catch(() => {});
 	const promise = generate(job, config, sourcePath, sampling, range, signal, onProgress).finally(() => {
@@ -86,43 +86,17 @@ export async function ensureFilmGrainTable(
 	}
 }
 
-async function runDiffWithProgress(
+// Regrain measures with every frame at "all", and reads only part of the video at the other levels.
+const SCAN: Record<FilmGrainSampling, string> = { all: "full", half: "half", quarter: "quarter", eighth: "eighth" };
+
+async function runRegrain(
 	cmd: string[],
 	signal?: AbortSignal,
 	onProgress?: (progress: FilmGrainProgress) => void,
-): Promise<{ code: number; stderr: string; stdout: string }> {
-	let output = "";
-	let progressOutput = "";
-	let lastFrames = -1;
-	let lastEmit = 0;
-	const decoder = new TextDecoder();
-	const terminalEnv: Record<string, string | undefined> = { ...process.env, TERM: "xterm-256color" };
-	delete terminalEnv.NO_COLOR;
-	let proc: ReturnType<typeof Bun.spawn>;
-	try {
-		proc = Bun.spawn(cmd, {
-			env: terminalEnv,
-			terminal: {
-				cols: 120,
-				rows: 24,
-				data: (_terminal, bytes) => {
-					const chunk = decoder.decode(bytes, { stream: true });
-					output = (output + chunk).slice(-16384);
-					progressOutput = (progressOutput + chunk).slice(-4096);
-					const progress = parseFilmGrainProgress(progressOutput);
-					if (progress && (progress.frames !== lastFrames || progress.totalFrames === undefined) && Date.now() - lastEmit >= 500) {
-						lastFrames = progress.frames;
-						lastEmit = Date.now();
-						onProgress?.(progress);
-					}
-				},
-			},
-		});
-	} catch {
-		// Older Bun runtimes may not support PTYs. Encoding still works without live progress.
-		return run(cmd, { signal });
-	}
+): Promise<{ code: number; summary?: Extract<RegrainEvent, { event: "summary" }>; error?: Extract<RegrainEvent, { event: "error" }>; stderr: string }> {
+	const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
 	let killTimer: ReturnType<typeof setTimeout> | undefined;
+	// regrain stops its ffmpeg processes and removes partial output on SIGTERM.
 	const onAbort = () => {
 		try {
 			proc.kill("SIGTERM");
@@ -131,32 +105,40 @@ async function runDiffWithProgress(
 			try {
 				proc.kill("SIGKILL");
 			} catch {}
-		}, 3000);
+		}, 5000);
 	};
 	if (signal?.aborted) onAbort();
 	else signal?.addEventListener("abort", onAbort, { once: true });
+	let summary: Extract<RegrainEvent, { event: "summary" }> | undefined;
+	let error: Extract<RegrainEvent, { event: "error" }> | undefined;
+	const stderrText = new Response(proc.stderr).text();
 	try {
+		const decoder = new TextDecoder();
+		let buffered = "";
+		for await (const chunk of proc.stdout) {
+			buffered += decoder.decode(chunk, { stream: true });
+			let newline: number;
+			while ((newline = buffered.indexOf("\n")) >= 0) {
+				const event = parseRegrainEvent(buffered.slice(0, newline));
+				buffered = buffered.slice(newline + 1);
+				if (event?.event === "progress") onProgress?.(progressFromEvent(event));
+				else if (event?.event === "summary") summary = event;
+				else if (event?.event === "error") error = event;
+			}
+		}
 		const code = await proc.exited;
-		// The PTY can deliver its final bytes just after the process exits.
-		await Bun.sleep(50);
-		const progress = parseFilmGrainProgress(progressOutput);
-		if (progress) onProgress?.(progress);
-		return { code, stderr: output.trim(), stdout: "" };
+		return { code, summary, error, stderr: (await stderrText).trim().slice(-2000) };
 	} finally {
 		if (killTimer) clearTimeout(killTimer);
 		signal?.removeEventListener("abort", onAbort);
-		proc.terminal?.close();
 	}
 }
 
-function diffErrorText(output: string): string {
-	return output
-		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-		.split(/[\r\n]+/)
-		.map((line) => line.trim())
-		.filter((line) => line && !/\b\d{1,3}%\s+\d+\/\d+\b/.test(line))
-		.slice(-10)
-		.join("\n");
+function regrainErrorText(error: Extract<RegrainEvent, { event: "error" }> | undefined, stderr: string, code: number): string {
+	if (error?.code === "frame_count_mismatch") return "Original and denoised videos have different frame counts";
+	if (error) return error.message.charAt(0).toUpperCase() + error.message.slice(1);
+	const lines = stderr.split(/\r?\n/).filter((line) => line.trim());
+	return lines.slice(-5).join("\n") || `regrain exited with code ${code}`;
 }
 
 async function generate(
@@ -182,46 +164,23 @@ async function generate(
 		if (denoised.width > original.width || denoised.height > original.height)
 			throw new Error("Denoised video is larger than the original, so it cannot be a crop of it");
 		if (signal?.aborted) throw new CancelledError();
-		// A denoising server that crops first hands back a smaller frame. The original
-		// gets the same crop here so both sides of the diff cover the same pixels.
-		let cropFilter: string | undefined;
+		const args = ["regrain", "diff", sourcePath, job.inputPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[sampling]];
+		// A denoising server that crops first hands back a smaller frame. regrain then
+		// measures only the matching area of the original.
 		if (original.width !== denoised.width || original.height !== denoised.height) {
 			const crop = await detectFilmGrainCrop(sourcePath, job.inputPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal);
-			cropFilter = filmGrainCropFilter(crop);
-			Logger.info(
-				`[film-grain] Denoised input is ${crop.w}x${crop.h}. Cropping the ${original.width}x${original.height} original at +${crop.x}+${crop.y} to match.`,
-			);
+			args.push("--crop", `${crop.w}:${crop.h}:${crop.x}:${crop.y}`);
+			Logger.info(`[film-grain] Denoised input is ${crop.w}x${crop.h}. Measuring the ${original.width}x${original.height} original at +${crop.x}+${crop.y}.`);
 		}
-		let measuredSource = sourcePath;
-		let measuredDenoised = job.inputPath;
 		const window = range === "representative" ? representativeFilmGrainWindow(Math.min(original.duration, denoised.duration), denoised.videoStreamFps) : null;
-		if (window) {
-			measuredSource = join(workDir, "original-window.mkv");
-			measuredDenoised = join(workDir, "denoised-window.mkv");
-			await Promise.all([
-				cutFilmGrainWindow(sourcePath, measuredSource, window, signal, cropFilter),
-				cutFilmGrainWindow(job.inputPath, measuredDenoised, window, signal),
-			]);
-			await verifyFilmGrainWindows(measuredSource, measuredDenoised, workDir, window.frames, signal);
-		} else if (cropFilter) {
-			// grav1synth reads files only, so a full measurement needs a lossless cropped copy of the whole original.
-			measuredSource = join(workDir, "original-cropped.mkv");
-			await cutFilmGrainWindow(sourcePath, measuredSource, null, signal, cropFilter);
-		}
+		if (window) args.push("--start", window.startSeconds.toFixed(3), "--duration", (window.frames / denoised.videoStreamFps).toFixed(3));
 		if (signal?.aborted) throw new CancelledError();
+		const result = await runRegrain(args, signal, onProgress);
+		if (signal?.aborted || result.error?.code === "cancelled") throw new CancelledError();
+		if (result.code !== 0 || !result.summary) throw new Error(regrainErrorText(result.error, result.stderr, result.code));
+		for (const warning of result.summary.warnings ?? []) Logger.warn(`[film-grain] ${warning.message}`);
 		const tempTable = join(workDir, "grain.tbl");
-		// The count only feeds grav1synth's progress bar. Passing it skips a full read of the source.
-		const frames = window ? window.frames : Math.round(original.duration * (original.videoDisplayFps || original.videoStreamFps));
-		const framesArgs = Number.isFinite(frames) && frames > 0 ? ["--frames", String(frames)] : [];
-		const result = await runDiffWithProgress(
-			["grav1synth", "diff", measuredSource, measuredDenoised, "-o", tempTable, "--noise-sampling", sampling, ...framesArgs],
-			signal,
-			onProgress,
-		);
-		if (signal?.aborted) throw new CancelledError();
-		if (/Videos did not have equal frame counts/i.test(result.stderr)) throw new Error("Original and denoised videos have different frame counts");
-		if (result.code !== 0) throw new Error(diffErrorText(result.stderr || result.stdout) || `grav1synth exited with code ${result.code}`);
-		if (!existsSync(tempTable) || statSync(tempTable).size <= "filmgrn1\n".length) throw new Error("grav1synth produced no film grain parameters");
+		if (!existsSync(tempTable)) throw new Error("regrain wrote no film grain table");
 		const tablePath = join(tableDir, `${job.id}-${randomUUID()}.tbl`);
 		// The encode applies a stored table scene by scene, so a table has to cover the whole video.
 		// A window's timestamps do not, and it is stored as its one representative segment.

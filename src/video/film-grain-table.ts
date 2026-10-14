@@ -26,7 +26,6 @@ function parseTable(path: string): Segment[] {
 			segments[segments.length - 1]!.lines.push(line);
 		}
 	}
-	if (segments.length === 0) throw new Error(`Film grain table has no segments: ${path}`);
 	return segments;
 }
 
@@ -47,13 +46,14 @@ export function filmGrainSegmentCount(path: string): number {
  */
 export function writeRepresentativeFilmGrainTable(sourcePath: string, outputPath: string): number {
 	const segments = parseTable(sourcePath);
-	const representative = segments[Math.floor(segments.length / 2)]!;
-	writeFileSync(outputPath, `filmgrn1\n${formatSegment(representative, 0n, OPEN_END)}`);
+	const representative = segments[Math.floor(segments.length / 2)];
+	writeFileSync(outputPath, representative ? `filmgrn1\n${formatSegment(representative, 0n, OPEN_END)}` : "filmgrn1\n");
 	return segments.length;
 }
 
 /**
- * Write the table grav1synth applies to the encode, with every segment on the encode's timeline.
+ * Write the table regrain applies to the encode, with every segment on the encode's timeline.
+ * An empty table means the denoiser removed no measurable grain.
  * A preview clip starts `clipStartSeconds` into the video, so its segments move back by that much.
  * The last segment is left open so trailing frames never end up without grain.
  */

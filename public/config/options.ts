@@ -57,7 +57,7 @@ export const DEFAULT_DENOISE_ENGINE: DenoiseEngine = "avd-nl4d";
 /** Ordered from best to worst quality. */
 export const DENOISE_ENGINES: readonly DenoiseEngine[] = ["avd-nl4d", "avd-nlmeans-hq", "avd-nlmeans", "nlmeans"];
 export const AVD_ENGINES: readonly AvdEngine[] = ["avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
-export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter"] as const;
+export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as const;
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
 export const AVD_PRESETS: readonly AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
 export const DEFAULT_AVD_PARAMS: AvdParams = {

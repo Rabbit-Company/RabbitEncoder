@@ -61,7 +61,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			({ paths, files } = selectedTargets(body.paths ?? (body.path ? [body.path] : []), config));
 			if (body.autoFilmGrain !== undefined && typeof body.autoFilmGrain !== "boolean") throw new Error("autoFilmGrain must be a boolean");
 			if (body.filmGrainSampling !== undefined && !FILM_GRAIN_SAMPLINGS.includes(body.filmGrainSampling as FilmGrainSampling))
-				throw new Error("filmGrainSampling must be all, half, or quarter");
+				throw new Error("filmGrainSampling must be all, half, quarter, or eighth");
 			if (body.filmGrainRange !== undefined && !FILM_GRAIN_RANGES.includes(body.filmGrainRange as FilmGrainRange))
 				throw new Error("filmGrainRange must be representative or full");
 			if (body.sourceMap !== undefined) {

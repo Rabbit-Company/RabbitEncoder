@@ -128,6 +128,16 @@ export async function getLanguageDetectorVersion(): Promise<string | null> {
 	return res.stdout.replace("Language Detector", "").trim();
 }
 
+/** The version of regrain, such as "0.1.1", from "regrain 0.1.1 (x86_64-unknown-linux-musl)". */
+export async function getRegrainVersion(): Promise<string | null> {
+	const res = await run(["regrain", "--version"]).catch(() => null);
+	if (!res || res.code !== 0) {
+		Logger.error(`[film-grain] regrain is not available: ${res ? res.stderr || res.stdout : "not found"}`);
+		return null;
+	}
+	return res.stdout.trim().split(/\s+/)[1] ?? null;
+}
+
 export async function loadConfig(): Promise<AppConfig> {
 	const libraryDirs = (process.env.LIBRARY_DIRS || "")
 		.split(",")
@@ -151,6 +161,7 @@ export async function loadConfig(): Promise<AppConfig> {
 		recycleBinDir: (process.env.RECYCLE_BIN_DIR || "").trim(),
 		systemFontDirs,
 		languageDetector: { version: await getLanguageDetectorVersion() },
+		regrain: { version: await getRegrainVersion() },
 		defaults: getDefaultJobSettings(),
 	};
 }

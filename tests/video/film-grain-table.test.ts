@@ -10,7 +10,7 @@ afterEach(() => {
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-// Three scenes: 0-1 s, 1-2 s, and 2 s to the end as grav1synth diff writes it.
+// Three scenes: 0-1 s, 1-2 s, and 2 s to the end as regrain diff writes it.
 const THREE_SCENES = "filmgrn1\nE 0 10000000 1 101 1\n\tp first\nE 10000000 20000000 1 102 1\n\tp second\nE 20000000 9223372036854775807 1 103 1\n\tp third\n";
 
 test("encoder table keeps every segment and leaves the last one open", () => {
@@ -43,8 +43,13 @@ test("representative table uses the middle segment over the whole video", () => 
 	expect(filmGrainSegmentCount(encoder)).toBe(1);
 });
 
-test("encoder table rejects an empty diff", () => {
+test("an empty table stays empty", () => {
 	const source = join(dir, "source.tbl");
+	const encoder = join(dir, "encoder.tbl");
 	writeFileSync(source, "filmgrn1\n");
-	expect(() => writeEncoderFilmGrainTable(source, join(dir, "encoder.tbl"))).toThrow("no segments");
+	expect(filmGrainSegmentCount(source)).toBe(0);
+	expect(writeEncoderFilmGrainTable(source, encoder)).toBe(0);
+	expect(readFileSync(encoder, "utf8")).toBe("filmgrn1\n");
+	expect(writeRepresentativeFilmGrainTable(source, encoder)).toBe(0);
+	expect(readFileSync(encoder, "utf8")).toBe("filmgrn1\n");
 });

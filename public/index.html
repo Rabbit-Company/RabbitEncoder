@@ -711,9 +711,9 @@
 						<div class="setting-group">
 							<label>AV1 film grain table</label>
 							<div class="lang-filter-hint">
-								A table measured from the grainy original puts matching synthetic grain back on an externally denoised input. Rabbit writes it into the encoded
-								video with <code>grav1synth apply</code>. A Full video table keeps each scene's own grain, and a Quick table uses its middle segment for the
-								whole encode. Do not also set photon noise or film grain in custom parameters.
+								A table measured from the grainy original puts matching synthetic grain back on an externally denoised input. Rabbit measures it with
+								<code>regrain diff</code> and writes it into the encoded video with <code>regrain apply</code>. A Full video table keeps each scene's own grain,
+								and a Quick table uses its middle segment for the whole encode. Do not also set photon noise or film grain in custom parameters.
 							</div>
 							<div class="nested-settings">
 								<div class="setting-group">
@@ -721,15 +721,15 @@
 									<div class="radio-group" id="advanced-film-grain-range"></div>
 									<div class="lang-filter-hint">
 										Quick measures a 30-second window near the middle of both videos. The resulting table is reused for Preview and the final encode. Full video
-										measures every frame.
+										measures the whole video and gives every scene its own grain.
 									</div>
 								</div>
 								<div class="setting-group">
-									<label>Noise sampling</label>
+									<label>Scan</label>
 									<div class="radio-group" id="advanced-film-grain-sampling"></div>
 									<div class="lang-filter-hint">
-										All uses every noise observation, Half uses about half, Quarter uses about one quarter. This is separate from measurement range. Changing
-										either setting does not regenerate an existing table.
+										How much of the measured range regrain reads. Every frame is the most accurate. Half, Quarter and Eighth read that share of every 48 frames
+										and are faster. Changing either setting does not regenerate an existing table.
 									</div>
 								</div>
 								<div class="nested-settings-set" id="advanced-film-grain-job" style="display: none">
@@ -957,11 +957,12 @@
 								</select>
 							</label>
 							<label class="library-queue-toggle"
-								>Noise sampling
+								>Scan
 								<select class="select-input" id="library-queue-sampling">
-									<option value="all">All observations</option>
+									<option value="all">Every frame</option>
 									<option value="half">Half</option>
 									<option value="quarter">Quarter</option>
+									<option value="eighth">Eighth</option>
 								</select>
 							</label>
 						</div>

@@ -118,7 +118,7 @@ echo "[entrypoint] Using FFprobe: $("$TARGET_FFPROBE" -hide_banner -version | he
 echo "[entrypoint] Using SVT-AV1-Essential: $("$TARGET_ESSENTIAL" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-HDR: $("$TARGET_HDR" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-5FISH: $("$TARGET_5FISH" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
-echo "[entrypoint] Using grav1synth: $(grav1synth --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
+echo "[entrypoint] Using regrain: $(regrain --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
 
 USER_VS_DIR="/config/vapoursynth/presets"
 if [ ! -d "$USER_VS_DIR" ]; then

@@ -6,8 +6,8 @@ export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
 export type EncodeMode = "full" | "preview";
 export type VideoEncodeMode = "av1" | "off";
-/** How many noise observations grav1synth samples. Every frame is decoded at each level. */
-export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter"] as const;
+/** How much of the video regrain measures: every frame, or the first frames of every 48 frame period. */
+export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as const;
 export type FilmGrainSampling = (typeof FILM_GRAIN_SAMPLINGS)[number];
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
 export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
@@ -588,6 +588,7 @@ export interface AppConfig {
 	recycleBinDir: string;
 	systemFontDirs: string[];
 	languageDetector: LanguageDetector;
+	regrain: { version: string | null };
 }
 
 export interface SubtitlePreviewTrack {

@@ -5,7 +5,7 @@ export type DenoiseLevel = "off" | "light" | "medium" | "heavy" | "auto";
 export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
 export type VideoEncodeMode = "av1" | "off";
-export type FilmGrainSampling = "all" | "half" | "quarter";
+export type FilmGrainSampling = "all" | "half" | "quarter" | "eighth";
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
