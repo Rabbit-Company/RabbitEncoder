@@ -1332,10 +1332,9 @@ export async function encodeJob(
 					setStep(S_FINAL, { detail: "Applying film grain" });
 					const grainIvf = join(tempDir, "source_video_grain.ivf");
 					rmSync(grainIvf, { force: true });
-					const grainRes = await run(
-						["regrain", "apply", ivfFile, "-o", grainIvf, "-t", join(tempDir, "film-grain.tbl"), "-y", "--verify", "--progress", "json"],
-						{ signal: stageSignal },
-					);
+					const applyArgs = ["regrain", "apply", ivfFile, "-o", grainIvf, "-t", join(tempDir, "film-grain.tbl"), "-y", "--verify", "--progress", "json"];
+					if (job.settings.filmGrainStatic) applyArgs.push("--static-grain");
+					const grainRes = await run(applyArgs, { signal: stageSignal });
 					checkCancelled();
 					if (grainRes.code !== 0 || !existsSync(grainIvf) || statSync(grainIvf).size === 0) {
 						const failure = grainRes.stdout

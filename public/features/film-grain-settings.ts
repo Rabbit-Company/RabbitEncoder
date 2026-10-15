@@ -77,6 +77,7 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		"Just enough to hide banding",
 		(v) => (settings.filmGrainJustEnough = v),
 	);
+	renderLabeledToggle(byId("advanced-film-grain-static"), settings.filmGrainStatic === true, "Static grain pattern", (v) => (settings.filmGrainStatic = v));
 	renderStrengthGrid(byId("advanced-film-grain-synthetic-strength"), [
 		{ label: "luma", value: settings.filmGrainSyntheticStrength ?? 0, onChange: (v) => (settings.filmGrainSyntheticStrength = v) },
 		{ label: "chroma", value: settings.filmGrainSyntheticChroma ?? 0, onChange: (v) => (settings.filmGrainSyntheticChroma = v) },

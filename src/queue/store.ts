@@ -227,6 +227,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	filmGrainRange: enumOf(FILM_GRAIN_RANGES),
 	filmGrainRestore: bool,
 	filmGrainJustEnough: bool,
+	filmGrainStatic: bool,
 	filmGrainSyntheticStrength: numIn(0, 64),
 	filmGrainSyntheticSize: enumOf(FILM_GRAIN_SIZES),
 	filmGrainSyntheticChroma: numIn(0, 64),

@@ -148,6 +148,7 @@ export interface JobSettings {
 	filmGrainRange?: "representative" | "full";
 	filmGrainRestore?: boolean;
 	filmGrainJustEnough?: boolean;
+	filmGrainStatic?: boolean;
 	filmGrainSyntheticStrength?: number;
 	filmGrainSyntheticSize?: FilmGrainSize;
 	filmGrainSyntheticChroma?: number;

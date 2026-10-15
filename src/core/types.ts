@@ -196,6 +196,8 @@ export interface JobSettings {
 	filmGrainRestore?: boolean;
 	/** Put back only enough of the measured grain to hide banding. */
 	filmGrainJustEnough?: boolean;
+	/** Keep each table entry's seed on every frame, so the grain pattern stands still. */
+	filmGrainStatic?: boolean;
 	/** Synthetic grain deviation on a 0 to 255 scale, used when no measured table applies. 0 turns it off. */
 	filmGrainSyntheticStrength?: number;
 	filmGrainSyntheticSize?: FilmGrainSize;

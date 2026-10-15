@@ -159,6 +159,7 @@ const BASELINE: JobSettings = {
 const FILM_GRAIN_BASELINE = {
 	filmGrainRestore: false,
 	filmGrainJustEnough: false,
+	filmGrainStatic: false,
 	filmGrainSyntheticStrength: 0,
 	filmGrainSyntheticSize: "medium" as FilmGrainSize,
 	filmGrainSyntheticChroma: 0,
@@ -392,6 +393,7 @@ export function encodeSettingsCode(s: JobSettings): string {
 		const fg = new Section("fg");
 		if ((s.filmGrainRestore ?? false) !== FILM_GRAIN_BASELINE.filmGrainRestore) fg.put("r", !!s.filmGrainRestore);
 		if ((s.filmGrainJustEnough ?? false) !== FILM_GRAIN_BASELINE.filmGrainJustEnough) fg.put("je", !!s.filmGrainJustEnough);
+		if ((s.filmGrainStatic ?? false) !== FILM_GRAIN_BASELINE.filmGrainStatic) fg.put("sg", !!s.filmGrainStatic);
 		const strength = s.filmGrainSyntheticStrength ?? 0;
 		if (strength > 0) {
 			fg.put("s", strength);
@@ -800,6 +802,7 @@ function applyDeband(out: JobSettings, kv: Record<string, string>): void {
 function applyFilmGrain(out: JobSettings, kv: Record<string, string>): void {
 	if (kv.r !== undefined) out.filmGrainRestore = kv.r === "1";
 	if (kv.je !== undefined) out.filmGrainJustEnough = kv.je === "1";
+	if (kv.sg !== undefined) out.filmGrainStatic = kv.sg === "1";
 	if (kv.s !== undefined) out.filmGrainSyntheticStrength = Math.min(64, Math.max(0, numOr(kv.s, 0)));
 	if (kv.z && (FILM_GRAIN_SIZES as readonly string[]).includes(kv.z)) out.filmGrainSyntheticSize = kv.z as FilmGrainSize;
 	if (kv.ch !== undefined) out.filmGrainSyntheticChroma = Math.min(64, Math.max(0, numOr(kv.ch, 0)));

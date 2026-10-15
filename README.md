@@ -117,11 +117,13 @@ When Rabbit denoises the video itself, turn on **Advanced Settings -> AV1 film g
 
 **Amount -> Just enough to hide banding** puts back only as much of the measured grain as it takes to hide banding, at most a deviation of 0.5 on the 0 to 255 scale. It uses `regrain diff --just-enough` and applies to every measured table, both from an original and from Rabbit's own denoise.
 
+**Pattern -> Static grain pattern** applies the table with `regrain apply --static-grain`. Every frame of a table entry uses the entry's seed, so the decoder lays the same grain pattern over the whole scene like a texture on the screen, instead of a new pattern each frame. It suits light grain on footage that mostly stands still, such as grain that only hides banding in anime. Where the camera pans, the pattern stays in place while the picture moves under it. The pattern changes where the next table entry starts. It applies to every table, also a synthetic one or a table path you enter yourself.
+
 **Synthetic grain** writes grain of a chosen strength with `regrain generate` for jobs where no measured table applies, including jobs without any denoise. **Strength** is the luma deviation on the 0 to 255 scale and 0 turns it off. **Fine** is single pixels like digital camera noise, **Medium** is like most film grain, and **Coarse** forms clumps a few pixels wide. **Chroma** adds color grain. With Restore denoised grain also on, synthetic grain is used when nothing was denoised or the denoiser removed no measurable grain.
 
 After the video is encoded, Rabbit writes the table into the AV1 stream with `regrain apply`, for previews and full encodes. regrain then reads the result back, checks every frame's grain, and decodes it with dav1d before Rabbit continues. SVT-AV1's own `--fgs-table` reads only the first entry of a table, so it is not used. A **Full video** table is applied scene by scene, and each segment keeps the grain measured for it. A **Quick** table is applied as one segment to the whole video. A table path you enter yourself is applied as written, so its timestamps have to match the video. Keep the source table available until encoding finishes. Do not combine the table with `--photon-noise`, `--film-grain`, or `--fgs-table` in custom encoder parameters. Grain the encoder wrote itself is replaced by the table.
 
-The container downloads the checksum-verified [regrain v0.2.1 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.2.1). It is a static binary that uses the container's FFmpeg.
+The container downloads the checksum-verified [regrain v0.2.2 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.2.2). It is a static binary that uses the container's FFmpeg.
 
 ## Subtitle Repair / Remux
 

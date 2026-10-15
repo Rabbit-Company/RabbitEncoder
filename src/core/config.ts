@@ -32,6 +32,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	filmGrainRange: "representative",
 	filmGrainRestore: false,
 	filmGrainJustEnough: false,
+	filmGrainStatic: false,
 	filmGrainSyntheticStrength: 0,
 	filmGrainSyntheticSize: "medium",
 	filmGrainSyntheticChroma: 0,

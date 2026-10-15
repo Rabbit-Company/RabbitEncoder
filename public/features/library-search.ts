@@ -157,6 +157,7 @@ export function previewSettingsFingerprintFE(s: JobSettings): string {
 		filmGrainRange: s.filmGrainRange,
 		filmGrainRestore: s.filmGrainRestore,
 		filmGrainJustEnough: s.filmGrainJustEnough,
+		filmGrainStatic: s.filmGrainStatic,
 		filmGrainSyntheticStrength: s.filmGrainSyntheticStrength,
 		filmGrainSyntheticSize: s.filmGrainSyntheticSize,
 		filmGrainSyntheticChroma: s.filmGrainSyntheticChroma,

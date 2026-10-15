@@ -171,15 +171,17 @@ describe("settings code - film grain of Rabbit's own", () => {
 			...getDefaultJobSettings(),
 			filmGrainRestore: true,
 			filmGrainJustEnough: true,
+			filmGrainStatic: true,
 			filmGrainSyntheticStrength: 2.5,
 			filmGrainSyntheticSize: "coarse",
 			filmGrainSyntheticChroma: 1,
 		};
 		const code = encodeSettingsCode(settings);
-		expect(code).toContain("|fg~r=1,je=1,s=2.5,z=coarse,ch=1");
+		expect(code).toContain("|fg~r=1,je=1,sg=1,s=2.5,z=coarse,ch=1");
 		const decoded = decodeSettingsCode(code);
 		expect(decoded.filmGrainRestore).toBe(true);
 		expect(decoded.filmGrainJustEnough).toBe(true);
+		expect(decoded.filmGrainStatic).toBe(true);
 		expect(decoded.filmGrainSyntheticStrength).toBe(2.5);
 		expect(decoded.filmGrainSyntheticSize).toBe("coarse");
 		expect(decoded.filmGrainSyntheticChroma).toBe(1);
@@ -191,6 +193,7 @@ describe("settings code - film grain of Rabbit's own", () => {
 		const decoded = decodeSettingsCode("RE1");
 		expect(decoded.filmGrainRestore).toBe(false);
 		expect(decoded.filmGrainJustEnough).toBe(false);
+		expect(decoded.filmGrainStatic).toBe(false);
 		expect(decoded.filmGrainSyntheticStrength).toBe(0);
 	});
 
