@@ -148,6 +148,8 @@ export interface PrepareFilterConfig {
 	label: string;
 	/** Per-step breakdown of the same filter chain. */
 	steps: PrepareFilterStep[];
+	/** The area the crop step keeps, when it runs. */
+	cropRect?: CropRect;
 	/** When set, the encoder runs runSegmentedAutoDenoiseGpu after the filter pass to apply per-range GPU denoise. */
 	deferredAutoDenoise?: {
 		plan: DenoisePlan;
@@ -719,6 +721,7 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 		preInputArgs,
 		label: labelParts.join(" + "),
 		steps,
+		cropRect: cropRect ?? undefined,
 		deferredAutoDenoise,
 		deferredAvd,
 	};

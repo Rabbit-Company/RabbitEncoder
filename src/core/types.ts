@@ -11,6 +11,9 @@ export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as cons
 export type FilmGrainSampling = (typeof FILM_GRAIN_SAMPLINGS)[number];
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
 export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
+/** How large synthetic grain is: single pixels, film grain, or clumps a few pixels wide. */
+export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
+export type FilmGrainSize = (typeof FILM_GRAIN_SIZES)[number];
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
@@ -189,6 +192,15 @@ export interface JobSettings {
 	filmGrainSampling: FilmGrainSampling;
 	/** Missing on older saved settings, which measured the full video. */
 	filmGrainRange?: FilmGrainRange;
+	/** Measure the grain Rabbit's own denoiser removes and write it back into the encode. */
+	filmGrainRestore?: boolean;
+	/** Put back only enough of the measured grain to hide banding. */
+	filmGrainJustEnough?: boolean;
+	/** Synthetic grain deviation on a 0 to 255 scale, used when no measured table applies. 0 turns it off. */
+	filmGrainSyntheticStrength?: number;
+	filmGrainSyntheticSize?: FilmGrainSize;
+	/** Synthetic chroma grain deviation on a 0 to 255 scale. */
+	filmGrainSyntheticChroma?: number;
 	videoEncode: VideoEncodeMode;
 	audioEncode: AudioEncodeMode;
 	subtitleProcessing: SubtitleProcessingMode;

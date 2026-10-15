@@ -6,6 +6,7 @@ export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
 export type VideoEncodeMode = "av1" | "off";
 export type FilmGrainSampling = "all" | "half" | "quarter" | "eighth";
+export type FilmGrainSize = "fine" | "medium" | "coarse";
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
@@ -145,6 +146,11 @@ export interface JobSettings {
 	filmGrainTablePath: string;
 	filmGrainSampling: FilmGrainSampling;
 	filmGrainRange?: "representative" | "full";
+	filmGrainRestore?: boolean;
+	filmGrainJustEnough?: boolean;
+	filmGrainSyntheticStrength?: number;
+	filmGrainSyntheticSize?: FilmGrainSize;
+	filmGrainSyntheticChroma?: number;
 	videoEncode: VideoEncodeMode;
 	audioEncode: AudioEncodeMode;
 	subtitleProcessing: SubtitleProcessingMode;

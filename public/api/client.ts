@@ -492,11 +492,12 @@ export async function startFilmGrainTable(
 	sourcePath: string,
 	sampling: FilmGrainSampling,
 	range: "representative" | "full",
+	justEnough: boolean,
 ): Promise<FilmGrainRun> {
 	const res = await authFetch(`${API}/api/jobs/${id}/film-grain-table`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ sourcePath, noiseSampling: sampling, range }),
+		body: JSON.stringify({ sourcePath, noiseSampling: sampling, range, justEnough }),
 	});
 	const data = await res.json();
 	if (!res.ok) throw new Error(data.error || "Could not generate film grain table");

@@ -9,6 +9,7 @@ import {
 	MEDIA_EXTENSIONS,
 	FILM_GRAIN_SAMPLINGS,
 	FILM_GRAIN_RANGES,
+	FILM_GRAIN_SIZES,
 	type FilmGrainSampling,
 	type FilmGrainRange,
 	type VideoEncodeMode,
@@ -224,6 +225,11 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	filmGrainTablePath: str(2000),
 	filmGrainSampling: enumOf(FILM_GRAIN_SAMPLINGS),
 	filmGrainRange: enumOf(FILM_GRAIN_RANGES),
+	filmGrainRestore: bool,
+	filmGrainJustEnough: bool,
+	filmGrainSyntheticStrength: numIn(0, 64),
+	filmGrainSyntheticSize: enumOf(FILM_GRAIN_SIZES),
+	filmGrainSyntheticChroma: numIn(0, 64),
 
 	quality: enumOf(["lower", "low", "medium", "high", "higher"]),
 	finalSpeed: enumOf(["slower", "slow", "medium", "fast", "faster"]),
@@ -728,20 +734,26 @@ export function getFilmGrainRun(jobId: string): FilmGrainRun | null {
 export type StartFilmGrainRunResult = { ok: true; run: FilmGrainRun } | { ok: false; error: string; status: 400 | 404 | 409 };
 
 /** Measure a table for a queued job on request. The modal that asked polls the run for progress. */
-export function startFilmGrainRun(jobId: string, sourcePath: string, sampling: FilmGrainSampling, range: FilmGrainRange): StartFilmGrainRunResult {
+export function startFilmGrainRun(
+	jobId: string,
+	sourcePath: string,
+	sampling: FilmGrainSampling,
+	range: FilmGrainRange,
+	justEnough: boolean,
+): StartFilmGrainRunResult {
 	if (activeFilmGrainRun) return { ok: false, error: "Another film grain table is already being generated", status: 409 };
 	const job = jobs.get(jobId);
 	if (!job) return { ok: false, error: "Job not found", status: 404 };
 	if (job.status !== "queued") return { ok: false, error: "Film grain tables can only be generated for queued jobs", status: 400 };
 
 	const controller = new AbortController();
-	const run: FilmGrainRun = { status: "running", sourcePath, sampling, range, startedAt: Date.now() };
+	const run: FilmGrainRun = { status: "running", sourcePath, sampling, range, justEnough, startedAt: Date.now() };
 	filmGrainRuns.set(jobId, run);
 	activeFilmGrainRun = { jobId, abort: controller };
 
 	(async () => {
 		try {
-			const generated = await generateFilmGrainTable(job, appConfig, sourcePath, sampling, range, controller.signal, (progress) => {
+			const generated = await generateFilmGrainTable(job, appConfig, sourcePath, sampling, range, justEnough, controller.signal, (progress) => {
 				run.progress = progress;
 			});
 			if (controller.signal.aborted || jobs.get(jobId) !== job || job.status !== "queued") {
@@ -752,6 +764,7 @@ export function startFilmGrainRun(jobId: string, sourcePath: string, sampling: F
 			}
 			job.originalSourcePath = sourcePath;
 			job.settings.filmGrainTablePath = generated.tablePath;
+			job.settings.filmGrainJustEnough = justEnough;
 			saveQueue();
 			Object.assign(run, { status: "done", tablePath: generated.tablePath, segments: generated.segments });
 		} catch (err) {

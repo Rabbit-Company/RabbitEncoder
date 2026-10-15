@@ -717,6 +717,22 @@
 							</div>
 							<div class="nested-settings">
 								<div class="setting-group">
+									<label>Restore denoised grain</label>
+									<div id="advanced-film-grain-restore"></div>
+									<div class="lang-filter-hint">
+										When Rabbit denoises the video itself, it measures the grain the denoiser removed as a Film Grain step after Prepare and writes it back into
+										the encode. Crop and downscale are applied to both sides first. A table from an original or a table path takes precedence.
+									</div>
+								</div>
+								<div class="setting-group">
+									<label>Amount</label>
+									<div id="advanced-film-grain-just-enough"></div>
+									<div class="lang-filter-hint">
+										Puts back only enough of the measured grain to hide banding, at most a deviation of 0.5 on the 0 to 255 scale. Smaller files, a cleaner
+										picture. Applies to every measured table.
+									</div>
+								</div>
+								<div class="setting-group">
 									<label>Measurement range</label>
 									<div class="radio-group" id="advanced-film-grain-range"></div>
 									<div class="lang-filter-hint">
@@ -730,6 +746,26 @@
 									<div class="lang-filter-hint">
 										How much of the measured range regrain reads. Every frame is the most accurate. Half, Quarter and Eighth read that share of every 48 frames
 										and are faster. Changing either setting does not regenerate an existing table.
+									</div>
+								</div>
+								<div class="setting-group">
+									<label>Synthetic grain</label>
+									<div class="lang-filter-hint">
+										Grain of a chosen strength, written with <code>regrain generate</code>, for jobs where no measured table applies.
+									</div>
+									<div class="nested-settings">
+										<div class="setting-group">
+											<label>Strength</label>
+											<div id="advanced-film-grain-synthetic-strength"></div>
+											<div class="lang-filter-hint">Deviation on the 0 to 255 scale. Luma 0 turns synthetic grain off.</div>
+										</div>
+										<div class="setting-group">
+											<label>Size</label>
+											<div class="radio-group" id="advanced-film-grain-synthetic-size"></div>
+											<div class="lang-filter-hint">
+												Fine is single pixels like digital camera noise, Medium is like most film grain, and Coarse forms clumps a few pixels wide.
+											</div>
+										</div>
 									</div>
 								</div>
 								<div class="nested-settings-set" id="advanced-film-grain-job" style="display: none">

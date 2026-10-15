@@ -393,6 +393,15 @@ export function renderJobCard(job: Job): string {
 			else if (job.autoFilmGrain && !done)
 				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${({ all: "Every frame", half: "Half", quarter: "Quarter", eighth: "Eighth" } as const)[job.settings.filmGrainSampling] ?? "Every frame"}</span>`;
 		}
+	} else if (
+		job.kind !== "repair" &&
+		job.settings.videoEncode === "av1" &&
+		job.settings.subtitleProcessing !== "translate" &&
+		!job.settings.filmGrainTablePath
+	) {
+		if (job.settings.filmGrainRestore && job.settings.denoise !== "off")
+			meta += `<span title="The grain the denoiser removes is measured after Prepare and written back">FGS: restore${job.settings.filmGrainJustEnough ? " (just enough)" : ""}</span>`;
+		else if ((job.settings.filmGrainSyntheticStrength ?? 0) > 0) meta += `<span>Grain: ${job.settings.filmGrainSyntheticStrength}</span>`;
 	}
 
 	const stepsHtml = active || done || err ? renderSteps(job.steps) : "";

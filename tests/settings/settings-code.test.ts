@@ -164,3 +164,38 @@ describe("settings code - film grain table flag", () => {
 		expect("filmGrainTablePath" in decodeSettingsCode("RE1")).toBe(false);
 	});
 });
+
+describe("settings code - film grain of Rabbit's own", () => {
+	it("round trips restore, just enough, and synthetic grain", () => {
+		const settings: JobSettings = {
+			...getDefaultJobSettings(),
+			filmGrainRestore: true,
+			filmGrainJustEnough: true,
+			filmGrainSyntheticStrength: 2.5,
+			filmGrainSyntheticSize: "coarse",
+			filmGrainSyntheticChroma: 1,
+		};
+		const code = encodeSettingsCode(settings);
+		expect(code).toContain("|fg~r=1,je=1,s=2.5,z=coarse,ch=1");
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.filmGrainRestore).toBe(true);
+		expect(decoded.filmGrainJustEnough).toBe(true);
+		expect(decoded.filmGrainSyntheticStrength).toBe(2.5);
+		expect(decoded.filmGrainSyntheticSize).toBe("coarse");
+		expect(decoded.filmGrainSyntheticChroma).toBe(1);
+	});
+
+	it("leaves the section out by default and turns everything off for older codes", () => {
+		expect(encodeSettingsCode(getDefaultJobSettings())).not.toContain("|fg~");
+		expect(encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainRestore: true, videoEncode: "off" })).not.toContain("|fg~");
+		const decoded = decodeSettingsCode("RE1");
+		expect(decoded.filmGrainRestore).toBe(false);
+		expect(decoded.filmGrainJustEnough).toBe(false);
+		expect(decoded.filmGrainSyntheticStrength).toBe(0);
+	});
+
+	it("drops size and chroma when synthetic grain is off", () => {
+		const code = encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticSize: "fine", filmGrainSyntheticChroma: 2 });
+		expect(code).not.toContain("|fg~");
+	});
+});

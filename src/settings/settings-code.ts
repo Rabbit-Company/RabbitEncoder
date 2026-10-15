@@ -22,7 +22,9 @@ import type {
 	DenoiseEngine,
 	AvdEngine,
 	AvdPreset,
+	FilmGrainSize,
 } from "../core/types";
+import { FILM_GRAIN_SIZES } from "../core/types";
 import { vsRegistry } from "../video/vs-filters";
 import { avdEngineUsesPreset, isAvdEngine, isAvdSelfTuningEngine } from "../video/avd";
 
@@ -151,6 +153,15 @@ const BASELINE: JobSettings = {
 	translateConcurrency: 1,
 	translateSourceTrack: "auto",
 	vsFilters: [],
+};
+
+/** RE1 codes from before these settings existed mean no grain of Rabbit's own. */
+const FILM_GRAIN_BASELINE = {
+	filmGrainRestore: false,
+	filmGrainJustEnough: false,
+	filmGrainSyntheticStrength: 0,
+	filmGrainSyntheticSize: "medium" as FilmGrainSize,
+	filmGrainSyntheticChroma: 0,
 };
 
 const QUALITY_TO_CODE: Record<EncoderQuality, string> = { lower: "lr", low: "l", medium: "m", high: "h", higher: "hr" };
@@ -376,6 +387,20 @@ export function encodeSettingsCode(s: JobSettings): string {
 		sections.push(db.toString());
 	}
 
+	// film grain of Rabbit's own: measured after its denoise, or synthetic
+	if (s.videoEncode !== "off") {
+		const fg = new Section("fg");
+		if ((s.filmGrainRestore ?? false) !== FILM_GRAIN_BASELINE.filmGrainRestore) fg.put("r", !!s.filmGrainRestore);
+		if ((s.filmGrainJustEnough ?? false) !== FILM_GRAIN_BASELINE.filmGrainJustEnough) fg.put("je", !!s.filmGrainJustEnough);
+		const strength = s.filmGrainSyntheticStrength ?? 0;
+		if (strength > 0) {
+			fg.put("s", strength);
+			if ((s.filmGrainSyntheticSize ?? "medium") !== FILM_GRAIN_BASELINE.filmGrainSyntheticSize) fg.put("z", s.filmGrainSyntheticSize!);
+			if ((s.filmGrainSyntheticChroma ?? 0) !== FILM_GRAIN_BASELINE.filmGrainSyntheticChroma) fg.put("ch", s.filmGrainSyntheticChroma!);
+		}
+		if (!fg.empty) sections.push(fg.toString());
+	}
+
 	// audio bitrates (only when Opus, only channels that differ)
 	if (s.audioEncode === "opus") {
 		const ab = new Section("ab");
@@ -538,7 +563,7 @@ export function decodeSettingsCode(code: string): Partial<JobSettings> {
 	}
 
 	// Start from a deep copy of the baseline, then apply overrides.
-	const out: JobSettings = structuredClone(BASELINE);
+	const out: JobSettings = { ...structuredClone(BASELINE), ...FILM_GRAIN_BASELINE };
 	const vsFilters: VsFilterEntry[] = [];
 
 	for (let i = 1; i < tokens.length; i++) {
@@ -561,6 +586,9 @@ export function decodeSettingsCode(code: string): Partial<JobSettings> {
 				break;
 			case "ab":
 				applyBitrates(out, kv);
+				break;
+			case "fg":
+				applyFilmGrain(out, kv);
 				break;
 			case "al":
 				out.audioLanguages = splitList(kv.v);
@@ -767,6 +795,14 @@ function applyDeband(out: JobSettings, kv: Record<string, string>): void {
 		radius: numOr(kv.rd, out.gradfunParams[level].radius),
 	};
 	out.gradfunParams = { ...out.gradfunParams, [level]: g };
+}
+
+function applyFilmGrain(out: JobSettings, kv: Record<string, string>): void {
+	if (kv.r !== undefined) out.filmGrainRestore = kv.r === "1";
+	if (kv.je !== undefined) out.filmGrainJustEnough = kv.je === "1";
+	if (kv.s !== undefined) out.filmGrainSyntheticStrength = Math.min(64, Math.max(0, numOr(kv.s, 0)));
+	if (kv.z && (FILM_GRAIN_SIZES as readonly string[]).includes(kv.z)) out.filmGrainSyntheticSize = kv.z as FilmGrainSize;
+	if (kv.ch !== undefined) out.filmGrainSyntheticChroma = Math.min(64, Math.max(0, numOr(kv.ch, 0)));
 }
 
 function applyBitrates(out: JobSettings, kv: Record<string, string>): void {

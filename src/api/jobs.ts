@@ -50,7 +50,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		const job = getJob(c.params.id!);
 		if (!job) return c.json({ error: "Job not found" }, 404);
 		if (!existsSync(job.inputPath)) return c.json({ error: "Job input is no longer accessible" }, 400);
-		let body: { sourcePath?: unknown; noiseSampling?: unknown; range?: unknown };
+		let body: { sourcePath?: unknown; noiseSampling?: unknown; range?: unknown; justEnough?: unknown };
 		try {
 			body = await c.req.json();
 		} catch {
@@ -60,13 +60,15 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		if (!FILM_GRAIN_SAMPLINGS.includes(sampling as FilmGrainSampling)) return c.json({ error: "Noise sampling must be all, half, quarter, or eighth" }, 400);
 		const range = body.range ?? job.settings.filmGrainRange ?? "full";
 		if (!FILM_GRAIN_RANGES.includes(range as FilmGrainRange)) return c.json({ error: "Measurement range must be representative or full" }, 400);
+		const justEnough = body.justEnough ?? job.settings.filmGrainJustEnough ?? false;
+		if (typeof justEnough !== "boolean") return c.json({ error: "justEnough must be a boolean" }, 400);
 		let sourcePath: string;
 		try {
 			sourcePath = resolveAllowedMediaFile(body.sourcePath, config, "Original source");
 		} catch (err) {
 			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
 		}
-		const result = startFilmGrainRun(job.id, sourcePath, sampling as FilmGrainSampling, range as FilmGrainRange);
+		const result = startFilmGrainRun(job.id, sourcePath, sampling as FilmGrainSampling, range as FilmGrainRange, justEnough);
 		if (!result.ok) return c.json({ error: result.error }, result.status);
 		return c.json(result.run, 202);
 	});

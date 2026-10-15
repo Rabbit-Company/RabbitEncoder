@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, symlinkSync, renameSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, symlinkSync, renameSync, linkSync, copyFileSync } from "fs";
 import { join, parse as parsePath, extname, basename } from "path";
 import type { Job, JobStep, AppConfig, EncodeJobOptions, SubtitleBurnMode, AudioStreamInfo, SubtitleStreamInfo } from "../core/types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
@@ -57,7 +57,8 @@ import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "..
 import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
-import { ensureFilmGrainTable, needsFilmGrainTable } from "../video/film-grain-generator";
+import { ensureFilmGrainTable, generateSyntheticFilmGrainTable, measureFilmGrain, needsFilmGrainTable } from "../video/film-grain-generator";
+import type { FilmGrainCrop } from "../video/film-grain-crop";
 import { formatFilmGrainProgress, parseRegrainEvent } from "../video/film-grain-progress";
 
 export { CancelledError } from "../core/process";
@@ -319,8 +320,14 @@ export async function encodeJob(
 	mkdirSync(tempDir, { recursive: true });
 	// A preview clip never measures a table itself: the preview does that on the full video first.
 	const generateFilmGrain = !previewMode && needsFilmGrainTable(job);
+	// A table from the original or a path always wins. Otherwise the grain Rabbit's own
+	// denoiser removes is measured after Prepare, and synthetic grain fills in when neither applies.
+	const ownFilmGrain =
+		job.settings.videoEncode === "av1" && job.settings.subtitleProcessing !== "translate" && !generateFilmGrain && !job.settings.filmGrainTablePath?.trim();
+	const restoreFilmGrain = ownFilmGrain && job.settings.filmGrainRestore === true && job.settings.denoise !== "off";
+	const syntheticGrainStrength = ownFilmGrain ? (job.settings.filmGrainSyntheticStrength ?? 0) : 0;
 	if (
-		(generateFilmGrain || job.settings.filmGrainTablePath?.trim()) &&
+		(generateFilmGrain || job.settings.filmGrainTablePath?.trim() || restoreFilmGrain || syntheticGrainStrength > 0) &&
 		job.settings.videoEncode !== "off" &&
 		/--(?:photon-noise|film-grain|fgs-table)(?:\s|=|$)/.test(job.settings.customEncoderParams || "")
 	)
@@ -331,9 +338,10 @@ export async function encodeJob(
 	const baseTitle = extractBaseTitle(stem);
 
 	const steps = makeSteps();
-	// Shown after Analyze, and only on jobs that measure their own table.
-	const filmGrainStep: JobStep | null = generateFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
-	const shownSteps = (): JobStep[] => (filmGrainStep ? [steps[S_PROBE]!, filmGrainStep, ...steps.slice(S_PREPARE)] : [...steps]);
+	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise.
+	const filmGrainStep: JobStep | null = generateFilmGrain || restoreFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
+	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : S_PREPARE;
+	const shownSteps = (): JobStep[] => (filmGrainStep ? [...steps.slice(0, filmGrainStepAt), filmGrainStep, ...steps.slice(filmGrainStepAt)] : [...steps]);
 
 	function setStep(target: number | JobStep, partial: Partial<JobStep>) {
 		const step = typeof target === "number" ? steps[target]! : target;
@@ -388,7 +396,7 @@ export async function encodeJob(
 		setStep(S_PROBE, { status: "done", progress: 100 });
 
 		// Film grain table. regrain uses every core, so it runs here and not beside another job.
-		if (filmGrainStep) {
+		if (filmGrainStep && generateFilmGrain) {
 			checkCancelled();
 			setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring film grain" });
 			await ensureFilmGrainTable(job, config, signal, (progress) => {
@@ -403,6 +411,16 @@ export async function encodeJob(
 				throw new Error(`Film grain table is missing or empty: ${filmGrainTablePath}`);
 			// A table without entries means the denoiser removed no measurable grain, so there is nothing to add.
 			if (writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"), opts.clipStartSeconds) === 0) filmGrainTablePath = "";
+		}
+		if (syntheticGrainStrength > 0) {
+			checkCancelled();
+			const syntheticTable = join(tempDir, "film-grain-synthetic.tbl");
+			const segments = await generateSyntheticFilmGrainTable(
+				syntheticTable,
+				{ strength: syntheticGrainStrength, size: job.settings.filmGrainSyntheticSize ?? "medium", chroma: job.settings.filmGrainSyntheticChroma ?? 0 },
+				signal,
+			);
+			if (segments > 0 && writeEncoderFilmGrainTable(syntheticTable, join(tempDir, "film-grain.tbl")) > 0) filmGrainTablePath = syntheticTable;
 		}
 
 		// Prepare
@@ -563,6 +581,50 @@ export async function encodeJob(
 		// av-denoise has no CPU fallback, so stop here rather than after the filter pass.
 		if (prepareFilter?.deferredAvd) {
 			await assertAvdDeviceUsable(prepareFilter.deferredAvd.engine, prepareFilter.deferredAvd.device);
+		}
+
+		// The grain Rabbit's denoiser removes is measured against the video as it is right before the denoise,
+		// with the same crop and downscale. Every later stage replaces preparedVideo with a new file, so a
+		// hard link keeps this version without a copy. A downscale has no crop regrain can follow, so it gets its own pass.
+		let grainReference: { path: string; crop?: FilmGrainCrop } | null = null;
+		const denoisesHere =
+			!!prepareFilter && (prepareFilter.steps.some((step) => step.kind === "denoise") || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd);
+		if (restoreFilmGrain && denoisesHere) {
+			checkCancelled();
+			const referencePath = join(tempDir, "source_video_grain_reference.mkv");
+			rmSync(referencePath, { force: true });
+			const geometry = prepareFilter!.steps.filter((step) => step.kind === "crop" || step.kind === "downscale");
+			if (geometry.some((step) => step.kind === "downscale")) {
+				setStep(S_PREPARE, { progress: 4.8, detail: "Scaling the film grain reference" });
+				const refRes = await run(
+					[
+						"ffmpeg",
+						"-y",
+						"-v",
+						"error",
+						"-nostats",
+						"-i",
+						preparedVideo,
+						"-vf",
+						geometry.map((step) => step.filter).join(","),
+						...FFV1_ENCODE_ARGS,
+						"-an",
+						"-sn",
+						referencePath,
+					],
+					{ signal },
+				);
+				checkCancelled();
+				if (refRes.code !== 0) throw new Error(`Film grain reference failed: ${(refRes.stderr || refRes.stdout).trim().slice(-500)}`);
+				grainReference = { path: referencePath };
+			} else {
+				try {
+					linkSync(preparedVideo, referencePath);
+				} catch {
+					copyFileSync(preparedVideo, referencePath);
+				}
+				grainReference = { path: referencePath, crop: prepareFilter!.cropRect };
+			}
 		}
 
 		// The segmented stages cut by time, which is only frame-accurate on the intra-only FFV1 this pass writes,
@@ -754,6 +816,44 @@ export async function encodeJob(
 		if (sink) await sink.capture(preparedVideo, "prepare.png", "none");
 
 		setStep(S_PREPARE, { status: "done", progress: 100 });
+
+		if (filmGrainStep && restoreFilmGrain) {
+			if (!grainReference) {
+				setStep(filmGrainStep, { status: "done", progress: 100, detail: "Skipped because nothing was denoised" });
+			} else {
+				checkCancelled();
+				setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring film grain" });
+				const measuredTable = join(tempDir, "film-grain-measured.tbl");
+				let segments: number;
+				try {
+					segments = await measureFilmGrain({
+						sourcePath: grainReference.path,
+						denoisedPath: preparedVideo,
+						tablePath: measuredTable,
+						sampling: job.settings.filmGrainSampling,
+						range: job.settings.filmGrainRange ?? "full",
+						justEnough: job.settings.filmGrainJustEnough === true,
+						crop: grainReference.crop,
+						signal,
+						onProgress: (progress) => setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
+					});
+				} catch (error) {
+					if (error instanceof CancelledError) throw error;
+					throw new Error(`Film grain measurement failed: ${error instanceof Error ? error.message : String(error)}`);
+				} finally {
+					rmSync(grainReference.path, { force: true });
+				}
+				checkCancelled();
+				// Measured on this very video, so a preview clip's table already starts at the clip.
+				const applied = segments > 0 && writeEncoderFilmGrainTable(measuredTable, join(tempDir, "film-grain.tbl")) > 0;
+				if (applied) filmGrainTablePath = measuredTable;
+				setStep(filmGrainStep, {
+					status: "done",
+					progress: 100,
+					detail: applied ? `${segments} ${segments === 1 ? "segment" : "segments"}` : "The denoiser removed no measurable grain",
+				});
+			}
+		}
 
 		const skipVideoEncode = job.settings.videoEncode === "off";
 		const skipAudioEncode = job.settings.audioEncode === "copy";

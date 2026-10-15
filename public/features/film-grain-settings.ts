@@ -1,13 +1,13 @@
 import type { FilmGrainRun, JobSettings } from "../types";
 import type { AdvancedTarget } from "../ui/models";
 import { cancelFilmGrainTable, fetchFilmGrainRun, fetchJobs, startFilmGrainTable } from "../api/client";
-import { FILM_GRAIN_RANGES, FILM_GRAIN_SAMPLINGS } from "../config/options";
+import { FILM_GRAIN_RANGES, FILM_GRAIN_SAMPLINGS, FILM_GRAIN_SIZES } from "../config/options";
 import { byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { formatDuration } from "./job-render";
 import { openPreviewReferencePicker } from "./repair";
-import { renderRadioPills } from "./settings-controls";
+import { renderLabeledToggle, renderRadioPills } from "./settings-controls";
 
 let pollTimer: number | undefined;
 /** Bumped whenever the section is rebuilt or closed, so late responses are dropped. */
@@ -16,6 +16,34 @@ let session = 0;
 export function stopFilmGrainSettings(): void {
 	session++;
 	window.clearTimeout(pollTimer);
+}
+
+function renderStrengthGrid(container: HTMLElement, fields: { label: string; value: number; onChange: (value: number) => void }[]): void {
+	container.innerHTML = "";
+	const grid = document.createElement("div");
+	grid.className = "auto-threshold-grid";
+	for (const field of fields) {
+		const row = document.createElement("label");
+		row.className = "auto-threshold-row";
+		const span = document.createElement("span");
+		span.textContent = field.label;
+		const input = document.createElement("input");
+		input.type = "number";
+		input.min = "0";
+		input.max = "64";
+		input.step = "0.1";
+		input.value = String(field.value);
+		input.onchange = () => {
+			const n = parseFloat(input.value);
+			const v = Number.isFinite(n) ? Math.min(64, Math.max(0, n)) : 0;
+			input.value = String(v);
+			field.onChange(v);
+		};
+		row.appendChild(span);
+		row.appendChild(input);
+		grid.appendChild(row);
+	}
+	container.appendChild(grid);
 }
 
 export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSettings): void {
@@ -36,6 +64,29 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		settings.filmGrainRange || "full",
 		(v) => (settings.filmGrainRange = v),
 		(v) => (v === "representative" ? "Quick (30s)" : "Full video"),
+	);
+	renderLabeledToggle(
+		byId("advanced-film-grain-restore"),
+		settings.filmGrainRestore === true,
+		"Measure and restore the grain Rabbit's denoiser removes",
+		(v) => (settings.filmGrainRestore = v),
+	);
+	renderLabeledToggle(
+		byId("advanced-film-grain-just-enough"),
+		settings.filmGrainJustEnough === true,
+		"Just enough to hide banding",
+		(v) => (settings.filmGrainJustEnough = v),
+	);
+	renderStrengthGrid(byId("advanced-film-grain-synthetic-strength"), [
+		{ label: "luma", value: settings.filmGrainSyntheticStrength ?? 0, onChange: (v) => (settings.filmGrainSyntheticStrength = v) },
+		{ label: "chroma", value: settings.filmGrainSyntheticChroma ?? 0, onChange: (v) => (settings.filmGrainSyntheticChroma = v) },
+	]);
+	renderRadioPills(
+		byId("advanced-film-grain-synthetic-size"),
+		FILM_GRAIN_SIZES,
+		settings.filmGrainSyntheticSize ?? "medium",
+		(v) => (settings.filmGrainSyntheticSize = v),
+		(v) => ({ fine: "Fine", medium: "Medium", coarse: "Coarse" })[v],
 	);
 
 	const jobId = target === "job" ? appState.currentEditJobId : null;
@@ -135,7 +186,13 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		generateButton.disabled = true;
 		result.textContent = "";
 		try {
-			const run = await startFilmGrainTable(jobId, sourcePath, settings.filmGrainSampling, settings.filmGrainRange ?? "full");
+			const run = await startFilmGrainTable(
+				jobId,
+				sourcePath,
+				settings.filmGrainSampling,
+				settings.filmGrainRange ?? "full",
+				settings.filmGrainJustEnough === true,
+			);
 			if (!live()) return;
 			show(run);
 			window.clearTimeout(pollTimer);

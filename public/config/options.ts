@@ -59,6 +59,7 @@ export const DENOISE_ENGINES: readonly DenoiseEngine[] = ["avd-nl4d", "avd-nlmea
 export const AVD_ENGINES: readonly AvdEngine[] = ["avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
 export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as const;
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
+export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
 export const AVD_PRESETS: readonly AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
 export const DEFAULT_AVD_PARAMS: AvdParams = {
 	preset: "base",

@@ -1,13 +1,13 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "fs";
-import { join } from "path";
-import type { AppConfig, FilmGrainSampling, FilmGrainRange, Job } from "../core/types";
-import { CancelledError } from "../core/process";
+import { dirname, join } from "path";
+import type { AppConfig, FilmGrainSampling, FilmGrainRange, FilmGrainSize, Job, ProbeResult } from "../core/types";
+import { CancelledError, run } from "../core/process";
 import { probeFile } from "../pipeline/probe";
 import { filmGrainSegmentCount, writeRepresentativeFilmGrainTable } from "./film-grain-table";
 import { parseRegrainEvent, progressFromEvent, type FilmGrainProgress, type RegrainEvent } from "./film-grain-progress";
 import { Logger } from "../core/logger";
-import { detectFilmGrainCrop } from "./film-grain-crop";
+import { detectFilmGrainCrop, type FilmGrainCrop } from "./film-grain-crop";
 import { representativeFilmGrainWindow } from "./film-grain-window";
 
 export interface GeneratedFilmGrainTable {
@@ -21,6 +21,7 @@ export interface FilmGrainRun {
 	sourcePath: string;
 	sampling: FilmGrainSampling;
 	range: FilmGrainRange;
+	justEnough?: boolean;
 	startedAt: number;
 	finishedAt?: number;
 	progress?: FilmGrainProgress;
@@ -48,13 +49,14 @@ export async function generateFilmGrainTable(
 	sourcePath: string,
 	sampling: FilmGrainSampling,
 	range: FilmGrainRange,
+	justEnough: boolean,
 	signal?: AbortSignal,
 	onProgress?: (progress: FilmGrainProgress) => void,
 ): Promise<GeneratedFilmGrainTable> {
 	// regrain uses every core, so a job never has two runs at once. A run that
 	// is being cancelled has to stop before the next one starts.
 	while (active.has(job.id)) await active.get(job.id)!.catch(() => {});
-	const promise = generate(job, config, sourcePath, sampling, range, signal, onProgress).finally(() => {
+	const promise = generate(job, config, sourcePath, sampling, range, justEnough, signal, onProgress).finally(() => {
 		if (active.get(job.id) === promise) active.delete(job.id);
 	});
 	active.set(job.id, promise);
@@ -76,6 +78,7 @@ export async function ensureFilmGrainTable(
 			job.originalSourcePath!,
 			job.settings.filmGrainSampling,
 			job.settings.filmGrainRange ?? "full",
+			job.settings.filmGrainJustEnough === true,
 			signal,
 			onProgress,
 		);
@@ -147,6 +150,7 @@ async function generate(
 	sourcePath: string,
 	sampling: FilmGrainSampling,
 	range: FilmGrainRange,
+	justEnough: boolean,
 	signal?: AbortSignal,
 	onProgress?: (progress: FilmGrainProgress) => void,
 ): Promise<GeneratedFilmGrainTable> {
@@ -156,39 +160,111 @@ async function generate(
 	if (realpathSync(sourcePath) === realpathSync(job.inputPath)) throw new Error("Original and denoised input must be different files");
 	const tableDir = join(config.tempDir, "film-grain-tables");
 	mkdirSync(tableDir, { recursive: true });
-	const workDir = mkdtempSync(join(tableDir, "generate-"));
+	const tablePath = join(tableDir, `${job.id}-${randomUUID()}.tbl`);
+	const segments = await measureFilmGrain({
+		sourcePath,
+		denoisedPath: job.inputPath,
+		denoisedProbe: job.probe,
+		tablePath,
+		sampling,
+		range,
+		justEnough,
+		signal,
+		onProgress,
+	});
+	return { tablePath, segments };
+}
+
+export interface MeasureFilmGrainOptions {
+	/** The video with grain. */
+	sourcePath: string;
+	denoisedPath: string;
+	denoisedProbe?: ProbeResult;
+	tablePath: string;
+	sampling: FilmGrainSampling;
+	range: FilmGrainRange;
+	justEnough: boolean;
+	/** Where the denoised frame sits inside the source, when known. It is detected when the sizes differ and this is missing. */
+	crop?: FilmGrainCrop;
+	signal?: AbortSignal;
+	onProgress?: (progress: FilmGrainProgress) => void;
+}
+
+/** Measure the grain between a grainy and a denoised video into a table that covers the whole video. Returns its segment count. */
+export async function measureFilmGrain(opts: MeasureFilmGrainOptions): Promise<number> {
+	const { sourcePath, denoisedPath, signal } = opts;
+	if (signal?.aborted) throw new CancelledError();
+	const workDir = mkdtempSync(join(dirname(opts.tablePath), "generate-"));
 	try {
 		const original = await probeFile(sourcePath);
-		const denoised = job.probe ?? (await probeFile(job.inputPath));
+		const denoised = opts.denoisedProbe ?? (await probeFile(denoisedPath));
 		if (Math.abs(original.videoStreamFps - denoised.videoStreamFps) > 0.01) throw new Error("Original and denoised videos must have the same frame rate");
 		if (denoised.width > original.width || denoised.height > original.height)
 			throw new Error("Denoised video is larger than the original, so it cannot be a crop of it");
 		if (signal?.aborted) throw new CancelledError();
-		const args = ["regrain", "diff", sourcePath, job.inputPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[sampling]];
+		const args = ["regrain", "diff", sourcePath, denoisedPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[opts.sampling]];
+		if (opts.justEnough) args.push("--just-enough");
 		// A denoising server that crops first hands back a smaller frame. regrain then
 		// measures only the matching area of the original.
 		if (original.width !== denoised.width || original.height !== denoised.height) {
-			const crop = await detectFilmGrainCrop(sourcePath, job.inputPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal);
+			const crop =
+				opts.crop ?? (await detectFilmGrainCrop(sourcePath, denoisedPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal));
 			args.push("--crop", `${crop.w}:${crop.h}:${crop.x}:${crop.y}`);
 			Logger.info(`[film-grain] Denoised input is ${crop.w}x${crop.h}. Measuring the ${original.width}x${original.height} original at +${crop.x}+${crop.y}.`);
 		}
-		const window = range === "representative" ? representativeFilmGrainWindow(Math.min(original.duration, denoised.duration), denoised.videoStreamFps) : null;
+		const window =
+			opts.range === "representative" ? representativeFilmGrainWindow(Math.min(original.duration, denoised.duration), denoised.videoStreamFps) : null;
 		if (window) args.push("--start", window.startSeconds.toFixed(3), "--duration", (window.frames / denoised.videoStreamFps).toFixed(3));
 		if (signal?.aborted) throw new CancelledError();
-		const result = await runRegrain(args, signal, onProgress);
+		const result = await runRegrain(args, signal, opts.onProgress);
 		if (signal?.aborted || result.error?.code === "cancelled") throw new CancelledError();
 		if (result.code !== 0 || !result.summary) throw new Error(regrainErrorText(result.error, result.stderr, result.code));
 		for (const warning of result.summary.warnings ?? []) Logger.warn(`[film-grain] ${warning.message}`);
 		const tempTable = join(workDir, "grain.tbl");
 		if (!existsSync(tempTable)) throw new Error("regrain wrote no film grain table");
-		const tablePath = join(tableDir, `${job.id}-${randomUUID()}.tbl`);
 		// The encode applies a stored table scene by scene, so a table has to cover the whole video.
 		// A window's timestamps do not, and it is stored as its one representative segment.
-		if (window) return { tablePath, segments: writeRepresentativeFilmGrainTable(tempTable, tablePath) };
+		if (window) return writeRepresentativeFilmGrainTable(tempTable, opts.tablePath);
 		const segments = filmGrainSegmentCount(tempTable);
-		renameSync(tempTable, tablePath);
-		return { tablePath, segments };
+		renameSync(tempTable, opts.tablePath);
+		return segments;
 	} finally {
 		rmSync(workDir, { recursive: true, force: true });
 	}
+}
+
+/** Write a table with grain of a chosen strength for the whole video. Returns its segment count, 0 when the strength adds no grain. */
+export async function generateSyntheticFilmGrainTable(
+	tablePath: string,
+	grain: { strength: number; size: FilmGrainSize; chroma: number },
+	signal?: AbortSignal,
+): Promise<number> {
+	const res = await run(
+		[
+			"regrain",
+			"--progress",
+			"json",
+			"generate",
+			"-o",
+			tablePath,
+			"-y",
+			"--strength",
+			String(grain.strength),
+			"--size",
+			grain.size,
+			"--chroma",
+			String(grain.chroma),
+		],
+		{ signal },
+	);
+	if (signal?.aborted) throw new CancelledError();
+	if (res.code !== 0 || !existsSync(tablePath)) {
+		const failure = res.stdout
+			.split("\n")
+			.map(parseRegrainEvent)
+			.find((event) => event?.event === "error");
+		const reason = failure?.event === "error" ? failure.message : (res.stderr || res.stdout).trim().slice(-500) || `exit ${res.code}`;
+		throw new Error(`Synthetic film grain failed: ${reason}`);
+	}
+	return filmGrainSegmentCount(tablePath);
 }
