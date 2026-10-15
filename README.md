@@ -121,7 +121,7 @@ When Rabbit denoises the video itself, turn on **Advanced Settings -> AV1 film g
 
 After the video is encoded, Rabbit writes the table into the AV1 stream with `regrain apply`, for previews and full encodes. regrain then reads the result back, checks every frame's grain, and decodes it with dav1d before Rabbit continues. SVT-AV1's own `--fgs-table` reads only the first entry of a table, so it is not used. A **Full video** table is applied scene by scene, and each segment keeps the grain measured for it. A **Quick** table is applied as one segment to the whole video. A table path you enter yourself is applied as written, so its timestamps have to match the video. Keep the source table available until encoding finishes. Do not combine the table with `--photon-noise`, `--film-grain`, or `--fgs-table` in custom encoder parameters. Grain the encoder wrote itself is replaced by the table.
 
-The container downloads the checksum-verified [regrain v0.2.0 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.2.0). It is a static binary that uses the container's FFmpeg.
+The container downloads the checksum-verified [regrain v0.2.1 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.2.1). It is a static binary that uses the container's FFmpeg.
 
 ## Subtitle Repair / Remux
 
