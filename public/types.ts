@@ -292,6 +292,8 @@ export interface JobSettings {
 	translateTimeoutMs: number;
 	/** Max output tokens per request (cloud providers). Default 8192. */
 	translateMaxTokens?: number;
+	/** Model reasoning: "auto" turns it off for api.deepseek.com, "off" always sends thinking disabled, "on" leaves the provider default. */
+	translateThinking?: "auto" | "off" | "on";
 	/** Max concurrent in-flight llm requests. Default 1. */
 	translateConcurrency?: number;
 	/** May translation overlap the video encode? "auto" overlaps only when llm is NOT on a loopback address. Default "auto". */

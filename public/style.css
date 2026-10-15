@@ -1917,6 +1917,20 @@ code {
 	gap: 8px 16px;
 }
 
+.library-translate-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: 12px;
+}
+
+.library-translate-grid .setting-group {
+	margin: 0;
+}
+
+.library-translate-grid .select-input {
+	width: 100%;
+}
+
 .library-queue-toggle {
 	display: flex;
 	align-items: center;

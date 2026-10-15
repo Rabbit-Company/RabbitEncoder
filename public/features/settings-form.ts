@@ -51,6 +51,7 @@ import {
 	renderSubtitleLangDetectControl,
 	renderSubtitleStyleTargets,
 	renderTextControl,
+	renderSelectControl,
 	renderTranslationLanguagesInput,
 	wireEncoderControls,
 } from "./settings-controls";
@@ -466,12 +467,17 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		renderNumberControl(group(), "Max output tokens", settings.translateMaxTokens ?? 8192, { min: 1024, max: 32768, step: 512 }, (v) => {
 			settings.translateMaxTokens = v;
 		});
+		const thinkingLabels: Record<string, string> = { auto: "Auto", off: "Off", on: "Provider default" };
+		renderSelectControl(group(), "Reasoning", Object.values(thinkingLabels), thinkingLabels[settings.translateThinking ?? "auto"]!, (v) => {
+			settings.translateThinking = (Object.keys(thinkingLabels).find((k) => thinkingLabels[k] === v) ?? "auto") as JobSettings["translateThinking"];
+		});
 
 		const hint = document.createElement("div");
 		hint.className = "lang-filter-hint";
 		hint.textContent =
 			provider === "openai"
-				? "Any OpenAI-compatible endpoint: OpenAI, DeepSeek, OpenRouter, Groq, or a local server like Ollama (http://localhost:11434/v1) / LM Studio."
+				? "Any OpenAI-compatible endpoint: OpenAI, DeepSeek, OpenRouter, Groq, or a local server like Ollama (http://localhost:11434/v1) / LM Studio. " +
+					"Reasoning on Auto turns thinking off for api.deepseek.com, where it otherwise spends the output budget before answering. Off sends that switch to any endpoint."
 				: "Anthropic Messages API (api.anthropic.com) or any proxy speaking the same format.";
 		providerSettings.appendChild(hint);
 	};
@@ -529,6 +535,7 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 			model: settings.translateModel,
 			apiKey: settings.translateApiKey,
 			target: settings.translateTargetLanguages[0],
+			thinking: settings.translateThinking,
 		});
 		testBtn.disabled = false;
 		if (r.ok) {

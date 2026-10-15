@@ -10,6 +10,8 @@ import {
 	FILM_GRAIN_SAMPLINGS,
 	FILM_GRAIN_RANGES,
 	FILM_GRAIN_SIZES,
+	TRANSLATE_SOURCE_TYPES,
+	type TranslateSourceType,
 	type FilmGrainSampling,
 	type FilmGrainRange,
 	type VideoEncodeMode,
@@ -334,9 +336,16 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	translateBatchSize: intIn(1, 1000),
 	translateSignsSongs: bool,
 	translateMaxTokens: intIn(512, 131072),
+	translateThinking: enumOf(["auto", "off", "on"]),
 	translateTimeoutMs: intIn(1000, 3600000),
 	translateConcurrency: intIn(1, 16),
 	translateSourceTrack: (v) => (v === "auto" ? "auto" : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined),
+	translateSourceMatch: (v) => {
+		const m = v as { language?: unknown; type?: unknown } | null;
+		if (!m || typeof m !== "object" || typeof m.language !== "string" || !m.language.trim()) return undefined;
+		if (!TRANSLATE_SOURCE_TYPES.includes(m.type as TranslateSourceType)) return undefined;
+		return { language: m.language.trim().slice(0, 32), type: m.type };
+	},
 };
 
 function sanitizeSettingsInto(target: JobSettings, partial: Partial<JobSettings>): void {
@@ -406,6 +415,7 @@ export function addJob(
 	autoFilmGrain = false,
 	filmGrainSampling?: FilmGrainSampling,
 	filmGrainRange?: FilmGrainRange,
+	settingsOverride: Partial<JobSettings> = {},
 ): Job {
 	for (const job of jobs.values()) {
 		if (job.inputPath === inputPath && job.status !== "error" && job.status !== "done") {
@@ -444,6 +454,7 @@ export function addJob(
 			},
 			...(filmGrainSampling ? { filmGrainSampling } : {}),
 			...(filmGrainRange ? { filmGrainRange } : {}),
+			...settingsOverride,
 		},
 		replaceSource,
 	};
@@ -584,6 +595,21 @@ export function scanLibraryPath(
 	const folderName = basename(dir);
 	addJob(filename, resolved, folderName, true, sourceMap[resolved], autoFilmGrain, filmGrainSampling, filmGrainRange);
 	return { added: 1, skipped: 0, alreadyEncoded: 0 };
+}
+
+/** Queue translate-only jobs that replace each file in place. Encoded files are included on purpose. */
+export function queueTranslateJobs(files: string[], settingsOverride: Partial<JobSettings>): { added: number; skipped: number } {
+	let added = 0;
+	let skipped = 0;
+	for (const file of files) {
+		if ([...jobs.values()].some((job) => job.inputPath === file && job.status !== "error" && job.status !== "done")) {
+			skipped++;
+			continue;
+		}
+		addJob(basename(file), file, basename(dirname(file)), true, undefined, false, undefined, undefined, settingsOverride);
+		added++;
+	}
+	return { added, skipped };
 }
 
 export function removeJob(id: string): boolean {

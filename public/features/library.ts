@@ -13,6 +13,7 @@ import {
 import { buttonById, byId, inputById } from "../shared/dom";
 import { appState } from "../state";
 import { openQueueSetup } from "./library-queue-setup";
+import { openTranslateSetup } from "./library-translate";
 
 /**
  * In translate-only mode, already-encoded files are the primary target
@@ -143,9 +144,8 @@ export async function toggleNodeExpand(path: string): Promise<void> {
 	renderLibraryTree();
 }
 
-export function getCheckedPaths(): string[] {
+export function getCheckedPaths(includeEncoded = encodedSelectable()): string[] {
 	const paths: string[] = [];
-	const includeEncoded = encodedSelectable();
 	function collect(path: string): void {
 		const node = appState.libraryNodes.get(path);
 		if (!node) return;
@@ -169,9 +169,8 @@ export function getCheckedPaths(): string[] {
 	return paths;
 }
 
-export function countSelectedToEncode(): number {
+export function countSelectedToEncode(includeEncoded = encodedSelectable()): number {
 	let total = 0;
-	const includeEncoded = encodedSelectable();
 	function count(path: string): void {
 		const node = appState.libraryNodes.get(path);
 		if (!node) return;
@@ -308,6 +307,7 @@ export function updateLibraryFooter() {
 		note.textContent = `Select folders or files to ${encodedSelectable() ? "translate" : "encode"}`;
 		encodeBtn.disabled = true;
 	}
+	buttonById("library-translate-btn").disabled = countSelectedToEncode(true) === 0;
 }
 export async function openLibrary() {
 	const modal = byId("library-modal");
@@ -317,6 +317,7 @@ export async function openLibrary() {
 	content.innerHTML = `<div class="library-loading">Loading library...</div>`;
 	note.textContent = "";
 	encodeBtn.disabled = true;
+	buttonById("library-translate-btn").disabled = true;
 	modal.style.display = "";
 
 	try {
@@ -365,4 +366,10 @@ export async function handleLibraryEncode() {
 	const paths = getCheckedPaths();
 	if (paths.length === 0) return;
 	openQueueSetup(paths);
+}
+
+export function handleLibraryTranslate() {
+	const paths = getCheckedPaths(true);
+	if (paths.length === 0) return;
+	openTranslateSetup(paths, countSelectedToEncode(true));
 }

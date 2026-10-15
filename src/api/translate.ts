@@ -11,6 +11,7 @@ export function registerTranslateRoutes(app: Web): void {
 			model?: string;
 			apiKey?: string;
 			target?: string;
+			thinking?: string;
 		};
 		const provider: TranslateProvider = body.provider === "anthropic" ? "anthropic" : "openai";
 		const baseUrl = (body.baseUrl || "").trim();
@@ -21,7 +22,8 @@ export function registerTranslateRoutes(app: Web): void {
 
 		if (!baseUrl || !model) return c.json({ ok: false, error: "Missing API base URL or model" }, 400);
 
-		const r = await checkGenericChat({ provider, baseUrl, apiKey, model, source, target, timeoutMs: 30_000 });
+		const thinking = body.thinking === "off" || body.thinking === "on" ? body.thinking : "auto";
+		const r = await checkGenericChat({ provider, baseUrl, apiKey, model, source, target, thinking, timeoutMs: 30_000 });
 		return c.json(r.ok ? { ok: true, sample: r.sample, model, target: target.name } : { ok: false, error: r.detail });
 	});
 }

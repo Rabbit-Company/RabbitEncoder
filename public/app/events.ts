@@ -23,7 +23,16 @@ import {
 } from "../features/bitrate-analysis";
 import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, removeJobs, saveJobSettings } from "../features/job-settings";
 import { openFolderFromSearch, renderLibraryView } from "../features/library-search";
-import { closeLibrary, closeLibraryIfOutside, handleLibraryEncode, openLibrary, toggleNodeCheck, toggleNodeExpand } from "../features/library";
+import {
+	closeLibrary,
+	closeLibraryIfOutside,
+	handleLibraryEncode,
+	handleLibraryTranslate,
+	openLibrary,
+	toggleNodeCheck,
+	toggleNodeExpand,
+} from "../features/library";
+import { closeTranslateSetup, closeTranslateSetupIfOutside, submitTranslateSetup } from "../features/library-translate";
 import {
 	changeQueuePair,
 	clearQueueOriginal,
@@ -365,6 +374,11 @@ export function initEventListeners() {
 	byId("close-subtitle-preview-btn").addEventListener("click", closeSubPreview);
 	byId("library-modal").addEventListener("click", closeLibraryIfOutside);
 	byId("library-encode-btn").addEventListener("click", handleLibraryEncode);
+	byId("library-translate-btn").addEventListener("click", handleLibraryTranslate);
+	byId("library-translate-close").addEventListener("click", closeTranslateSetup);
+	byId("library-translate-cancel").addEventListener("click", closeTranslateSetup);
+	byId("library-translate-modal").addEventListener("click", closeTranslateSetupIfOutside);
+	byId("library-translate-submit").addEventListener("click", submitTranslateSetup);
 	byId("library-queue-close").addEventListener("click", closeQueueSetup);
 	byId("library-queue-cancel").addEventListener("click", closeQueueSetup);
 	byId("library-queue-modal").addEventListener("click", closeQueueSetupIfOutside);

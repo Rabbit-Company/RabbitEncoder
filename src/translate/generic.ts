@@ -1,4 +1,4 @@
-import { chatComplete, type LlmChatOptions } from "./llm-client";
+import { chatComplete, chatCompleteResult, describeChatResult, type ChatResult, type LlmChatOptions } from "./llm-client";
 import { Logger } from "../core/logger";
 import type { TranslateLang } from "./translate-languages";
 
@@ -36,10 +36,22 @@ interface PayloadRow {
 }
 
 /** One prompt round-trip: per-entry translations, null where the id was dropped/unusable. */
-async function attemptBatch(payload: TranslateItem[], opts: GenericOptions): Promise<(string | null)[]> {
+async function attemptBatch(payload: TranslateItem[], opts: GenericOptions): Promise<{ rows: (string | null)[]; reply: ChatResult }> {
 	const prompt = buildGenericPrompt(payload, opts);
-	const content = await chat(prompt, opts);
-	return parseGenericResponse(content, payload.length);
+	const reply = await chatCompleteResult(prompt, opts);
+	return { rows: parseGenericResponse(reply.content, payload.length), reply };
+}
+
+/**
+ * The model spent the whole output budget thinking and never answered.
+ * Smaller batches do not help with that, so stop before more paid requests.
+ */
+export function reasoningExhaustedError(reply: ChatResult, maxTokens: number | undefined): Error | null {
+	if (!reply.truncated || (!reply.reasoningTokens && !reply.reasoningChars)) return null;
+	return new Error(
+		`The model used its whole output budget (${maxTokens ?? "default"} max tokens) on reasoning and returned no translation (${describeChatResult(reply)}). ` +
+			`Set Reasoning to Off in the subtitle translation settings, or raise Max output tokens.`,
+	);
 }
 
 /**
@@ -76,8 +88,9 @@ async function translateResilient(payload: TranslateItem[], opts: GenericOptions
 	};
 
 	let parsed: (string | null)[];
+	let reply: ChatResult;
 	try {
-		parsed = await attemptBatch(payload, opts);
+		({ rows: parsed, reply } = await attemptBatch(payload, opts));
 	} catch (err) {
 		// Transport failure that survived the client's own retries. Smaller
 		// prompts are cheaper to retry and likelier to fit/succeed.
@@ -97,6 +110,11 @@ async function translateResilient(payload: TranslateItem[], opts: GenericOptions
 	}
 	if (missingIdx.length === 0) return result;
 
+	if (missingIdx.length === payload.length) {
+		const exhausted = reasoningExhaustedError(reply, opts.maxTokens);
+		if (exhausted) throw exhausted;
+	}
+
 	// Last resort, or a tail so small the batch wrapper no longer pays for itself.
 	if (depth >= MAX_RECOVERY_DEPTH || missingIdx.length < MIN_BATCH_RECOVERY) {
 		Logger.warn(`[translate] Recovering ${missingIdx.length} straggler line(s) individually (${opts.source.code}->${opts.target.code})`);
@@ -107,7 +125,11 @@ async function translateResilient(payload: TranslateItem[], opts: GenericOptions
 	// Nothing usable at all: the response was garbage, so change the prompt
 	// size rather than resending the same thing.
 	if (missingIdx.length === payload.length) {
-		Logger.warn(`[translate] Generic batch of ${payload.length} returned no usable ids ` + `(${opts.source.code}->${opts.target.code}); splitting in half`);
+		const snippet = reply.content.trim().slice(0, 200).replace(/\s+/g, " ");
+		Logger.warn(
+			`[translate] Generic batch of ${payload.length} returned no usable ids (${opts.source.code}->${opts.target.code}, ${describeChatResult(reply)}); ` +
+				`splitting in half${snippet ? `. Reply began: ${snippet}` : ""}`,
+		);
 		return halve();
 	}
 
@@ -115,7 +137,7 @@ async function translateResilient(payload: TranslateItem[], opts: GenericOptions
 	// Re-batch only the missing entries in one smaller request.
 	Logger.warn(
 		`[translate] Generic batch of ${payload.length} returned ${payload.length - missingIdx.length} usable ids ` +
-			`(${opts.source.code}->${opts.target.code}); re-batching ${missingIdx.length} missing entrie(s)`,
+			`(${opts.source.code}->${opts.target.code}${reply.truncated ? ", reply cut off at max tokens" : ""}); re-batching ${missingIdx.length} missing entrie(s)`,
 	);
 	const sub = await translateResilient(
 		missingIdx.map((i) => payload[i]!),
@@ -210,22 +232,23 @@ export function extractJsonArray(s: string): string | null {
 export function parseGenericResponse(content: string, count: number): (string | null)[] {
 	const out: (string | null)[] = new Array(count).fill(null);
 	const json = extractJsonArray(content);
-	if (!json) return out;
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(json);
-	} catch {
-		// Second chance: the array shape is usually fine and only the string
-		// escaping is broken (typically a raw `\N`). Repair and retry before
-		// declaring the batch unusable.
+	let parsed: unknown = null;
+	if (json) {
 		try {
-			parsed = JSON.parse(repairJsonEscapes(json));
-			Logger.warn("[translate] Model emitted invalid JSON escapes (raw \\N?). Repaired and parsed successfully.");
+			parsed = JSON.parse(json);
 		} catch {
-			return out;
+			// Second chance: the array shape is usually fine and only the string
+			// escaping is broken (typically a raw `\N`). Repair and retry before
+			// declaring the batch unusable.
+			try {
+				parsed = JSON.parse(repairJsonEscapes(json));
+				Logger.warn("[translate] Model emitted invalid JSON escapes (raw \\N?). Repaired and parsed successfully.");
+			} catch {}
 		}
 	}
+	// A reply cut off at max tokens has no closing bracket. Keep every complete row.
+	if (!Array.isArray(parsed)) parsed = salvageJsonObjects(content);
 	if (!Array.isArray(parsed)) return out;
 
 	for (const row of parsed) {
@@ -239,6 +262,49 @@ export function parseGenericResponse(content: string, count: number): (string | 
 		out[id] = String(rawText);
 	}
 	return out;
+}
+
+/**
+ * Pull every complete top-level `{...}` object out of a JSON array that may be
+ * cut off midway. Objects that fail to parse are skipped.
+ */
+export function salvageJsonObjects(content: string): unknown[] {
+	const t = stripCodeFences(content);
+	const start = t.indexOf("[");
+	if (start < 0) return [];
+	const rows: unknown[] = [];
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	let objStart = -1;
+	for (let i = start + 1; i < t.length; i++) {
+		const ch = t[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (ch === "\\") escaped = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') inString = true;
+		else if (ch === "{") {
+			if (depth === 0) objStart = i;
+			depth++;
+		} else if (ch === "}" && depth > 0) {
+			depth--;
+			if (depth === 0 && objStart >= 0) {
+				const raw = t.slice(objStart, i + 1);
+				try {
+					rows.push(JSON.parse(raw));
+				} catch {
+					try {
+						rows.push(JSON.parse(repairJsonEscapes(raw)));
+					} catch {}
+				}
+				objStart = -1;
+			}
+		} else if (ch === "]" && depth === 0) break;
+	}
+	return rows;
 }
 
 /** One chat round-trip. Throws on HTTP, network, timeout or abort. */

@@ -1,10 +1,11 @@
 import { mkdirSync, rmSync, statSync, unlinkSync } from "fs";
 import { basename, join, parse as parsePath } from "path";
-import type { AppConfig, Job, JobStep, SubtitleStreamInfo } from "../core/types";
+import type { AppConfig, Job, JobStep, SubtitleStreamInfo, TranslateSourceMatch } from "../core/types";
 import { probeFile } from "./probe";
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
-import { analyzeSubtitleStreams, isTextSubtitleCodec, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
+import { analyzeSubtitleStreams, detectSubtitleTrackType, isTextSubtitleCodec, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
+import { resolveTranslateLang } from "../translate/translate-languages";
 import { runTranslateStep, type TranslatedTrack } from "../translate/translate-step";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style"; // NOTE: match the import path encoder.ts uses for DEFAULT_STYLE_APPEARANCE
 import { finalizeOutput } from "./output";
@@ -48,6 +49,24 @@ export function orderTranslatedByPriority(tracks: TranslatedTrack[], priority: s
 		return wildcard >= 0 ? wildcard : priority.length;
 	};
 	return [...tracks].sort((a, b) => rank(a.language) - rank(b.language) || a.language.localeCompare(b.language));
+}
+
+const ANY_TYPE_PREFERENCE = ["full", "honorifics", "sdh"];
+
+/**
+ * First text track in the requested language and kind. Track indexes differ
+ * between episodes, so batch translation picks the source this way instead.
+ */
+export function findTranslateSource(streams: SubtitleStreamInfo[], match: TranslateSourceMatch): SubtitleStreamInfo | undefined {
+	const want = resolveTranslateLang(match.language)?.code;
+	if (!want) return undefined;
+	const candidates = streams.filter((s) => isTextSubtitleCodec(s.codec) && resolveTranslateLang(s.language)?.code === want);
+	if (match.type !== "any") return candidates.find((s) => detectSubtitleTrackType(s) === match.type);
+	const rank = (s: SubtitleStreamInfo) => {
+		const idx = ANY_TYPE_PREFERENCE.indexOf(detectSubtitleTrackType(s));
+		return idx >= 0 ? idx : ANY_TYPE_PREFERENCE.length;
+	};
+	return [...candidates].sort((a, b) => rank(a) - rank(b))[0];
 }
 
 export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob: (partial: Partial<Job>) => void, signal?: AbortSignal): Promise<void> {
@@ -132,6 +151,14 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			} else {
 				forceSourceIndex = pick;
 			}
+		} else if (job.settings.translateSourceMatch) {
+			const match = job.settings.translateSourceMatch;
+			const stream = findTranslateSource(subtitleStreams, match);
+			if (!stream) {
+				const kind = match.type === "any" ? "text" : match.type;
+				throw new Error(`No ${kind} text subtitle track in "${match.language}" found to translate from.`);
+			}
+			forceSourceIndex = stream.index;
 		}
 
 		setStep(T_ANALYZE, { status: "done", progress: 100, detail: `${subtitleStreams.length} track(s) analyzed` });

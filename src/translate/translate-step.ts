@@ -262,6 +262,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 					model,
 					timeoutMs: settings.translateTimeoutMs,
 					maxTokens: settings.translateMaxTokens,
+					thinking: settings.translateThinking,
 					signal,
 				},
 				sem,

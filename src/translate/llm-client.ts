@@ -3,6 +3,13 @@ import { Logger } from "../core/logger";
 /** Which wire format translation requests use. */
 export type TranslateProvider = "openai" | "anthropic";
 
+/**
+ * Model reasoning before answering. "auto" turns it off on api.deepseek.com,
+ * where it is on by default and spends the output budget on hidden thinking.
+ * Other endpoints get no extra field, since some reject unknown parameters.
+ */
+export type TranslateThinking = "auto" | "off" | "on";
+
 export interface LlmChatOptions {
 	provider: TranslateProvider;
 	/**
@@ -22,6 +29,7 @@ export interface LlmChatOptions {
 	timeoutMs?: number;
 	/** Max request attempts (transient-failure retries). Default 3. */
 	attempts?: number;
+	thinking?: TranslateThinking;
 	signal?: AbortSignal;
 }
 
@@ -75,13 +83,37 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 interface OpenAiChatResponse {
-	choices?: Array<{ message?: { content?: string } }>;
+	choices?: Array<{ message?: { content?: string; reasoning_content?: string }; finish_reason?: string }>;
+	usage?: { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
 	error?: { message?: string; type?: string };
 }
 
 interface AnthropicMessagesResponse {
-	content?: Array<{ type?: string; text?: string }>;
+	content?: Array<{ type?: string; text?: string; thinking?: string }>;
+	stop_reason?: string;
+	usage?: { output_tokens?: number };
 	error?: { message?: string; type?: string };
+}
+
+export interface ChatResult {
+	content: string;
+	/** The reply stopped at max_tokens, so the answer is cut off or missing. */
+	truncated: boolean;
+	outputTokens?: number;
+	reasoningTokens?: number;
+	/** Characters of reasoning text, for providers that return it but do not count it separately. */
+	reasoningChars: number;
+}
+
+/** Whether to send an explicit "thinking disabled" field for this endpoint. */
+export function shouldDisableThinking(opts: Pick<LlmChatOptions, "baseUrl" | "thinking">): boolean {
+	const mode = opts.thinking ?? "auto";
+	if (mode !== "auto") return mode === "off";
+	try {
+		return /(^|\.)deepseek\.com$/i.test(new URL(opts.baseUrl).hostname);
+	} catch {
+		return false;
+	}
 }
 
 function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; headers: Record<string, string>; body: string } {
@@ -102,6 +134,7 @@ function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; head
 				max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
 				temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
 				messages: [{ role: "user", content: prompt }],
+				...(shouldDisableThinking(opts) ? { thinking: { type: "disabled" } } : {}),
 			}),
 		};
 	}
@@ -117,26 +150,55 @@ function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; head
 			messages: [{ role: "user", content: prompt }],
 			temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
 			max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+			...(shouldDisableThinking(opts) ? { thinking: { type: "disabled" } } : {}),
 		}),
 	};
 }
 
-function extractContent(provider: TranslateProvider, data: unknown): string {
+export function extractChatResult(provider: TranslateProvider, data: unknown): ChatResult {
 	if (provider === "anthropic") {
 		const d = data as AnthropicMessagesResponse;
 		if (d.error) throw new Error(`Anthropic API error: ${d.error.message ?? d.error.type ?? "unknown"}`);
-		return (d.content ?? [])
-			.filter((b) => b.type === "text" && typeof b.text === "string")
-			.map((b) => b.text!)
-			.join("");
+		const blocks = d.content ?? [];
+		return {
+			content: blocks
+				.filter((b) => b.type === "text" && typeof b.text === "string")
+				.map((b) => b.text!)
+				.join(""),
+			truncated: d.stop_reason === "max_tokens",
+			outputTokens: d.usage?.output_tokens,
+			reasoningChars: blocks.reduce((n, b) => n + (b.type === "thinking" ? (b.thinking?.length ?? 0) : 0), 0),
+		};
 	}
 	const d = data as OpenAiChatResponse;
 	if (d.error) throw new Error(`API error: ${d.error.message ?? d.error.type ?? "unknown"}`);
-	return d.choices?.[0]?.message?.content ?? "";
+	const choice = d.choices?.[0];
+	return {
+		content: choice?.message?.content ?? "",
+		truncated: choice?.finish_reason === "length",
+		outputTokens: d.usage?.completion_tokens,
+		reasoningTokens: d.usage?.completion_tokens_details?.reasoning_tokens,
+		reasoningChars: choice?.message?.reasoning_content?.length ?? 0,
+	};
+}
+
+/** Human summary of where the output budget went, for warnings and errors. */
+export function describeChatResult(r: ChatResult): string {
+	const parts = [`${r.content.length} answer chars`];
+	if (r.outputTokens !== undefined) parts.push(`${r.outputTokens} output tokens`);
+	if (r.reasoningTokens) parts.push(`${r.reasoningTokens} reasoning tokens`);
+	else if (r.reasoningChars) parts.push(`${r.reasoningChars} reasoning chars`);
+	if (r.truncated) parts.push("stopped at max tokens");
+	return parts.join(", ");
+}
+
+/** One chat round trip returning only the answer text. */
+export async function chatComplete(prompt: string, opts: LlmChatOptions): Promise<string> {
+	return (await chatCompleteResult(prompt, opts)).content;
 }
 
 /** One chat round trip with timeout, abort, and transient-error retry. */
-export async function chatComplete(prompt: string, opts: LlmChatOptions): Promise<string> {
+export async function chatCompleteResult(prompt: string, opts: LlmChatOptions): Promise<ChatResult> {
 	const label = PROVIDER_LABEL[opts.provider] ?? "LLM API";
 
 	if (!opts.baseUrl?.trim()) throw new Error(`${label} base URL is not configured. Set it in translation settings.`);
@@ -176,7 +238,7 @@ export async function chatComplete(prompt: string, opts: LlmChatOptions): Promis
 			}
 
 			const data = (await res.json()) as unknown;
-			return extractContent(opts.provider, data);
+			return extractChatResult(opts.provider, data);
 		} catch (err) {
 			// Abort (job cancel / timeout) is never retried.
 			if (opts.signal?.aborted || controller.signal.aborted) throw err;

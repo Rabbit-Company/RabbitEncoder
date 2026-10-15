@@ -1,10 +1,19 @@
 import type { Web } from "@rabbit-company/web";
 import { existsSync, realpathSync, statSync } from "fs";
 import { basename, resolve } from "path";
-import { FILM_GRAIN_RANGES, FILM_GRAIN_SAMPLINGS, type AppConfig, type FilmGrainRange, type FilmGrainSampling } from "../core/types";
+import {
+	FILM_GRAIN_RANGES,
+	FILM_GRAIN_SAMPLINGS,
+	TRANSLATE_SOURCE_TYPES,
+	type AppConfig,
+	type FilmGrainRange,
+	type FilmGrainSampling,
+	type TranslateSourceType,
+} from "../core/types";
 import { browseFolder, isAlreadyEncoded, isPathAllowed, listMediaFiles } from "../queue/library";
 import { Logger } from "../core/logger";
-import { getAllJobs, scanLibraryPath } from "../queue/store";
+import { getAllJobs, getAppConfig, queueTranslateJobs, scanLibraryPath } from "../queue/store";
+import { resolveTranslateLang } from "../translate/translate-languages";
 import { resolveAllowedDirectory, resolveAllowedMediaFile } from "./repair";
 import { pairOriginalSources } from "../video/source-pairing";
 
@@ -102,6 +111,46 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 
 		Logger.info(`[library] Queued ${totalAdded} files (${totalSkipped} already queued, ${totalAlreadyEncoded} already encoded)`);
 		return c.json({ ok: true, added: totalAdded, skipped: totalSkipped, alreadyEncoded: totalAlreadyEncoded });
+	});
+
+	app.post("/api/library/translate", async (c) => {
+		let body: { paths?: unknown; sourceLanguage?: unknown; sourceType?: unknown; targetLanguages?: unknown };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid request body" }, 400);
+		}
+		try {
+			const { files } = selectedTargets(body.paths, config);
+			if (!files.length) throw new Error("No video files in the selection");
+			const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage.trim() : "";
+			const source = resolveTranslateLang(sourceLanguage);
+			if (!source) throw new Error(`Unknown source language: ${sourceLanguage || "(empty)"}`);
+			if (!TRANSLATE_SOURCE_TYPES.includes(body.sourceType as TranslateSourceType)) throw new Error("sourceType must be full, honorifics, sdh, or any");
+			if (!Array.isArray(body.targetLanguages) || body.targetLanguages.some((t) => typeof t !== "string"))
+				throw new Error("targetLanguages must be a list of language codes");
+			const targets = [...new Set((body.targetLanguages as string[]).map((t) => t.trim()).filter(Boolean))];
+			if (!targets.length) throw new Error("Choose at least one target language");
+			const unknown = targets.filter((t) => !resolveTranslateLang(t));
+			if (unknown.length) throw new Error(`Unknown target language: ${unknown.join(", ")}`);
+			if (targets.every((t) => resolveTranslateLang(t)!.code === source.code)) throw new Error("Target language is the same as the source");
+
+			const defaults = getAppConfig().defaults;
+			if (!defaults.translateBaseUrl?.trim() || !defaults.translateModel?.trim())
+				throw new Error("Set up the AI provider under Settings, Subtitle translation first");
+
+			const result = queueTranslateJobs(files, {
+				subtitleProcessing: "translate",
+				translateSubtitles: true,
+				translateTargetLanguages: targets,
+				translateSourceTrack: "auto",
+				translateSourceMatch: { language: sourceLanguage, type: body.sourceType as TranslateSourceType },
+			});
+			Logger.info(`[library] Queued ${result.added} translation jobs ${source.name} -> ${targets.join(", ")} (${result.skipped} already queued)`);
+			return c.json({ ok: true, ...result });
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
 	});
 
 	app.post("/api/library/source-pairs", async (c) => {

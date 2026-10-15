@@ -968,6 +968,7 @@
 					</div>
 					<div class="modal-footer">
 						<span class="modal-note" id="library-note">Select folders or files to encode</span>
+						<button class="btn btn-ghost" id="library-translate-btn" disabled>Translate Subtitles</button>
 						<button class="btn btn-primary" id="library-encode-btn" disabled>Encode Selected</button>
 					</div>
 				</div>
@@ -1018,6 +1019,49 @@
 					<div class="modal-footer">
 						<button class="btn btn-ghost" id="library-queue-cancel">Cancel</button>
 						<button class="btn btn-primary" id="library-queue-submit">Queue videos</button>
+					</div>
+				</div>
+			</div>
+
+			<div id="library-translate-modal" class="modal-overlay library-queue-overlay" style="display: none">
+				<div class="modal repair-audit-modal library-translate-modal">
+					<div class="modal-header">
+						<div>
+							<h2>Translate Subtitles</h2>
+							<div class="repair-subtitle" id="library-translate-count"></div>
+						</div>
+						<button class="btn-close" id="library-translate-close" aria-label="Close">&times;</button>
+					</div>
+					<div class="modal-body repair-audit-body">
+						<div class="library-translate-grid">
+							<div class="setting-group">
+								<label for="library-translate-source">Source language</label>
+								<input type="text" class="lang-filter-input" id="library-translate-source" placeholder="eng" autocomplete="off" />
+							</div>
+							<div class="setting-group">
+								<label for="library-translate-type">Source track</label>
+								<select class="select-input" id="library-translate-type">
+									<option value="full">Full subtitles</option>
+									<option value="honorifics">Honorifics</option>
+									<option value="sdh">SDH</option>
+									<option value="any">Any text track</option>
+								</select>
+							</div>
+							<div class="setting-group">
+								<label for="library-translate-targets">Translate to</label>
+								<input type="text" class="lang-filter-input" id="library-translate-targets" placeholder="slv, deu" autocomplete="off" />
+							</div>
+						</div>
+						<div class="lang-filter-hint">
+							ISO codes, comma separated for several languages. Each file gets the new tracks appended. Video, audio and existing subtitles are copied as they
+							are and the file is replaced in place. Files that already have the target language are left alone.
+						</div>
+						<div class="repair-audit-summary" id="library-translate-ai"></div>
+						<div class="sub-preview-error" id="library-translate-error" style="display: none"></div>
+					</div>
+					<div class="modal-footer">
+						<button class="btn btn-ghost" id="library-translate-cancel">Cancel</button>
+						<button class="btn btn-primary" id="library-translate-submit">Queue translations</button>
 					</div>
 				</div>
 			</div>

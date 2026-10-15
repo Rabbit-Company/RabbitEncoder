@@ -10,6 +10,13 @@ export type VideoEncodeMode = "av1" | "off";
 export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as const;
 export type FilmGrainSampling = (typeof FILM_GRAIN_SAMPLINGS)[number];
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
+/** Kind of subtitle track a batch translation reads from. "any" takes the best text track in the language. */
+export const TRANSLATE_SOURCE_TYPES = ["full", "honorifics", "sdh", "any"] as const;
+export type TranslateSourceType = (typeof TRANSLATE_SOURCE_TYPES)[number];
+export interface TranslateSourceMatch {
+	language: string;
+	type: TranslateSourceType;
+}
 export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
 /** How large synthetic grain is: single pixels, film grain, or clumps a few pixels wide. */
 export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
@@ -343,12 +350,16 @@ export interface JobSettings {
 	translateTimeoutMs: number;
 	/** Max output tokens per request (cloud providers). Default 8192. */
 	translateMaxTokens?: number;
+	/** Model reasoning: "auto" turns it off for api.deepseek.com, "off" always sends thinking disabled, "on" leaves the provider default. */
+	translateThinking?: "auto" | "off" | "on";
 	/** Max concurrent in-flight llm requests (all languages + chunks). Default 1. */
 	translateConcurrency?: number;
 	/** May translation overlap the video encode? "auto" overlaps only when llm is NOT on a loopback address. Default "auto". */
 	translateDuringEncode?: "auto" | "always" | "never";
 	/** Translate-only pipeline: source subtitle stream index, or "auto" = first full text track. */
 	translateSourceTrack: number | "auto";
+	/** Translate-only pipeline: pick the source by language and kind instead of index, so one choice fits a whole season. */
+	translateSourceMatch?: TranslateSourceMatch;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by

@@ -602,6 +602,7 @@ export async function testTranslateConnection(opts: {
 	model: string;
 	apiKey?: string;
 	target?: string;
+	thinking?: string;
 }): Promise<{ ok: boolean; error?: string; sample?: string; target?: string }> {
 	try {
 		const res = await authFetch(`${API}/api/translate/test`, {
