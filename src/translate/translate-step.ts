@@ -1,4 +1,4 @@
-import { join } from "path";
+import { basename, join } from "path";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
@@ -6,10 +6,20 @@ import type { JobSettings, SubtitleStreamInfo, SubtitleStyle } from "../core/typ
 import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec } from "../tracks/tracks";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
-import { planTargetLanguages, translateSubtitleContent, type KeptSubDescriptor, type TranslateContentOptions } from "./subtitle-translate";
+import {
+	dialogueLines,
+	fillSpeakers,
+	planTargetLanguages,
+	translateSubtitleContent,
+	type KeptSubDescriptor,
+	type ReferenceTrack,
+	type TimedLine,
+	type TranslateContentOptions,
+} from "./subtitle-translate";
 import { createSemaphore } from "../core/concurrency";
 import { checkProvider, type LlmChatOptions } from "./llm-client";
-import type { GenericOptions } from "./generic";
+import { prepareSeriesNotes } from "./series-notes";
+import { resolveTranslateLang, type TranslateLang } from "./translate-languages";
 
 /**
  * A finished, on-disk translated subtitle ready to hand to mkvmerge. Shaped to
@@ -56,6 +66,8 @@ export interface RunTranslateStepParams {
 	organization: string;
 	/** Force a specific source stream index (translate-only pipeline). Auto-select when omitted. */
 	forceSourceIndex?: number;
+	/** Where per-series notes are kept. Without it, no notes are used. */
+	seriesNotesDir?: string;
 	signal?: AbortSignal;
 	onProgress?: (p: TranslateProgress) => void;
 }
@@ -167,6 +179,146 @@ async function styleSource(
 	return { content: readFileSync(srcPath, "utf-8"), format: "srt" };
 }
 
+function llmOptions(settings: JobSettings, signal?: AbortSignal): LlmChatOptions {
+	return {
+		provider: settings.translateProvider ?? "openai",
+		baseUrl: settings.translateBaseUrl,
+		apiKey: settings.translateApiKey || undefined,
+		model: settings.translateModel,
+		timeoutMs: settings.translateTimeoutMs,
+		maxTokens: settings.translateMaxTokens,
+		thinking: settings.translateThinking,
+		signal,
+	};
+}
+
+const REFERENCE_TYPES = ["full", "honorifics", "sdh"];
+
+/** Best dialogue-bearing text track in this language, other than the source. */
+export function findReferenceTrack(streams: SubtitleStreamInfo[], language: string, sourceIndex: number): SubtitleStreamInfo | undefined {
+	const want = resolveTranslateLang(language)?.code;
+	if (!want) return undefined;
+	return streams
+		.filter((s) => s.index !== sourceIndex && isTextSubtitleCodec(s.codec) && resolveTranslateLang(s.language)?.code === want)
+		.map((s) => ({ s, rank: REFERENCE_TYPES.indexOf(detectSubtitleTrackType(s)) }))
+		.filter((c) => c.rank >= 0)
+		.sort((a, b) => a.rank - b.rank)[0]?.s;
+}
+
+/** Reads the timed dialogue of subtitle tracks, extracting each track only once. */
+function trackReader(inputPath: string, tempDir: string, signal?: AbortSignal): (stream: SubtitleStreamInfo) => Promise<TimedLine[]> {
+	const cache = new Map<number, Promise<TimedLine[]>>();
+	return (stream) => {
+		let lines = cache.get(stream.index);
+		if (!lines) {
+			lines = (async () => {
+				const extracted = await extractSource(inputPath, stream, tempDir, signal);
+				if (!extracted) return [];
+				const content = readFileSync(extracted.path, "utf-8");
+				const format = ["ass", "ssa"].includes(extracted.codec.toLowerCase()) ? "ass" : "srt";
+				const styles = format === "ass" ? dialogueStyleNames(content) : new Set<string>();
+				return dialogueLines(content, format, (style) => styles.has(style));
+			})();
+			cache.set(stream.index, lines);
+		}
+		return lines;
+	};
+}
+
+/** A donor must name at least this share of its dialogue, or its few names would be noise. */
+const MIN_NAMED_SHARE = 0.5;
+
+function isAssCodec(codec: string): boolean {
+	return ["ass", "ssa"].includes(codec.toLowerCase());
+}
+
+interface HelperTracks {
+	references: ReferenceTrack[];
+	speakerDonors: TimedLine[][];
+}
+
+/**
+ * Reference tracks for the requested languages, and tracks that can name
+ * speakers the source leaves unnamed: same-language tracks first, since their
+ * names are spelled like the source's, then the reference tracks.
+ */
+async function loadHelperTracks(
+	streams: SubtitleStreamInfo[],
+	source: SubtitleStreamInfo,
+	sourceLang: TranslateLang,
+	referenceLanguages: string[],
+	read: (stream: SubtitleStreamInfo) => Promise<TimedLine[]>,
+): Promise<HelperTracks> {
+	const references: ReferenceTrack[] = [];
+	const referenceStreams: SubtitleStreamInfo[] = [];
+	const seen = new Set<string>([sourceLang.code]);
+	for (const language of referenceLanguages) {
+		const lang = resolveTranslateLang(language);
+		if (!lang || seen.has(lang.code)) continue;
+		seen.add(lang.code);
+		const stream = findReferenceTrack(streams, language, source.index);
+		if (!stream) {
+			Logger.info(`[translate] No ${lang.name} text subtitle track to use as a reference`);
+			continue;
+		}
+		const lines = await read(stream);
+		if (lines.length === 0) continue;
+		Logger.info(`[translate] Using ${lang.name} track ${stream.index} as a reference (${lines.length} lines)`);
+		references.push({ lang, lines });
+		referenceStreams.push(stream);
+	}
+
+	const speakerDonors: TimedLine[][] = [];
+	const sameLanguage = streams
+		.filter((s) => s.index !== source.index && resolveTranslateLang(s.language)?.code === sourceLang.code)
+		.map((s) => ({ s, rank: REFERENCE_TYPES.indexOf(detectSubtitleTrackType(s)) }))
+		.filter((c) => c.rank >= 0)
+		.sort((a, b) => a.rank - b.rank)
+		.map((c) => c.s);
+	for (const stream of [...sameLanguage, ...referenceStreams]) {
+		if (!isAssCodec(stream.codec)) continue;
+		const lines = await read(stream);
+		const named = lines.filter((l) => l.name?.trim()).length;
+		if (lines.length === 0 || named / lines.length < MIN_NAMED_SHARE) continue;
+		Logger.info(`[translate] Track ${stream.index} can name speakers (${named}/${lines.length} lines named)`);
+		speakerDonors.push(lines);
+	}
+	return { references, speakerDonors };
+}
+
+export interface PrepareNotesForFileParams {
+	inputPath: string;
+	/** All subtitle streams of the file, analyzed, to find tracks that name speakers. */
+	streams: SubtitleStreamInfo[];
+	/** Source subtitle track, picked the way a translate job would pick it. */
+	stream: SubtitleStreamInfo;
+	source: TranslateLang;
+	referenceLanguages: string[];
+	tempDir: string;
+	settings: JobSettings;
+	seriesNotesDir: string;
+	signal?: AbortSignal;
+}
+
+/**
+ * Create or extend the series notes from one episode without translating it,
+ * so they can be reviewed before a batch runs. The episode counts as used.
+ */
+export async function prepareSeriesNotesForFile(p: PrepareNotesForFileParams): Promise<string | undefined> {
+	const read = trackReader(p.inputPath, p.tempDir, p.signal);
+	const lines = await read(p.stream);
+	if (lines.length === 0) throw new Error(`Could not read dialogue from subtitle track ${p.stream.index}`);
+	const { speakerDonors } = await loadHelperTracks(p.streams, p.stream, p.source, p.referenceLanguages, read);
+	fillSpeakers(lines, speakerDonors);
+	return prepareSeriesNotes({
+		dir: p.seriesNotesDir,
+		filename: basename(p.inputPath),
+		source: p.source,
+		lines,
+		llm: llmOptions(p.settings, p.signal),
+	});
+}
+
 /**
  * The Translate pipeline step. Selects a source track (honorifics preferred,
  * else the top text track), extracts + styles it once, and produces one
@@ -178,7 +330,7 @@ async function styleSource(
  * would be worse).
  */
 export async function runTranslateStep(params: RunTranslateStepParams): Promise<TranslatedTrack[]> {
-	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, organization, forceSourceIndex, signal, onProgress } = params;
+	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, organization, forceSourceIndex, seriesNotesDir, signal, onProgress } = params;
 
 	const targets = settings.translateTargetLanguages ?? [];
 	if (!settings.translateSubtitles || targets.length === 0) return [];
@@ -224,6 +376,24 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	);
 
 	const dialogueStyles = format === "ass" ? dialogueStyleNames(styledSource) : new Set<string>();
+	const isDialogueStyle = (style: string) => dialogueStyles.has(style);
+
+	const llmBase = llmOptions(settings, signal);
+
+	const { references, speakerDonors } = await loadHelperTracks(
+		subtitleStreams,
+		sourceStream,
+		plan.productions[0]!.source,
+		settings.translateReferenceLanguages ?? [],
+		trackReader(inputPath, tempDir, signal),
+	);
+
+	let notes: string | undefined;
+	if (seriesNotesDir && settings.translateSeriesNotes !== false) {
+		const lines = dialogueLines(styledSource, format, isDialogueStyle);
+		fillSpeakers(lines, speakerDonors);
+		notes = await prepareSeriesNotes({ dir: seriesNotesDir, filename: basename(inputPath), source: plan.productions[0]!.source, lines, llm: llmBase });
+	}
 
 	const out: TranslatedTrack[] = new Array(plan.productions.length);
 	const langCount = plan.productions.length;
@@ -252,19 +422,11 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 				format,
 				batchSize: settings.translateBatchSize,
 				translateSignsSongs: settings.translateSignsSongs,
-				isDialogueStyle: (style) => dialogueStyles.has(style),
-				llm: {
-					source: prod.source,
-					target: prod.target,
-					provider,
-					baseUrl: settings.translateBaseUrl,
-					apiKey: settings.translateApiKey || undefined,
-					model,
-					timeoutMs: settings.translateTimeoutMs,
-					maxTokens: settings.translateMaxTokens,
-					thinking: settings.translateThinking,
-					signal,
-				},
+				isDialogueStyle,
+				llm: { ...llmBase, source: prod.source, target: prod.target, notes },
+				contextLines: settings.translateContextLines ?? 10,
+				references,
+				speakerDonors,
 				sem,
 				onProgress: (done, total) => {
 					perLangDone[li] = done;

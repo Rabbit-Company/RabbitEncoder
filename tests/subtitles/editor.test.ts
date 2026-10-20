@@ -26,6 +26,10 @@ describe("subtitle editor documents", () => {
 		expect(cues[0]).toMatchObject({ startMs: 0, endMs: 500 });
 		expect(editorCues(editSubtitleDocument(srt, "srt", { trackId: 2, offsetMs: -3000, cues: [] }), "srt")).toHaveLength(1);
 	});
+	test("reads the ASS speaker and leaves it out when the field is empty", () => {
+		const cues = editorCues(ass + "Dialogue: 0,0:00:05.00,0:00:06.00,Sign,,0,0,0,,Nobody\n", "ass");
+		expect(cues.map((cue) => cue.name)).toEqual(["Actor", undefined]);
+	});
 	test("preserves ASS styles, tags, commas and actor fields while shifting dialogue and comments", () => {
 		const cue = editorCues(ass, "ass")[0]!;
 		const out = editSubtitleDocument(ass, "ass", { trackId: 2, offsetMs: 120, cues: [{ ...cue, text: "{\\pos(50,50)}Edited, world\nSecond line" }] });

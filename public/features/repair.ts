@@ -1,6 +1,6 @@
 import type { RepairInspection, RepairSubtitleTrack, RepairSubtitleTrackPlan, RepairTrackSource } from "../types";
 import type { LibraryEntry } from "../ui/models";
-import { createRepairJob, fetchRepairBrowse, fetchRepairInspection, fetchRepairReplacePlan, fetchRepairRoots } from "../api/client";
+import { createRepairJob, downloadSubtitleTrack, fetchRepairBrowse, fetchRepairInspection, fetchRepairReplacePlan, fetchRepairRoots } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { humanFileSize } from "./library";
@@ -115,6 +115,7 @@ function renderTrack(track: EditableTrack, index: number): string {
 			<div class="repair-order">
 				<button class="btn btn-ghost btn-sm" type="button" data-repair-move="up" data-key="${key}" ${index === 0 ? "disabled" : ""}>↑</button>
 				<button class="btn btn-ghost btn-sm" type="button" data-repair-move="down" data-key="${key}" ${index === editableTracks.length - 1 ? "disabled" : ""}>↓</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-repair-download="${key}" title="Save this subtitle track as a file">Download</button>
 				<button class="btn btn-ghost btn-sm repair-remove-track" type="button" data-repair-remove="${key}">Remove</button>
 			</div>
 		</div>
@@ -156,6 +157,7 @@ function renderSourceTrack(track: EditableTrack): string {
 		<div class="repair-track-head">
 			<span class="sub-track-id">Source #${track.trackId}</span>
 			<span class="repair-codec">${escapeHtml(track.codec)} (${track.currentCompression})</span>
+			<button class="btn btn-ghost btn-sm" type="button" data-repair-download="${key}" title="Save this subtitle track as a file">Download</button>
 			<button class="btn btn-primary btn-sm repair-add-track" type="button" data-repair-add="${key}">Add →</button>
 		</div>
 		<div class="repair-source-title">${escapeHtml(track.title || "Untitled subtitle")}</div>
@@ -545,7 +547,29 @@ export function handleRepairEditorInput(event: Event): void {
 	else (track as any)[field] = element.value;
 }
 
+async function downloadTrack(button: HTMLButtonElement, key: string): Promise<void> {
+	const track = [...editableTracks, ...sourceTracks].find((t) => keyFor(t.source, t.trackId) === key);
+	const path = track?.source === "source" ? inspection?.source?.path : inspection?.target.path;
+	if (!track || !path) return;
+	setError("");
+	button.disabled = true;
+	button.textContent = "Downloading...";
+	try {
+		await downloadSubtitleTrack(path, track.trackId);
+	} catch (error) {
+		setError(errorMessage(error));
+	} finally {
+		button.disabled = false;
+		button.textContent = "Download";
+	}
+}
+
 export function handleRepairTrackMove(event: MouseEvent): void {
+	const download = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-repair-download]") : null;
+	if (download) {
+		void downloadTrack(download, download.dataset.repairDownload!);
+		return;
+	}
 	const element =
 		event.target instanceof Element
 			? event.target.closest<HTMLElement>("[data-repair-add-all], [data-repair-add], [data-repair-remove], [data-repair-move]")

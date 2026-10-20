@@ -8,6 +8,8 @@ export interface SubtitleEditorCue {
 	endMs: number;
 	text: string;
 	style?: string;
+	/** Speaking character from the ASS Name/Actor field. SRT has none. */
+	name?: string;
 }
 export interface SubtitleEditorEdit {
 	trackId: number;
@@ -25,7 +27,14 @@ export function editorFormat(codecId: string): SubtitleEditorFormat | null {
 
 export function editorCues(document: string, format: SubtitleEditorFormat): SubtitleEditorCue[] {
 	if (format === "srt") return parseSrt(document).map((cue, id) => ({ id, startMs: cue.startMs, endMs: cue.endMs, text: cue.text }));
-	return parseAssEvents(document).events.map((cue) => ({ id: cue.lineNo, startMs: cue.startMs, endMs: cue.endMs, text: cue.rawText, style: cue.style }));
+	return parseAssEvents(document).events.map((cue) => ({
+		id: cue.lineNo,
+		startMs: cue.startMs,
+		endMs: cue.endMs,
+		text: cue.rawText,
+		style: cue.style,
+		...(cue.name.trim() ? { name: cue.name.trim() } : {}),
+	}));
 }
 
 export function validateEditorEdit(raw: SubtitleEditorEdit): SubtitleEditorEdit {

@@ -54,6 +54,7 @@ import { getEncoder } from "../core/encoders";
 import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
+import { seriesNotesDir } from "../translate/series-notes";
 import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
@@ -1657,6 +1658,7 @@ export async function encodeJob(
 						settings: job.settings,
 						subtitleStyle: { ...DEFAULT_STYLE_APPEARANCE, fontName: job.settings.fontGroup },
 						organization: config.organization,
+						seriesNotesDir: seriesNotesDir(config),
 						signal: stageSignal,
 						onProgress: ({ done, total }) => {
 							const overall = total > 0 ? Math.round((done / total) * 100) : 0;

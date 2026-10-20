@@ -141,6 +141,30 @@ export async function fetchJobs(): Promise<Job[]> {
 	return res.json();
 }
 
+/** Extract one subtitle track from an MKV and save it through the browser. */
+export async function downloadSubtitleTrack(path: string, trackId: number): Promise<void> {
+	const res = await authFetch(`${API}/api/repair/subtitle-download`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, trackId }),
+	});
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data?.error || "Subtitle download failed");
+	}
+	const disposition = res.headers.get("Content-Disposition") || "";
+	const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+	const name = encoded ? decodeURIComponent(encoded) : `track-${trackId}.txt`;
+	const url = URL.createObjectURL(await res.blob());
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = name;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export async function fetchRepairInspection(options: { jobId?: string; targetPath?: string; sourcePath?: string }): Promise<RepairInspection> {
 	const query = new URLSearchParams();
 	if (options.jobId) query.set("jobId", options.jobId);
@@ -594,6 +618,73 @@ export async function reloadVsPresets(): Promise<VsPresetManifest[]> {
 export async function fetchVsDefaultEntry(presetId: string): Promise<VsFilterEntry> {
 	const res = await authFetch(`${API}/api/vs-presets/${encodeURIComponent(presetId)}/default-entry`);
 	return res.json();
+}
+
+export interface SeriesNotes {
+	key: string;
+	title: string;
+	notes: string;
+	episodes: string[];
+	updatedAt: number;
+}
+
+export async function fetchSeriesNotes(): Promise<SeriesNotes[]> {
+	const res = await authFetch(`${API}/api/translate/notes`);
+	const data = await res.json().catch(() => ({}));
+	return Array.isArray(data?.series) ? data.series : [];
+}
+
+export async function saveSeriesNotes(key: string, notes: string): Promise<{ ok: boolean; error?: string }> {
+	const res = await authFetch(`${API}/api/translate/notes/${encodeURIComponent(key)}`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ notes }),
+	});
+	const data = await res.json().catch(() => ({}));
+	return res.ok ? { ok: true } : { ok: false, error: data?.error };
+}
+
+export interface SelectionSeries {
+	key: string;
+	title: string;
+	/** Selected files belonging to this series. */
+	files: number;
+	/** First episode by name, used by Prepare. */
+	firstFile: string;
+	/** Episodes the stored notes were built from, 0 when there are none. */
+	episodes: number;
+}
+
+export async function fetchSelectionSeries(paths: string[]): Promise<{ enabled: boolean; series: SelectionSeries[]; unmatched: number }> {
+	const res = await authFetch(`${API}/api/library/series-notes`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ paths }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data?.error || "Failed to load series notes");
+	return data;
+}
+
+export async function prepareSelectionSeriesNotes(
+	path: string,
+	sourceLanguage: string,
+	sourceType: string,
+	referenceLanguages: string[],
+): Promise<{ ok: boolean; key?: string; error?: string }> {
+	const res = await authFetch(`${API}/api/library/series-notes/prepare`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, sourceLanguage, sourceType, referenceLanguages }),
+	});
+	const data = await res.json().catch(() => ({}));
+	return res.ok ? { ok: true, key: data?.key } : { ok: false, error: data?.error || "Failed to prepare series notes" };
+}
+
+export async function deleteSeriesNotes(key: string): Promise<{ ok: boolean; error?: string }> {
+	const res = await authFetch(`${API}/api/translate/notes/${encodeURIComponent(key)}`, { method: "DELETE" });
+	const data = await res.json().catch(() => ({}));
+	return res.ok ? { ok: true } : { ok: false, error: data?.error };
 }
 
 export async function testTranslateConnection(opts: {

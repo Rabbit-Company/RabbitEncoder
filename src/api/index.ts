@@ -18,7 +18,7 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerJobRoutes(app, config);
 	registerPreviewRoutes(app, config);
 	registerSettingsRoutes(app, config);
-	registerTranslateRoutes(app);
+	registerTranslateRoutes(app, config);
 	registerQueueRoutes(app);
 	registerBenchmarkRoutes(app, config);
 	registerLibraryRoutes(app, config);

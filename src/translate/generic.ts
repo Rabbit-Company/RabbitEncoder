@@ -1,6 +1,7 @@
 import { chatComplete, chatCompleteResult, describeChatResult, type ChatResult, type LlmChatOptions } from "./llm-client";
 import { Logger } from "../core/logger";
 import type { TranslateLang } from "./translate-languages";
+import { targetLanguageRules } from "./language-rules";
 
 export interface TranslateItem {
 	/**
@@ -11,6 +12,8 @@ export interface TranslateItem {
 	text: string;
 	/** Speaking character, from the ASS Name/Actor field (absent for SRT). */
 	name?: string;
+	/** The same line in other languages, matched by timing, keyed by language name. */
+	refs?: Record<string, string>;
 }
 
 export interface GenericOptions extends LlmChatOptions {
@@ -21,6 +24,19 @@ export interface GenericOptions extends LlmChatOptions {
 	 * `{target}` / `{source}` placeholders are substituted.
 	 */
 	instruction?: string;
+	/** Series notes (characters, genders, forms of address, terms), placed before the payload. */
+	notes?: string;
+	/** Lines just before this batch, already translated, sent as read-only context. */
+	context?: ContextRow[];
+	/** Languages of the reference lines attached to items, which turns on the reference instruction. */
+	references?: TranslateLang[];
+}
+
+/** One already-translated line shown to the model for continuity. */
+export interface ContextRow {
+	name?: string;
+	text: string;
+	translation: string;
 }
 
 /** Below this many missing entries, per-line recovery is cheaper than another batch. */
@@ -33,6 +49,7 @@ interface PayloadRow {
 	id: string;
 	name?: string;
 	text: string;
+	refs?: Record<string, string>;
 }
 
 /** One prompt round-trip: per-entry translations, null where the id was dropped/unusable. */
@@ -78,7 +95,7 @@ export function repairJsonEscapes(s: string): string {
  */
 async function translateResilient(payload: TranslateItem[], opts: GenericOptions, depth: number): Promise<string[]> {
 	if (payload.length === 0) return [];
-	if (payload.length === 1) return [await translateOneGeneric(payload[0]!.text, opts)];
+	if (payload.length === 1 && depth > 0) return [await translateOneGeneric(payload[0]!.text, opts)];
 
 	const halve = async (): Promise<string[]> => {
 		const mid = Math.ceil(payload.length / 2);
@@ -171,6 +188,9 @@ export function buildGenericInstruction(source: TranslateLang, target: Translate
 		`- Use natural conversational language.`,
 		`- Keep the level of formality, politeness, intimacy, disrespect, age difference and social status natural for ${target.name}. Be consistent in how characters address each other.`,
 		`- For languages with formal/informal "you" distinctions, choose the form that fits the relationship and scene context, then keep it consistent unless the relationship or situation changes.`,
+		`- For languages where verbs or adjectives mark gender, use the speaker name, any series notes and the context to pick the right gender for the speaker and the person addressed, and keep it consistent for each character.`,
+		`- A disguise, cross-dressing, transformation or role-play changes the gender to use. When the lines show a character presenting as another gender (others call them "she", "miss", "ma'am" or "sir", use a cover name, or the character speaks in that role), use that gender for what they say in the role and for what others say to or about them while believing it. The character's private thoughts, and lines from people who know the truth, keep the real gender. Switch back once the disguise ends.`,
+		...targetLanguageRules(target).map((r) => `- ${r}`),
 		`- Maintain consistent names, terminology and forms of address across entries.`,
 		`- Treat recurring skill names, abilities, magic terms, fictional terms, ranks, titles, locations and UI/system messages as terminology. Translate them consistently across the batch.`,
 		`- Preserve proper names unless they already have a standard translation in ${target.name} or are clearly meant to be translated titles/labels.`,
@@ -190,16 +210,53 @@ export function buildGenericInstruction(source: TranslateLang, target: Translate
 	].join("\n");
 }
 
-/** Build the full prompt: instruction block followed by the JSON payload. */
-export function buildGenericPrompt(items: TranslateItem[], opts: Pick<GenericOptions, "source" | "target" | "instruction">): string {
+/** How to use the "refs" field. Only sent when reference tracks are in use. */
+export function buildReferenceInstruction(source: TranslateLang, target: TranslateLang, references: TranslateLang[]): string {
+	const names = references.map((r) => r.name).join(" and ");
+	return [
+		`Some entries have "refs": the same moment in the ${names} subtitles of this release, matched by timing.`,
+		`- Translate only "text". The ${source.name} text is authoritative and wins whenever a ref disagrees with it.`,
+		`- Use refs only to settle what the ${source.name} leaves open for ${target.name}: the gender of the speaker and of the person addressed, formal or informal address, singular or plural "you", and who is speaking.`,
+		`- Refs are translations too. Never copy their wording, word order or extra details.`,
+		`- A ref can be missing, cover only part of the line, or belong to a neighbouring line. Ignore it when it does not fit the text.`,
+	].join("\n");
+}
+
+/**
+ * Build the full prompt. The parts run from most to least stable (instruction,
+ * reference rules, series notes, previous lines, payload) so provider prefix caching covers as
+ * much as possible.
+ */
+export function buildGenericPrompt(
+	items: TranslateItem[],
+	opts: Pick<GenericOptions, "source" | "target" | "instruction" | "notes" | "context" | "references">,
+): string {
 	const rows: PayloadRow[] = items.map((it, i) => {
 		const row: PayloadRow = { id: String(i), text: it.text };
 		const name = it.name?.trim();
 		if (name) row.name = name;
+		if (it.refs && Object.keys(it.refs).length) row.refs = it.refs;
 		return row;
 	});
-	const instruction = buildGenericInstruction(opts.source, opts.target, opts.instruction);
-	return `${instruction}\n\nInput:\n${JSON.stringify(rows, null, 0)}`;
+	const parts = [buildGenericInstruction(opts.source, opts.target, opts.instruction)];
+	if (opts.references?.length) parts.push(buildReferenceInstruction(opts.source, opts.target, opts.references));
+	const notes = opts.notes?.trim();
+	if (notes) {
+		parts.push(
+			`Series notes (characters with their usual gender, forms of address and terminology). Follow them unless the lines clearly contradict them or a character is in disguise:\n${notes}`,
+		);
+	}
+	if (opts.context?.length) {
+		const context = opts.context.map((c) => {
+			const name = c.name?.trim();
+			return name ? { name, text: c.text, translation: c.translation } : { text: c.text, translation: c.translation };
+		});
+		parts.push(
+			`Previous lines, already translated. Use them only for continuity (speakers, genders, forms of address, terminology). Do not return them:\n${JSON.stringify(context)}`,
+		);
+	}
+	parts.push(`Input:\n${JSON.stringify(rows, null, 0)}`);
+	return parts.join("\n\n");
 }
 
 /** Strip leading/trailing markdown code fences if the model wrapped its answer. */

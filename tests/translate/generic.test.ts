@@ -41,6 +41,28 @@ describe("buildGenericPrompt", () => {
 	});
 });
 
+describe("prompt extras", () => {
+	it("adds Slovenian rules only for a Slovenian target", () => {
+		expect(buildGenericInstruction(EN, SL)).toContain("midva greva");
+		expect(buildGenericInstruction(EN, { name: "German", code: "de" })).not.toContain("midva greva");
+	});
+
+	it("places notes and previous lines before the payload", () => {
+		const p = buildGenericPrompt([{ text: "Next." }], {
+			...baseOpts,
+			notes: "Characters:\n- Ai: female",
+			context: [{ name: "Ai", text: "Hi.", translation: "Živjo." }],
+		});
+		const notesAt = p.indexOf("- Ai: female");
+		const contextAt = p.indexOf('"translation":"Živjo."');
+		const inputAt = p.indexOf("Input:");
+		expect(notesAt).toBeGreaterThan(0);
+		expect(contextAt).toBeGreaterThan(notesAt);
+		expect(inputAt).toBeGreaterThan(contextAt);
+		expect(JSON.parse(p.slice(inputAt + "Input:\n".length))).toEqual([{ id: "0", text: "Next." }]);
+	});
+});
+
 describe("stripCodeFences / extractJsonArray", () => {
 	it("removes json fences", () => {
 		expect(stripCodeFences('```json\n[{"id":"0"}]\n```')).toBe('[{"id":"0"}]');

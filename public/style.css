@@ -1931,6 +1931,43 @@ code {
 	width: 100%;
 }
 
+.library-translate-notes {
+	margin: 12px 0 0;
+}
+
+.series-notes-row {
+	display: flex;
+	align-items: center;
+	gap: 8px 12px;
+	flex-wrap: wrap;
+	padding: 8px 10px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	margin-bottom: 6px;
+}
+
+.series-notes-row-title {
+	flex: 1 1 160px;
+	min-width: 0;
+	font-size: 0.85rem;
+	color: var(--text-0);
+	overflow-wrap: anywhere;
+}
+
+.series-notes-row-status {
+	font-size: 0.75rem;
+	color: var(--text-2);
+}
+
+.series-notes-row-status.ready {
+	color: var(--green);
+}
+
+.series-notes-row-status.missing,
+.series-notes-row-status.failed {
+	color: var(--amber);
+}
+
 .library-queue-toggle {
 	display: flex;
 	align-items: center;
@@ -3951,6 +3988,13 @@ code {
 	.sysbar {
 		padding: 8px 16px;
 	}
+}
+
+.series-notes-editor {
+	min-height: 360px;
+	resize: vertical;
+	line-height: 1.5;
+	margin-bottom: 8px;
 }
 
 .fg-row {

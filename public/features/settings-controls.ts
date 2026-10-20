@@ -531,24 +531,35 @@ export function renderLanguageFilterInput(container: HTMLElement, value: string[
 	container.appendChild(hint);
 }
 
-export function renderTranslationLanguagesInput(container: HTMLElement, value: string[], onChange: (value: string[]) => void): void {
+const TARGET_LANGUAGES_TEXT = {
+	label: "Target languages",
+	placeholder: "eng, slv",
+	hint:
+		"Comma-separated ISO codes. Every listed language should end up with a full subtitle: " +
+		"if one is missing, it's translated with the LLM from an existing full subtitle.",
+};
+
+export function renderTranslationLanguagesInput(
+	container: HTMLElement,
+	value: string[],
+	onChange: (value: string[]) => void,
+	text: { label: string; placeholder: string; hint: string } = TARGET_LANGUAGES_TEXT,
+): void {
 	container.innerHTML = "";
 
 	const label = document.createElement("label");
-	label.textContent = "Target languages";
+	label.textContent = text.label;
 	container.appendChild(label);
 
 	const input = document.createElement("input");
 	input.type = "text";
 	input.className = "lang-filter-input";
-	input.placeholder = "eng, slv";
+	input.placeholder = text.placeholder;
 	input.value = (value || []).join(", ");
 
 	const hint = document.createElement("div");
 	hint.className = "lang-filter-hint";
-	hint.textContent =
-		"Comma-separated ISO codes. Every listed language should end up with a full subtitle: " +
-		"if one is missing, it's translated with the LLM from an existing full subtitle.";
+	hint.textContent = text.hint;
 
 	input.oninput = () =>
 		onChange(

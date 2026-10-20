@@ -1,6 +1,7 @@
 import type { Web } from "@rabbit-company/web";
-import { existsSync, realpathSync, statSync } from "fs";
-import { basename, resolve } from "path";
+import { randomUUID } from "crypto";
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
+import { basename, join, resolve } from "path";
 import {
 	FILM_GRAIN_RANGES,
 	FILM_GRAIN_SAMPLINGS,
@@ -16,6 +17,10 @@ import { getAllJobs, getAppConfig, queueTranslateJobs, scanLibraryPath } from ".
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { resolveAllowedDirectory, resolveAllowedMediaFile } from "./repair";
 import { pairOriginalSources } from "../video/source-pairing";
+import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } from "../translate/series-notes";
+import { prepareSeriesNotesForFile } from "../translate/translate-step";
+import { analyzeForTranslate, findTranslateSource } from "../pipeline/translate-only";
+import { probeFile } from "../pipeline/probe";
 
 function selectedTargets(rawPaths: unknown, config: AppConfig): { paths: string[]; files: string[] } {
 	if (!Array.isArray(rawPaths) || rawPaths.length === 0 || rawPaths.length > 100 || rawPaths.some((path) => typeof path !== "string"))
@@ -114,7 +119,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.post("/api/library/translate", async (c) => {
-		let body: { paths?: unknown; sourceLanguage?: unknown; sourceType?: unknown; targetLanguages?: unknown };
+		let body: { paths?: unknown; sourceLanguage?: unknown; sourceType?: unknown; targetLanguages?: unknown; referenceLanguages?: unknown };
 		try {
 			body = await c.req.json();
 		} catch {
@@ -134,6 +139,12 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			const unknown = targets.filter((t) => !resolveTranslateLang(t));
 			if (unknown.length) throw new Error(`Unknown target language: ${unknown.join(", ")}`);
 			if (targets.every((t) => resolveTranslateLang(t)!.code === source.code)) throw new Error("Target language is the same as the source");
+			const rawReferences = body.referenceLanguages ?? [];
+			if (!Array.isArray(rawReferences) || rawReferences.some((t) => typeof t !== "string"))
+				throw new Error("referenceLanguages must be a list of language codes");
+			const references = [...new Set((rawReferences as string[]).map((t) => t.trim()).filter(Boolean))];
+			const unknownRefs = references.filter((t) => !resolveTranslateLang(t));
+			if (unknownRefs.length) throw new Error(`Unknown reference language: ${unknownRefs.join(", ")}`);
 
 			const defaults = getAppConfig().defaults;
 			if (!defaults.translateBaseUrl?.trim() || !defaults.translateModel?.trim())
@@ -143,13 +154,107 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 				subtitleProcessing: "translate",
 				translateSubtitles: true,
 				translateTargetLanguages: targets,
+				translateReferenceLanguages: references,
 				translateSourceTrack: "auto",
 				translateSourceMatch: { language: sourceLanguage, type: body.sourceType as TranslateSourceType },
 			});
-			Logger.info(`[library] Queued ${result.added} translation jobs ${source.name} -> ${targets.join(", ")} (${result.skipped} already queued)`);
+			const refNote = references.length ? `, references ${references.join(", ")}` : "";
+			Logger.info(`[library] Queued ${result.added} translation jobs ${source.name} -> ${targets.join(", ")}${refNote} (${result.skipped} already queued)`);
 			return c.json({ ok: true, ...result });
 		} catch (error) {
 			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
+	});
+
+	app.post("/api/library/series-notes", async (c) => {
+		let body: { paths?: unknown };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid request body" }, 400);
+		}
+		try {
+			const { files } = selectedTargets(body.paths, config);
+			const dir = seriesNotesDir(config);
+			const groups = new Map<string, { key: string; title: string; files: string[] }>();
+			let unmatched = 0;
+			for (const file of files) {
+				const title = seriesTitleFromFilename(basename(file));
+				const key = title ? seriesKey(title) : "";
+				if (!title || !key) {
+					unmatched++;
+					continue;
+				}
+				if (!groups.has(key)) groups.set(key, { key, title, files: [] });
+				groups.get(key)!.files.push(file);
+			}
+			const series = [...groups.values()]
+				.map((g) => {
+					const stored = loadSeriesNotes(dir, g.key);
+					const firstFile = [...g.files].sort((a, b) => basename(a).localeCompare(basename(b), undefined, { numeric: true }))[0]!;
+					return {
+						key: g.key,
+						title: stored?.title ?? g.title,
+						files: g.files.length,
+						firstFile,
+						episodes: stored?.notes.trim() ? stored.episodes.length : 0,
+					};
+				})
+				.sort((a, b) => a.title.localeCompare(b.title));
+			return c.json({ enabled: getAppConfig().defaults.translateSeriesNotes !== false, series, unmatched });
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
+	});
+
+	app.post("/api/library/series-notes/prepare", async (c) => {
+		let body: { path?: unknown; sourceLanguage?: unknown; sourceType?: unknown; referenceLanguages?: unknown };
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid request body" }, 400);
+		}
+		const tempDir = join(config.tempDir, `series-notes-${randomUUID()}`);
+		try {
+			const { files } = selectedTargets([body.path], config);
+			const file = files[0];
+			if (!file) throw new Error("Choose a video file");
+			const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage.trim() : "";
+			const source = resolveTranslateLang(sourceLanguage);
+			if (!source) throw new Error(`Unknown source language: ${sourceLanguage || "(empty)"}`);
+			if (!TRANSLATE_SOURCE_TYPES.includes(body.sourceType as TranslateSourceType)) throw new Error("sourceType must be full, honorifics, sdh, or any");
+			const settings = getAppConfig().defaults;
+			if (!settings.translateBaseUrl?.trim() || !settings.translateModel?.trim())
+				throw new Error("Set up the AI provider under Settings, Subtitle translation first");
+			const referenceLanguages = Array.isArray(body.referenceLanguages)
+				? body.referenceLanguages.filter((t): t is string => typeof t === "string" && !!resolveTranslateLang(t))
+				: (settings.translateReferenceLanguages ?? []);
+
+			mkdirSync(tempDir, { recursive: true });
+			const probe = await probeFile(file);
+			const streams = probe.subtitleStreams ?? [];
+			await analyzeForTranslate(streams, file, tempDir, settings);
+			const stream = findTranslateSource(streams, { language: sourceLanguage, type: body.sourceType as TranslateSourceType });
+			if (!stream)
+				throw new Error(`No ${body.sourceType === "any" ? "text" : body.sourceType} text subtitle track in "${sourceLanguage}" in ${basename(file)}`);
+
+			const notes = await prepareSeriesNotesForFile({
+				inputPath: file,
+				streams,
+				stream,
+				source,
+				referenceLanguages,
+				tempDir,
+				settings,
+				seriesNotesDir: seriesNotesDir(config),
+			});
+			if (!notes) throw new Error(`The AI provider returned no notes for ${basename(file)}. Check the log for details.`);
+			const title = seriesTitleFromFilename(basename(file))!;
+			return c.json({ ok: true, key: seriesKey(title) });
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
 

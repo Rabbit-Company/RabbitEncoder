@@ -79,6 +79,7 @@ import { appState } from "../state";
 import { delegateClick } from "../ui/delegate";
 import { dispatchJobAction } from "../ui/job-actions";
 import { openFontGroupsModal, closeFontGroupsModal, closeFontGroupsModalIfOutside } from "../features/font-groups-modal";
+import { openSeriesNotesModal, closeSeriesNotesModal, closeSeriesNotesModalIfOutside } from "../features/series-notes-modal";
 import { closeSubStyleModal, closeSubStyleModalIfOutside, openSubStyleModal, saveCurrentGroupStyle } from "../features/sub-style-modal";
 import {
 	closeRepair,
@@ -193,6 +194,12 @@ export function initEventListeners() {
 	byId("close-font-groups-modal-btn").addEventListener("click", closeFontGroupsModal);
 	byId("close-font-groups-done-btn").addEventListener("click", closeFontGroupsModal);
 	byId("font-groups-modal").addEventListener("click", closeFontGroupsModalIfOutside);
+
+	byId("default-open-series-notes-btn").addEventListener("click", () => void openSeriesNotesModal());
+	byId("job-open-series-notes-btn").addEventListener("click", () => void openSeriesNotesModal());
+	byId("close-series-notes-modal-btn").addEventListener("click", closeSeriesNotesModal);
+	byId("close-series-notes-done-btn").addEventListener("click", closeSeriesNotesModal);
+	byId("series-notes-modal").addEventListener("click", closeSeriesNotesModalIfOutside);
 
 	byId("vs-reload-btn").onclick = async () => {
 		await reloadVsPresets();

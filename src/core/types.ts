@@ -354,6 +354,12 @@ export interface JobSettings {
 	translateThinking?: "auto" | "off" | "on";
 	/** Max concurrent in-flight llm requests (all languages + chunks). Default 1. */
 	translateConcurrency?: number;
+	/** Already translated lines sent with each request for continuity. 0 turns it off. Default 10. */
+	translateContextLines?: number;
+	/** Build and reuse per-series notes (characters, genders, forms of address, terms). Default true. */
+	translateSeriesNotes?: boolean;
+	/** Other subtitle languages in the same file sent as hints for gender and formality, matched by timing (e.g. ["rus"]). */
+	translateReferenceLanguages?: string[];
 	/** May translation overlap the video encode? "auto" overlaps only when llm is NOT on a loopback address. Default "auto". */
 	translateDuringEncode?: "auto" | "always" | "never";
 	/** Translate-only pipeline: source subtitle stream index, or "auto" = first full text track. */

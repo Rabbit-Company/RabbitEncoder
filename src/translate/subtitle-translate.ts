@@ -2,7 +2,7 @@ import { Logger } from "../core/logger";
 import { parseAssEvents, splitAssText, joinAssText, buildTranslatedAss, type AssEventLine } from "../subtitles/ass-edit";
 import { parseSrt, buildSrt } from "../subtitles/srt-edit";
 import { resolveTranslateLang, normalizeTag, type TranslateLang } from "../translate/translate-languages";
-import { translateBatchGeneric, type GenericOptions, type TranslateItem } from "./generic";
+import { translateBatchGeneric, type ContextRow, type GenericOptions, type TranslateItem } from "./generic";
 import { createSemaphore, type Semaphore } from "../core/concurrency";
 import { letterSignReplacementTexts, reconstructLetterSigns } from "../subtitles/letter-signs";
 
@@ -89,6 +89,15 @@ export interface TranslateContentOptions {
 	 */
 	isDialogueStyle?: (style: string) => boolean;
 	llm: GenericOptions;
+	/**
+	 * Lines from the end of the previous chunk, with their translations, sent
+	 * with each chunk for continuity. Above 0, the chunks of one file run in order.
+	 */
+	contextLines?: number;
+	/** Other-language dialogue from the same file, attached to matching lines as hints. */
+	references?: ReferenceTrack[];
+	/** Dialogue from other tracks with speaker names, in order of preference, used to name unnamed lines. */
+	speakerDonors?: TimedLine[][];
 	/** Reports cumulative translated-line progress. */
 	onProgress?: (done: number, total: number) => void;
 }
@@ -104,6 +113,127 @@ interface Unit {
 	lead: string;
 	/** Speaking character (ASS Name/Actor), passed to generic models as context. */
 	name?: string;
+	/** Dialogue gets reference lines. Signs share timestamps with unrelated dialogue, so they never do. */
+	dialogue: boolean;
+}
+
+export interface TimedLine {
+	startMs: number;
+	endMs: number;
+	text: string;
+	name?: string;
+}
+
+export interface ReferenceTrack {
+	lang: TranslateLang;
+	lines: TimedLine[];
+}
+
+/** Below this share of dialogue finding a reference line, the track is likely out of sync or a different cut. */
+const MIN_REFERENCE_MATCH = 0.5;
+
+function cleanReferenceText(text: string): string {
+	return text
+		.replace(/\{[^}]*\}/g, "")
+		.replace(/\\[Nnh]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
+ * Reference text for each span, from the reference lines that overlap it by at
+ * least half of either line's duration. That catches one line split into two
+ * and two lines merged into one, while a line that only grazes a neighbour is
+ * left out. Spans with no match get undefined.
+ */
+export function alignReferences(spans: Array<{ startMs: number; endMs: number }>, ref: TimedLine[]): Array<string | undefined> {
+	const lines = ref
+		.map((l) => ({ startMs: l.startMs, endMs: l.endMs, text: cleanReferenceText(l.text) }))
+		.filter((l) => l.text)
+		.sort((a, b) => a.startMs - b.startMs);
+	return spans.map((span) => {
+		const texts: string[] = [];
+		for (const l of lines) {
+			if (l.startMs >= span.endMs) break;
+			if (sameMoment(span, l) && !texts.includes(l.text)) texts.push(l.text);
+		}
+		return texts.length ? texts.join(" ") : undefined;
+	});
+}
+
+/** Overlap that counts as the same moment: at least half of either line. */
+function sameMoment(a: { startMs: number; endMs: number }, b: { startMs: number; endMs: number }): boolean {
+	const overlap = Math.min(a.endMs, b.endMs) - Math.max(a.startMs, b.startMs);
+	if (overlap <= 0) return false;
+	return overlap * 2 >= Math.max(1, a.endMs - a.startMs) || overlap * 2 >= Math.max(1, b.endMs - b.startMs);
+}
+
+/**
+ * Speaker for each span from donor lines at the same moment, or undefined when
+ * no named line matches or two different speakers do.
+ */
+export function alignSpeakers(spans: Array<{ startMs: number; endMs: number }>, donor: TimedLine[]): Array<string | undefined> {
+	const named = donor.filter((l) => l.name?.trim()).sort((a, b) => a.startMs - b.startMs);
+	return spans.map((span) => {
+		const names = new Set<string>();
+		for (const l of named) {
+			if (l.startMs >= span.endMs) break;
+			if (sameMoment(span, l)) names.add(l.name!.trim());
+		}
+		return names.size === 1 ? [...names][0] : undefined;
+	});
+}
+
+/**
+ * Fill in missing speakers from the donors, first donor first. Lines that
+ * already have a speaker keep it. Returns how many lines got a name.
+ */
+export function fillSpeakers(lines: Array<{ startMs: number; endMs: number; name?: string }>, donors: TimedLine[][]): number {
+	let filled = 0;
+	for (const donor of donors) {
+		const missing = lines.filter((l) => !l.name?.trim());
+		if (missing.length === 0) break;
+		alignSpeakers(missing, donor).forEach((name, i) => {
+			if (!name) return;
+			missing[i]!.name = name;
+			filled++;
+		});
+	}
+	return filled;
+}
+
+/**
+ * Reference texts per unit, keyed by language name. A reference track that
+ * matches too little of the dialogue is dropped with a warning.
+ */
+function referencesForUnits(units: Unit[], references: ReferenceTrack[]): { refs: Array<Record<string, string> | undefined>; used: TranslateLang[] } {
+	const refs: Array<Record<string, string> | undefined> = units.map(() => undefined);
+	const used: TranslateLang[] = [];
+	const dialogueIdx = units.flatMap((u, i) => (u.dialogue ? [i] : []));
+	if (dialogueIdx.length === 0) return { refs, used };
+
+	for (const track of references) {
+		const aligned = alignReferences(
+			dialogueIdx.map((i) => units[i]!),
+			track.lines,
+		);
+		const matched = aligned.filter((t) => t !== undefined).length;
+		const rate = matched / dialogueIdx.length;
+		if (rate < MIN_REFERENCE_MATCH) {
+			Logger.warn(
+				`[translate] ${track.lang.name} reference matches only ${Math.round(rate * 100)}% of the dialogue by timing. It is probably out of sync, so it is not used.`,
+			);
+			continue;
+		}
+		Logger.info(`[translate] ${track.lang.name} reference matched ${matched}/${dialogueIdx.length} dialogue lines`);
+		used.push(track.lang);
+		aligned.forEach((text, k) => {
+			if (text === undefined) return;
+			const i = dialogueIdx[k]!;
+			(refs[i] ??= {})[track.lang.name] = text;
+		});
+	}
+	return { refs, used };
 }
 
 /**
@@ -114,6 +244,17 @@ interface Unit {
 export async function translateSubtitleContent(content: string, opts: TranslateContentOptions): Promise<string> {
 	if (opts.format === "ass") return translateAss(content, opts);
 	return translateSrt(content, opts);
+}
+
+/** Dialogue lines in order, with timing and speaker names where the format has them. Signs and songs are left out. */
+export function dialogueLines(content: string, format: "ass" | "srt", isDialogueStyle: (style: string) => boolean): TimedLine[] {
+	if (format === "srt") {
+		return parseSrt(content).map((cue) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text.replace(/\r?\n/g, " ").trim() }));
+	}
+	return parseAssEvents(content)
+		.events.filter((ev) => isDialogueStyle(ev.style))
+		.sort((a, b) => a.startMs - b.startMs)
+		.map((ev) => ({ startMs: ev.startMs, endMs: ev.endMs, name: ev.name || undefined, text: splitAssText(ev.rawText).visible }));
 }
 
 async function translateUnits(units: Unit[], opts: TranslateContentOptions): Promise<Map<number, string>> {
@@ -129,23 +270,43 @@ async function translateUnits(units: Unit[], opts: TranslateContentOptions): Pro
 	opts.onProgress?.(0, total);
 
 	const sem = opts.sem ?? createSemaphore(1);
+	const contextLines = Math.max(0, Math.floor(opts.contextLines ?? 0));
+	if (opts.speakerDonors?.length) {
+		const filled = fillSpeakers(
+			units.filter((u) => u.dialogue),
+			opts.speakerDonors,
+		);
+		if (filled) Logger.info(`[translate] Named the speaker of ${filled} line(s) from other subtitle tracks`);
+	}
+	const { refs, used } = referencesForUnits(units, opts.references ?? []);
+	const baseLlm = used.length ? { ...opts.llm, references: used } : opts.llm;
 
-	await Promise.all(
-		chunks.map(async ([lo, hi]) => {
-			const slice = units.slice(lo, hi);
-			const translated = await sem.run(() =>
-				translateBatchGeneric(
-					slice.map<TranslateItem>((u) => ({ text: u.visible, name: u.name })),
-					opts.llm,
-				),
-			);
-			for (let k = 0; k < slice.length; k++) {
-				out.set(slice[k]!.key, translated[k]!);
-			}
-			done += slice.length; // safe: runs synchronously between awaits
-			opts.onProgress?.(done, total);
-		}),
-	);
+	const runChunk = async ([lo, hi]: [number, number]) => {
+		const slice = units.slice(lo, hi);
+		const context: ContextRow[] = [];
+		for (const u of units.slice(Math.max(0, lo - contextLines), lo)) {
+			const translation = out.get(u.key);
+			if (translation !== undefined) context.push({ name: u.name, text: u.visible, translation });
+		}
+		const llm = context.length ? { ...baseLlm, context } : baseLlm;
+		const translated = await sem.run(() =>
+			translateBatchGeneric(
+				slice.map<TranslateItem>((u, k) => ({ text: u.visible, name: u.name, refs: refs[lo + k] })),
+				llm,
+			),
+		);
+		for (let k = 0; k < slice.length; k++) {
+			out.set(slice[k]!.key, translated[k]!);
+		}
+		done += slice.length; // safe: runs synchronously between awaits
+		opts.onProgress?.(done, total);
+	};
+
+	if (contextLines > 0) {
+		for (const chunk of chunks) await runChunk(chunk);
+	} else {
+		await Promise.all(chunks.map(runChunk));
+	}
 
 	return out;
 }
@@ -361,7 +522,15 @@ async function translateAss(content: string, opts: TranslateContentOptions): Pro
 		leadByKey.set(ev.lineNo, parts.lead);
 
 		if (dialogue) {
-			units.push({ key: ev.lineNo, startMs: ev.startMs, endMs: ev.endMs, visible: parts.visible, lead: parts.lead, name: ev.name || undefined });
+			units.push({
+				key: ev.lineNo,
+				startMs: ev.startMs,
+				endMs: ev.endMs,
+				visible: parts.visible,
+				lead: parts.lead,
+				name: ev.name || undefined,
+				dialogue: true,
+			});
 		} else {
 			evByLineNo.set(ev.lineNo, ev);
 			signInputs.push({ lineNo: ev.lineNo, startMs: ev.startMs, endMs: ev.endMs, visible: parts.visible, group: `${ev.style}\u0000${ev.name}` });
@@ -401,6 +570,7 @@ async function translateAss(content: string, opts: TranslateContentOptions): Pro
 			visible: rep.visible,
 			lead: leadByKey.get(rep.lineNo) ?? "",
 			name: evByLineNo.get(rep.lineNo)?.name || undefined,
+			dialogue: false,
 		});
 	}
 	units.sort((a, b) => a.startMs - b.startMs); // planChunks expects chronological order
@@ -448,7 +618,7 @@ async function translateSrt(content: string, opts: TranslateContentOptions): Pro
 		// batch alignment.)
 		const visible = cue.text.replace(/\r?\n/g, " ").trim();
 		if (visible === "") return;
-		units.push({ key: i, startMs: cue.startMs, endMs: cue.endMs, visible, lead: "" });
+		units.push({ key: i, startMs: cue.startMs, endMs: cue.endMs, visible, lead: "", dialogue: true });
 	});
 
 	if (units.length === 0) return content;

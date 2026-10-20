@@ -118,6 +118,9 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	translateMaxTokens: 8192,
 	translateThinking: "auto",
 	translateConcurrency: 1,
+	translateContextLines: 10,
+	translateSeriesNotes: true,
+	translateReferenceLanguages: [],
 	translateSourceTrack: "auto",
 	vsFilters: [],
 };

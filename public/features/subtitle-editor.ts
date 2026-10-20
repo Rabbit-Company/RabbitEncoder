@@ -168,7 +168,12 @@ async function loadTrack(id: number): Promise<void> {
 		const cues = select("subtitle-editor-cues");
 		cues.replaceChildren();
 		track.cues.forEach((cue, i) =>
-			cues.add(new Option(`${i + 1} · ${(cue.startMs / 1000).toFixed(2)}s · ${cue.text.replace(/\{[^}]*\}/g, "").slice(0, 90)}`, String(i))),
+			cues.add(
+				new Option(
+					`${i + 1} · ${(cue.startMs / 1000).toFixed(2)}s · ${cue.name ? `${cue.name}: ` : ""}${cue.text.replace(/\{[^}]*\}/g, "").slice(0, 90)}`,
+					String(i),
+				),
+			),
 		);
 		if (!track.cues.length) {
 			status("This subtitle track has no cues.");
@@ -210,7 +215,8 @@ function renderCue(): void {
 		(byId(id) as HTMLInputElement).disabled = track.format === "bitmap";
 	buttonById("subtitle-editor-previous").disabled = track.selected === 0;
 	buttonById("subtitle-editor-next").disabled = track.selected === track.cues.length - 1;
-	byId("subtitle-editor-cue-label").textContent = `Cue ${track.selected + 1} of ${track.cues.length}${cue.style ? ` · ${cue.style}` : ""}`;
+	byId("subtitle-editor-cue-label").textContent =
+		`Cue ${track.selected + 1} of ${track.cues.length}${cue.style ? ` · ${cue.style}` : ""}${cue.name ? ` · Speaker: ${cue.name}` : ""}`;
 	manualLoop = false;
 	invalid = false;
 	try {

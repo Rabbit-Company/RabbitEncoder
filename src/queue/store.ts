@@ -339,6 +339,9 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	translateThinking: enumOf(["auto", "off", "on"]),
 	translateTimeoutMs: intIn(1000, 3600000),
 	translateConcurrency: intIn(1, 16),
+	translateContextLines: intIn(0, 100),
+	translateSeriesNotes: bool,
+	translateReferenceLanguages: strList,
 	translateSourceTrack: (v) => (v === "auto" ? "auto" : typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined),
 	translateSourceMatch: (v) => {
 		const m = v as { language?: unknown; type?: unknown } | null;

@@ -503,6 +503,21 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		settings.translateTargetLanguages = langs;
 	});
 
+	renderTranslationLanguagesInput(
+		el("translate-references"),
+		settings.translateReferenceLanguages ?? [],
+		(langs) => {
+			settings.translateReferenceLanguages = langs;
+		},
+		{
+			label: "Reference languages",
+			placeholder: "rus, spa",
+			hint:
+				"Optional. Subtitles in these languages from the same file are matched to each line by timing and sent as hints for gender and formal or informal address. " +
+				"The source text always wins. Pick languages that mark gender, such as Russian. Adds input tokens only.",
+		},
+	);
+
 	renderNumberControl(el("translate-batch"), "Dialogs per request", settings.translateBatchSize, { min: 1, max: 1000, step: 1 }, (v) => {
 		settings.translateBatchSize = v;
 	});
@@ -519,8 +534,16 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		settings.translateConcurrency = v;
 	});
 
+	renderNumberControl(el("translate-context"), "Context lines", settings.translateContextLines ?? 10, { min: 0, max: 100, step: 1 }, (v) => {
+		settings.translateContextLines = v;
+	});
+
 	renderLabeledToggle(el("translate-signs"), settings.translateSignsSongs, "Also translate signs & songs", (v) => {
 		settings.translateSignsSongs = v;
+	});
+
+	renderLabeledToggle(el("translate-notes"), settings.translateSeriesNotes ?? true, "Series notes (characters, genders, forms of address)", (v) => {
+		settings.translateSeriesNotes = v;
 	});
 
 	const testBtn = el("translate-test") as HTMLButtonElement;

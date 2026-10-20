@@ -356,10 +356,14 @@
 										</div>
 										<div class="setting-group">
 											<div id="default-translate-targets" class="toggle-group"></div>
+											<div id="default-translate-references" class="toggle-group"></div>
 											<div id="default-translate-batch" class="toggle-group"></div>
 											<div id="default-translate-timeout" class="toggle-group"></div>
 											<div id="default-translate-concurrency" class="toggle-group"></div>
+											<div id="default-translate-context" class="toggle-group"></div>
 											<div id="default-translate-signs" class="toggle-group"></div>
+											<div id="default-translate-notes" class="toggle-group"></div>
+											<button class="btn btn-ghost" type="button" id="default-open-series-notes-btn">Edit series notes...</button>
 										</div>
 										<div class="setting-group">
 											<button class="btn btn-ghost" id="default-translate-test">Test connection</button>
@@ -639,10 +643,14 @@
 										</div>
 										<div class="setting-group">
 											<div id="job-translate-targets" class="toggle-group"></div>
+											<div id="job-translate-references" class="toggle-group"></div>
 											<div id="job-translate-batch" class="toggle-group"></div>
 											<div id="job-translate-timeout" class="toggle-group"></div>
 											<div id="job-translate-concurrency" class="toggle-group"></div>
+											<div id="job-translate-context" class="toggle-group"></div>
 											<div id="job-translate-signs" class="toggle-group"></div>
+											<div id="job-translate-notes" class="toggle-group"></div>
+											<button class="btn btn-ghost" type="button" id="job-open-series-notes-btn">Edit series notes...</button>
 										</div>
 										<div class="setting-group">
 											<button class="btn btn-ghost" id="job-translate-test">Test connection</button>
@@ -1051,10 +1059,23 @@
 								<label for="library-translate-targets">Translate to</label>
 								<input type="text" class="lang-filter-input" id="library-translate-targets" placeholder="slv, deu" autocomplete="off" />
 							</div>
+							<div class="setting-group">
+								<label for="library-translate-references">Reference languages</label>
+								<input type="text" class="lang-filter-input" id="library-translate-references" placeholder="rus (optional)" autocomplete="off" />
+							</div>
 						</div>
 						<div class="lang-filter-hint">
-							ISO codes, comma separated for several languages. Each file gets the new tracks appended. Video, audio and existing subtitles are copied as they
-							are and the file is replaced in place. Files that already have the target language are left alone.
+							ISO codes, comma separated for several languages. Reference languages are optional: their subtitles are matched to each line by timing and help
+							with gender and formal or informal address. Each file gets the new tracks appended. Video, audio and existing subtitles are copied as they are and
+							the file is replaced in place. Files that already have the target language are left alone.
+						</div>
+						<div class="setting-group library-translate-notes" id="library-translate-notes" style="display: none">
+							<label>Series notes</label>
+							<div id="library-translate-notes-list"></div>
+							<div class="lang-filter-hint">
+								Characters, genders and who speaks formally to whom, sent with every request. Prepare builds them from the first selected episode so you can
+								check them before the whole batch runs.
+							</div>
 						</div>
 						<div class="repair-audit-summary" id="library-translate-ai"></div>
 						<div class="sub-preview-error" id="library-translate-error" style="display: none"></div>
@@ -1630,6 +1651,22 @@
 					<div class="modal-footer">
 						<span class="modal-note" id="fg-status"></span>
 						<button class="btn btn-primary" id="close-font-groups-done-btn">Done</button>
+					</div>
+				</div>
+			</div>
+			<!-- Series Notes Modal -->
+			<div id="series-notes-modal" class="modal-overlay" style="display: none">
+				<div class="modal modal-wide">
+					<div class="modal-header">
+						<h2>Series notes</h2>
+						<button class="btn-close" id="close-series-notes-modal-btn">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div class="setting-group" id="sn-body"></div>
+					</div>
+					<div class="modal-footer">
+						<span class="modal-note" id="sn-status"></span>
+						<button class="btn btn-primary" id="close-series-notes-done-btn">Done</button>
 					</div>
 				</div>
 			</div>

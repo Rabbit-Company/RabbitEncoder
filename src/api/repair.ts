@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "fs";
 import { randomUUID } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
@@ -8,12 +8,30 @@ import {
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
 	inspectRepairAuditFile,
+	identifyMatroska,
 	inspectRepairFile,
 	sanitizeRepairPlan,
 } from "../pipeline/repair";
+import { run } from "../core/process";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
 import { addRepairJob, getAllJobs, getJob } from "../queue/store";
 import { browseFolder } from "../queue/library";
+
+/** File extension for a downloadable subtitle codec. VobSub is left out because it extracts to two files. */
+const SUBTITLE_EXTENSIONS: Record<string, string> = {
+	"S_TEXT/ASS": "ass",
+	"S_TEXT/SSA": "ssa",
+	"S_TEXT/UTF8": "srt",
+	"S_TEXT/WEBVTT": "vtt",
+	"S_HDMV/PGS": "sup",
+};
+
+/** "Show - 01.mkv", track 24 in "slv" gives "Show - 01.24.slv.ass". */
+export function subtitleDownloadName(mkvPath: string, trackId: number, language: string, extension: string): string {
+	const stem = basename(mkvPath, extname(mkvPath));
+	const lang = language.replace(/[^A-Za-z0-9-]/g, "") || "und";
+	return `${stem}.${trackId}.${lang}.${extension}`;
+}
 
 function isInside(path: string, root: string): boolean {
 	const rel = relative(root, path);
@@ -122,6 +140,38 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			return c.json({ target, source });
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	app.post("/api/repair/subtitle-download", async (c) => {
+		const temp = join(config.tempDir, `subtitle-download-${randomUUID()}`);
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as { path?: unknown; trackId?: unknown };
+			const path = resolveAllowedMkv(body.path, config, "MKV");
+			const trackId = body.trackId;
+			if (typeof trackId !== "number" || !Number.isInteger(trackId) || trackId < 0) throw new Error("Invalid subtitle track");
+			const identified = await identifyMatroska(path, c.req.signal);
+			const track = (identified.tracks || []).find((t) => t.id === trackId && t.type === "subtitles");
+			if (!track) throw new Error(`Subtitle track ${trackId} not found`);
+			const extension = SUBTITLE_EXTENSIONS[track.properties.codec_id || ""];
+			if (!extension) throw new Error(`Downloading ${track.properties.codec_id || track.codec} subtitles is not supported`);
+
+			mkdirSync(temp, { recursive: true });
+			const out = join(temp, `track.${extension}`);
+			const result = await run(["mkvextract", path, "tracks", `${trackId}:${out}`], { signal: c.req.signal });
+			if (result.code !== 0 || !existsSync(out)) throw new Error(`mkvextract failed: ${(result.stderr || result.stdout).slice(-500)}`);
+			const data = readFileSync(out);
+			const name = subtitleDownloadName(path, trackId, track.properties.language_ietf || track.properties.language || "und", extension);
+			return new Response(data, {
+				headers: {
+					"Content-Type": extension === "sup" ? "application/octet-stream" : "text/plain; charset=utf-8",
+					"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+				},
+			});
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		} finally {
+			rmSync(temp, { recursive: true, force: true });
 		}
 	});
 
