@@ -81,19 +81,19 @@ export function previewSettingsFingerprint(s: JobSettings): string {
 	});
 }
 
-interface PreviewColorInfo {
+export interface PreviewColorInfo {
 	range: "tv" | "pc" | null;
 	space: string | null;
 }
 
-function previewMatrixFromColorSpace(space: string | null, height: number): string {
+export function previewMatrixFromColorSpace(space: string | null, height: number): string {
 	if (space === "bt2020nc" || space === "bt2020c") return "bt2020";
 	if (space === "smpte170m" || space === "bt470bg") return "bt601";
 	if (space === "bt709") return "bt709";
 	return height >= 720 ? "bt709" : "bt601";
 }
 
-async function probeColorInfo(inputPath: string): Promise<PreviewColorInfo> {
+export async function probeColorInfo(inputPath: string): Promise<PreviewColorInfo> {
 	const proc = Bun.spawn(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range,color_space", "-of", "json", inputPath], {
 		stdout: "pipe",
 		stderr: "pipe",
@@ -145,7 +145,7 @@ async function probeClipDurationSec(path: string, signal: AbortSignal): Promise<
 	}
 }
 
-async function captureFrame(
+export async function captureFrame(
 	inputPath: string,
 	outPath: string,
 	frameIndex: number,

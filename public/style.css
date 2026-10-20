@@ -101,6 +101,86 @@ code {
 	gap: 8px;
 }
 
+.nav-menu {
+	position: relative;
+}
+
+.nav-menu-caret {
+	opacity: 0.7;
+	transition: transform 0.15s;
+}
+
+.nav-menu.open .nav-menu-caret {
+	transform: rotate(180deg);
+}
+
+.nav-menu.open > .nav-menu-toggle {
+	background: var(--bg-3);
+	color: var(--text-0);
+}
+
+.nav-menu-list {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 200;
+	min-width: 210px;
+	padding: 4px;
+	background: var(--bg-1);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.nav-menu-list[hidden] {
+	display: none;
+}
+
+.nav-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 8px 10px;
+	font-family: var(--font-body);
+	font-size: 0.82rem;
+	font-weight: 500;
+	color: var(--text-1);
+	background: transparent;
+	border: none;
+	border-radius: 4px;
+	text-align: left;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.nav-menu-item:hover,
+.nav-menu-item:focus-visible {
+	background: var(--bg-3);
+	color: var(--text-0);
+	outline: none;
+}
+
+.nav-menu-item > svg {
+	flex: none;
+}
+
+/* On narrow screens the header buttons sit on the left, so menus open to the right. */
+@media (max-width: 600px) {
+	.nav-menu-list {
+		left: 0;
+		right: auto;
+		max-width: calc(100vw - 32px);
+	}
+}
+
+a.btn {
+	text-decoration: none;
+}
+
 .btn {
 	display: inline-flex;
 	align-items: center;
@@ -1154,7 +1234,7 @@ code {
 }
 
 /* The header has more actions now; collapse labels before the controls crowd the title. */
-@media (max-width: 1280px) {
+@media (max-width: 1023px) {
 	.header-right {
 		gap: 4px;
 	}
@@ -4179,4 +4259,192 @@ code {
 	color: var(--accent);
 	font-size: 0.62rem;
 	letter-spacing: 0.04em;
+}
+
+.compare-modal {
+	width: min(1400px, 96vw);
+	max-width: none;
+}
+
+.compare-source-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 8px 10px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	margin-bottom: 6px;
+}
+
+.compare-source-key {
+	font-family: var(--font-mono);
+	font-size: 0.8rem;
+	color: var(--text-2);
+	min-width: 1ch;
+}
+
+.compare-source-row .compare-label {
+	width: 160px;
+}
+
+.compare-source-row .compare-offset {
+	width: 110px;
+}
+
+.compare-source-file {
+	flex: 1 1 200px;
+	min-width: 0;
+	font-size: 0.8rem;
+	color: var(--text-1);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compare-source-row .compare-colour {
+	width: auto;
+	height: 34px;
+}
+
+.compare-recent-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.compare-recent-row .select-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 34px;
+}
+
+.compare-delete {
+	margin-right: auto;
+	color: var(--red);
+}
+
+.compare-offset-note {
+	width: 110px;
+	font-size: 0.75rem;
+	color: var(--text-2);
+}
+
+.compare-setup {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+}
+
+.compare-setup .setting-group {
+	margin: 0;
+}
+
+#compare-sources:not(:empty) {
+	margin-bottom: 10px;
+}
+
+/* Every column has a label on top and a control of the same height below it. */
+.compare-options {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 16px;
+	align-items: start;
+}
+
+.compare-options .select-input,
+.compare-options .lang-filter-input {
+	width: 100%;
+	height: 34px;
+	box-sizing: border-box;
+}
+
+.compare-align {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	font-size: 0.85rem;
+	color: var(--text-1);
+}
+
+.compare-align input {
+	margin: 0;
+}
+
+.compare-progress-bar {
+	height: 6px;
+	background: var(--bg-2);
+	border-radius: 999px;
+	overflow: hidden;
+	margin-bottom: 8px;
+}
+
+#compare-progress-fill {
+	height: 100%;
+	width: 0;
+	background: var(--accent, var(--green));
+	transition: width 0.3s;
+}
+
+.compare-viewer-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px 16px;
+	flex-wrap: wrap;
+	margin-bottom: 8px;
+}
+
+.compare-tabs {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.compare-nav {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 0.85rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.compare-stage {
+	background: #000;
+	border-radius: var(--radius-sm);
+	display: flex;
+	justify-content: center;
+	min-height: 200px;
+}
+
+/* Every source fills the same box, so switching lines frames up even when resolutions differ. */
+.compare-stage img {
+	width: 100%;
+	height: calc(100vh - 330px);
+	min-height: 200px;
+	object-fit: contain;
+}
+
+.compare-info {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin-top: 8px;
+	font-size: 0.8rem;
+	color: var(--text-1);
+}
+
+.compare-warnings {
+	margin-top: 8px;
+	font-size: 0.8rem;
+	color: var(--amber);
+	white-space: pre-line;
+}
+
+.compare-actions {
+	display: flex;
+	gap: 6px;
 }

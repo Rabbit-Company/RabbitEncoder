@@ -11,6 +11,7 @@ import { registerFontRoutes } from "./fonts";
 import { registerVsPresetRoutes } from "./vs-presets";
 import { registerRepairRoutes } from "./repair";
 import { registerSubtitleEditorRoutes } from "./subtitle-editor";
+import { registerCompareRoutes } from "./compare";
 import type { AppConfig } from "../core/types";
 
 export function registerApiRoutes(app: Web, config: AppConfig): void {
@@ -26,4 +27,5 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerVsPresetRoutes(app);
 	registerRepairRoutes(app, config);
 	registerSubtitleEditorRoutes(app, config);
+	registerCompareRoutes(app, config);
 }

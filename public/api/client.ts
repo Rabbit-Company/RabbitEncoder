@@ -142,27 +142,31 @@ export async function fetchJobs(): Promise<Job[]> {
 }
 
 /** Extract one subtitle track from an MKV and save it through the browser. */
+/** Save a file response through the browser, named by its Content-Disposition header. */
+export async function saveResponse(res: Response, fallbackName: string): Promise<void> {
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data?.error || "Download failed");
+	}
+	const encoded = /filename\*=UTF-8''([^;]+)/i.exec(res.headers.get("Content-Disposition") || "")?.[1];
+	const url = URL.createObjectURL(await res.blob());
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = encoded ? decodeURIComponent(encoded) : fallbackName;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Extract one subtitle track from an MKV and save it through the browser. */
 export async function downloadSubtitleTrack(path: string, trackId: number): Promise<void> {
 	const res = await authFetch(`${API}/api/repair/subtitle-download`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ path, trackId }),
 	});
-	if (!res.ok) {
-		const data = await res.json().catch(() => ({}));
-		throw new Error(data?.error || "Subtitle download failed");
-	}
-	const disposition = res.headers.get("Content-Disposition") || "";
-	const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
-	const name = encoded ? decodeURIComponent(encoded) : `track-${trackId}.txt`;
-	const url = URL.createObjectURL(await res.blob());
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = name;
-	document.body.appendChild(link);
-	link.click();
-	link.remove();
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
+	await saveResponse(res, `track-${trackId}.txt`);
 }
 
 export async function fetchRepairInspection(options: { jobId?: string; targetPath?: string; sourcePath?: string }): Promise<RepairInspection> {

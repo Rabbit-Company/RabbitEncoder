@@ -80,6 +80,27 @@ import { delegateClick } from "../ui/delegate";
 import { dispatchJobAction } from "../ui/job-actions";
 import { openFontGroupsModal, closeFontGroupsModal, closeFontGroupsModalIfOutside } from "../features/font-groups-modal";
 import { openSeriesNotesModal, closeSeriesNotesModal, closeSeriesNotesModalIfOutside } from "../features/series-notes-modal";
+import { initNavMenus } from "../features/nav-menus";
+import {
+	addCompareSource,
+	cancelCompareRun,
+	closeCompare,
+	closeCompareIfOutside,
+	clearRecentCompares,
+	compareNextFrame,
+	comparePrevFrame,
+	deleteCurrentCompare,
+	downloadAllCompare,
+	handleCompareKey,
+	handleCompareModeChange,
+	handleCompareSourcesClick,
+	handleCompareSourcesInput,
+	handleCompareTabsClick,
+	newCompare,
+	openCompare,
+	openRecentCompare,
+	startCompareRun,
+} from "../features/compare";
 import { closeSubStyleModal, closeSubStyleModalIfOutside, openSubStyleModal, saveCurrentGroupStyle } from "../features/sub-style-modal";
 import {
 	closeRepair,
@@ -125,6 +146,7 @@ export function getCurrentSettings(): JobSettings | null {
 }
 
 export function initEventListeners() {
+	initNavMenus();
 	initSubtitleEditor();
 	byId("open-repair-audit-btn").addEventListener("click", openRepairAuditPicker);
 	byId("close-repair-audit-btn").addEventListener("click", closeRepairAudit);
@@ -200,6 +222,26 @@ export function initEventListeners() {
 	byId("close-series-notes-modal-btn").addEventListener("click", closeSeriesNotesModal);
 	byId("close-series-notes-done-btn").addEventListener("click", closeSeriesNotesModal);
 	byId("series-notes-modal").addEventListener("click", closeSeriesNotesModalIfOutside);
+
+	byId("open-compare-btn").addEventListener("click", openCompare);
+	byId("compare-close").addEventListener("click", closeCompare);
+	byId("compare-modal").addEventListener("click", closeCompareIfOutside);
+	byId("compare-add").addEventListener("click", addCompareSource);
+	byId("compare-sources").addEventListener("input", handleCompareSourcesInput);
+	byId("compare-sources").addEventListener("change", handleCompareSourcesInput);
+	byId("compare-sources").addEventListener("click", handleCompareSourcesClick);
+	byId("compare-mode").addEventListener("change", handleCompareModeChange);
+	byId("compare-recent").addEventListener("change", () => void openRecentCompare());
+	byId("compare-clear").addEventListener("click", () => void clearRecentCompares());
+	byId("compare-delete").addEventListener("click", () => void deleteCurrentCompare());
+	byId("compare-start").addEventListener("click", () => void startCompareRun());
+	byId("compare-cancel").addEventListener("click", () => void cancelCompareRun());
+	byId("compare-new").addEventListener("click", newCompare);
+	byId("compare-tabs").addEventListener("click", handleCompareTabsClick);
+	byId("compare-prev").addEventListener("click", comparePrevFrame);
+	byId("compare-next").addEventListener("click", compareNextFrame);
+	byId("compare-download-all").addEventListener("click", () => void downloadAllCompare());
+	document.addEventListener("keydown", handleCompareKey);
 
 	byId("vs-reload-btn").onclick = async () => {
 		await reloadVsPresets();
