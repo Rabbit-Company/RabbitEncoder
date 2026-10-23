@@ -56,6 +56,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	gpuDevice: "0.0",
 	deband: "off",
 	downscale: false,
+	hdr10Plus: true,
 	skipBoosting: false,
 	noPhaseInv: false,
 	dedupeSubtitles: false,
@@ -148,6 +149,16 @@ export async function getRegrainVersion(): Promise<string | null> {
 	return res.stdout.trim().split(/\s+/)[1] ?? null;
 }
 
+/** The version of retone, such as "0.1.1", from "retone 0.1.1 (x86_64-unknown-linux-musl)". */
+export async function getRetoneVersion(): Promise<string | null> {
+	const res = await run(["retone", "--version"]).catch(() => null);
+	if (!res || res.code !== 0) {
+		Logger.error(`[hdr10+] retone is not available: ${res ? res.stderr || res.stdout : "not found"}`);
+		return null;
+	}
+	return res.stdout.trim().split(/\s+/)[1] ?? null;
+}
+
 export async function loadConfig(): Promise<AppConfig> {
 	const libraryDirs = (process.env.LIBRARY_DIRS || "")
 		.split(",")
@@ -172,6 +183,7 @@ export async function loadConfig(): Promise<AppConfig> {
 		systemFontDirs,
 		languageDetector: { version: await getLanguageDetectorVersion() },
 		regrain: { version: await getRegrainVersion() },
+		retone: { version: await getRetoneVersion() },
 		defaults: getDefaultJobSettings(),
 	};
 }

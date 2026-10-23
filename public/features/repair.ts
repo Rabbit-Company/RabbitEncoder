@@ -18,7 +18,10 @@ let sourceTracks: EditableTrack[] = [];
 let selectedTargetPath = "";
 let selectedSourcePath = "";
 
-type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference";
+type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference" | "hdr-target" | "hdr-source";
+
+/** Purposes that list every video, not only MKV files. */
+const allMediaPurpose = (purpose: PickerPurpose): boolean => purpose === "preview-reference" || purpose === "hdr-source";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -300,7 +303,7 @@ function renderPickerNode(node: PickerNode): string {
 			.map(renderPickerNode)
 			.join("");
 		if (!children)
-			children = `<div class="tree-empty" style="padding-left:${node.depth * 24 + 56}px">No ${pickerPurpose === "preview-reference" ? "video" : "MKV"} files</div>`;
+			children = `<div class="tree-empty" style="padding-left:${node.depth * 24 + 56}px">No ${allMediaPurpose(pickerPurpose) ? "video" : "MKV"} files</div>`;
 	}
 	const selected = pickerPurpose === "folder" && node.path === pickerSelectedPath ? " is-selected" : "";
 	const chooseFolder =
@@ -359,7 +362,7 @@ async function togglePickerFolder(path: string): Promise<void> {
 		node.loading = true;
 		renderPicker();
 		try {
-			const entries = await fetchRepairBrowse(node.path, pickerPurpose === "preview-reference");
+			const entries = await fetchRepairBrowse(node.path, allMediaPurpose(pickerPurpose));
 			node.children = entries.map((entry) => {
 				pickerNodes.set(entry.path, {
 					...entry,
@@ -429,11 +432,15 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 					? "Choose MKV to edit subtitles"
 					: purpose === "preview-reference"
 						? "Choose comparison video"
-						: "Choose folder to audit";
+						: purpose === "hdr-target"
+							? "Choose AV1 MKV to change"
+							: purpose === "hdr-source"
+								? "Choose original video"
+								: "Choose folder to audit";
 	inputById("repair-picker-search").placeholder =
 		purpose === "folder"
 			? "Filter loaded folders..."
-			: purpose === "preview-reference"
+			: allMediaPurpose(purpose)
 				? "Filter loaded folders and videos..."
 				: "Filter loaded folders and MKV files...";
 	byId("repair-picker-error").style.display = "none";
@@ -450,7 +457,7 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 			const preferred =
 				purpose === "target"
 					? roots.find((root) => root.name.startsWith("Output")) || roots[0]
-					: purpose === "source" || purpose === "preview-reference"
+					: purpose === "source" || allMediaPurpose(purpose)
 						? roots.find((root) => root.name.startsWith("Input")) || roots.find((root) => root.name.startsWith("Library")) || roots[0]
 						: roots.find((root) => root.name.startsWith("Output")) || roots.find((root) => root.name.startsWith("Library")) || roots[0];
 			if (preferred) await togglePickerFolder(preferred.path);
@@ -473,6 +480,16 @@ export function openSubtitleFilePicker(onChoose: (path: string) => void | Promis
 export function openPreviewReferencePicker(onChoose: (path: string) => void | Promise<void>): void {
 	pickerFileCallback = onChoose;
 	void openRepairPicker("preview-reference");
+}
+
+export function openHdrTargetPicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("hdr-target");
+}
+
+export function openHdrSourcePicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("hdr-source");
 }
 
 export function closeRepairPicker(): void {
@@ -505,7 +522,7 @@ export function filterRepairPicker(): void {
 
 export function chooseRepairPickerFile(): void {
 	if (!pickerSelectedPath) return;
-	if (pickerPurpose === "subtitle-editor" || pickerPurpose === "preview-reference") {
+	if (pickerPurpose === "subtitle-editor" || pickerPurpose === "preview-reference" || pickerPurpose === "hdr-target" || pickerPurpose === "hdr-source") {
 		const callback = pickerFileCallback;
 		closeRepairPicker();
 		if (callback) void callback(pickerSelectedPath);

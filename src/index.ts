@@ -61,6 +61,8 @@ Bun.serve({
 	hostname: "::",
 	port: config.port,
 	idleTimeout: 255,
+	// HDR10+ metadata for a whole film is uploaded as JSON of around 100 MB.
+	maxRequestBodySize: 512 * 1024 * 1024,
 	routes: {
 		"/": indexHtml,
 	},

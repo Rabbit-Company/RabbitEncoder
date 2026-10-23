@@ -2,12 +2,15 @@ import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileS
 import { resolve, dirname, join, extname, relative, basename } from "path";
 import {
 	type Job,
+	type HdrPlan,
+	type GrainPlan,
 	type JobSettings,
 	type AppConfig,
 	type DenoiseBackend,
 	type PreviewState,
 	MEDIA_EXTENSIONS,
 	FILM_GRAIN_SAMPLINGS,
+	FILM_GRAIN_SYNTHETIC_MODES,
 	FILM_GRAIN_RANGES,
 	FILM_GRAIN_SIZES,
 	TRANSLATE_SOURCE_TYPES,
@@ -38,9 +41,12 @@ import { getDefaultJobSettings } from "../core/config";
 import { isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
 import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
+import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-tool";
+import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/grain-tool";
 import { compareQueuedJobs, queuePriority } from "./priority";
 import { ensureFilmGrainTable, generateFilmGrainTable, type FilmGrainRun } from "../video/film-grain-generator";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
+import { grainIso } from "../core/film-grain-iso";
 
 const jobs = new Map<string, Job>();
 let paused = false;
@@ -233,6 +239,8 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	filmGrainSyntheticStrength: numIn(0, 64),
 	filmGrainSyntheticSize: enumOf(FILM_GRAIN_SIZES),
 	filmGrainSyntheticChroma: numIn(0, 64),
+	filmGrainSyntheticMode: enumOf(FILM_GRAIN_SYNTHETIC_MODES),
+	filmGrainSyntheticIso: (v) => (typeof v === "number" && Number.isFinite(v) ? grainIso(v) : undefined),
 
 	quality: enumOf(["lower", "low", "medium", "high", "higher"]),
 	finalSpeed: enumOf(["slower", "slow", "medium", "fast", "faster"]),
@@ -251,6 +259,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	gpuDevice: str(64),
 
 	downscale: bool,
+	hdr10Plus: bool,
 	skipBoosting: bool,
 	noPhaseInv: bool,
 	dedupeSubtitles: bool,
@@ -497,6 +506,68 @@ export function addRepairJob(rawPlan: RepairPlan): Job {
 	return job;
 }
 
+/** Queues a change to the HDR metadata of an AV1 MKV. Paths must already be checked. */
+export function addHdrJob(rawPlan: HdrPlan): Job {
+	const hdrPlan = { ...sanitizeHdrPlan(rawPlan), targetPath: rawPlan.targetPath, sourcePath: rawPlan.sourcePath, metadataPath: rawPlan.metadataPath };
+	if (!hdrPlan.sourcePath) delete hdrPlan.sourcePath;
+	if (!hdrPlan.metadataPath) delete hdrPlan.metadataPath;
+	for (const existing of jobs.values()) {
+		if (existing.inputPath === hdrPlan.targetPath && !["done", "error", "cancelled"].includes(existing.status))
+			throw new Error(`${basename(hdrPlan.targetPath)} already has an unfinished job. Finish or remove it first.`);
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "hdr",
+		filename: `HDR: ${basename(hdrPlan.targetPath)}`,
+		inputPath: hdrPlan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: describeHdrPlan(hdrPlan),
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		hdrPlan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
+/** Queues a change to the film grain of an AV1 MKV. Paths must already be checked. */
+export function addGrainJob(rawPlan: GrainPlan): Job {
+	const grainPlan = { ...sanitizeGrainPlan(rawPlan), targetPath: rawPlan.targetPath };
+	for (const existing of jobs.values()) {
+		if (existing.inputPath === grainPlan.targetPath && !["done", "error", "cancelled"].includes(existing.status))
+			throw new Error(`${basename(grainPlan.targetPath)} already has an unfinished job. Finish or remove it first.`);
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "grain",
+		filename: `Grain: ${basename(grainPlan.targetPath)}`,
+		inputPath: grainPlan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: describeGrainPlan(grainPlan),
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		grainPlan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
 export function scanLibraryFolder(
 	folderPath: string,
 	sourceMap: Record<string, string> = {},
@@ -724,6 +795,10 @@ async function processQueue() {
 	try {
 		if (next.kind === "repair") {
 			await runRepairJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.kind === "hdr") {
+			await runHdrJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.kind === "grain") {
+			await runGrainJob(next, appConfig, updateFn, controller.signal);
 		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {

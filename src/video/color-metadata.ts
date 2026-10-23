@@ -16,7 +16,11 @@ export function svtColorParamsFromProbe(probe: ProbeResult): string {
 	return `--color-primaries ${cp} --transfer-characteristics ${tc} --matrix-coefficients ${mc} --color-range ${cr}`;
 }
 
-export async function applyColorMetadata(mkvPath: string, probe: ProbeResult, signal?: AbortSignal) {
+/**
+ * Sets the colour elements of the video track. `measured` holds the MaxCLL and MaxFALL that HDR10+
+ * measuring found, used when the source states none.
+ */
+export async function applyColorMetadata(mkvPath: string, probe: ProbeResult, signal?: AbortSignal, measured?: { maxCll?: number; maxFall?: number }) {
 	const cmd: string[] = ["mkvpropedit", mkvPath, "--edit", "track:v1"];
 
 	const isHD = probe.height >= 720;
@@ -96,6 +100,9 @@ export async function applyColorMetadata(mkvPath: string, probe: ProbeResult, si
 		if (/^\d+$/.test(probe.maxCLL) && /^\d+$/.test(probe.maxFALL)) {
 			cmd.push("--set", `max-content-light=${probe.maxCLL}`);
 			cmd.push("--set", `max-frame-light=${probe.maxFALL}`);
+		} else if (measured?.maxCll && measured.maxFall) {
+			cmd.push("--set", `max-content-light=${measured.maxCll}`);
+			cmd.push("--set", `max-frame-light=${measured.maxFall}`);
 		}
 
 		if (probe.masteringDisplay && probe.masteringLuminance) {

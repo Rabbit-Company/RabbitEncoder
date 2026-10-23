@@ -591,6 +591,29 @@ a.btn {
 	transition: width 0.4s ease;
 }
 
+/* Work whose length is not known, such as regrain reading a video. */
+.step-bar-indeterminate .step-bar-fill {
+	width: 30%;
+	animation: stepBarSlide 1.4s ease-in-out infinite;
+}
+
+@keyframes stepBarSlide {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(340%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.step-bar-indeterminate .step-bar-fill {
+		width: 100%;
+		opacity: 0.4;
+		animation: none;
+	}
+}
+
 .step-detail {
 	display: block;
 	font-family: var(--font-mono);
@@ -646,6 +669,10 @@ a.btn {
 
 .modal.modal-wide {
 	width: min(620px, calc(100vw - 32px));
+}
+
+.modal.modal-about {
+	width: min(700px, calc(100vw - 32px));
 }
 
 .modal.modal-sub-style {
@@ -4447,4 +4474,129 @@ a.btn {
 .compare-actions {
 	display: flex;
 	gap: 6px;
+}
+
+/* HDR metadata and film grain tools */
+.hdr-facts {
+	display: grid;
+	grid-template-columns: minmax(120px, max-content) 1fr;
+	gap: 6px 16px;
+	margin: 14px 0;
+	padding: 13px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	font-size: 0.8rem;
+}
+
+.hdr-facts dt {
+	color: var(--text-2);
+}
+
+.hdr-facts dd {
+	margin: 0;
+	color: var(--text-0);
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.hdr-findings {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.hdr-finding-severity {
+	display: inline-block;
+	min-width: 58px;
+	margin-right: 6px;
+	font-size: 0.66rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-2);
+}
+
+.hdr-finding-error .hdr-finding-severity {
+	color: var(--danger, #e5484d);
+}
+
+.hdr-note {
+	color: var(--text-2);
+}
+
+.hdr-action-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.hdr-action-row .lang-filter-input {
+	width: 110px;
+}
+
+/* Labels in a row hold their field, so they sit on its line instead of above it like a section label. */
+.hdr-action-row label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+}
+
+/* Selects and number fields side by side get one height. */
+.hdr-action-row .select-input,
+.hdr-action-row .lang-filter-input {
+	height: 34px;
+}
+
+/* Upload row and static grain toggle of the film grain tool. */
+.grain-option {
+	margin: 12px 0;
+}
+
+@media (max-width: 640px) {
+	.hdr-facts {
+		grid-template-columns: 1fr;
+	}
+}
+
+/* About */
+.about-tools {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.8rem;
+}
+
+.about-tools th,
+.about-tools td {
+	padding: 7px 8px;
+	text-align: left;
+	border-bottom: 1px solid var(--border-subtle);
+	vertical-align: top;
+}
+
+.about-tools th {
+	font-size: 0.68rem;
+	font-weight: 600;
+	color: var(--text-2);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.about-tools td:nth-child(2) {
+	font-family: var(--font-mono);
+	white-space: nowrap;
+}
+
+.about-tools a {
+	color: var(--text-0);
+}
+
+.about-missing {
+	color: var(--danger, #e5484d);
 }

@@ -1,11 +1,11 @@
 export interface QueuePriorityJob {
-	kind?: "encode" | "repair";
+	kind?: "encode" | "repair" | "hdr" | "grain";
 	queueOrder: number;
 }
 
-/** Repairs are short, user-blocking jobs, so they run before queued encodes. */
+/** Repairs and HDR metadata and film grain changes are user-blocking jobs that copy the video, so they run before queued encodes. */
 export function queuePriority(job: QueuePriorityJob): number {
-	return job.kind === "repair" ? 0 : 1;
+	return job.kind === "encode" || job.kind === undefined ? 1 : 0;
 }
 
 /** Preserve the user's order within each priority class. */

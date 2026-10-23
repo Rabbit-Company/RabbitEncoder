@@ -92,11 +92,12 @@ export async function ensureFilmGrainTable(
 // Regrain measures with every frame at "all", and reads only part of the video at the other levels.
 const SCAN: Record<FilmGrainSampling, string> = { all: "full", half: "half", quarter: "quarter", eighth: "eighth" };
 
-async function runRegrain(
+/** Runs regrain with `--progress json` and hands every event to `onEvent` as it arrives. */
+export async function streamRegrain(
 	cmd: string[],
-	signal?: AbortSignal,
-	onProgress?: (progress: FilmGrainProgress) => void,
-): Promise<{ code: number; summary?: Extract<RegrainEvent, { event: "summary" }>; error?: Extract<RegrainEvent, { event: "error" }>; stderr: string }> {
+	signal: AbortSignal | undefined,
+	onEvent: (event: RegrainEvent) => void,
+): Promise<{ code: number; stderr: string }> {
 	const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
 	let killTimer: ReturnType<typeof setTimeout> | undefined;
 	// regrain stops its ffmpeg processes and removes partial output on SIGTERM.
@@ -112,32 +113,48 @@ async function runRegrain(
 	};
 	if (signal?.aborted) onAbort();
 	else signal?.addEventListener("abort", onAbort, { once: true });
-	let summary: Extract<RegrainEvent, { event: "summary" }> | undefined;
-	let error: Extract<RegrainEvent, { event: "error" }> | undefined;
 	const stderrText = new Response(proc.stderr).text();
 	try {
 		const decoder = new TextDecoder();
 		let buffered = "";
 		for await (const chunk of proc.stdout) {
+			// The stats summary of a long table is one line of tens of megabytes, so only the new text is searched.
+			let searchFrom = buffered.length;
 			buffered += decoder.decode(chunk, { stream: true });
 			let newline: number;
-			while ((newline = buffered.indexOf("\n")) >= 0) {
+			while ((newline = buffered.indexOf("\n", searchFrom)) >= 0) {
 				const event = parseRegrainEvent(buffered.slice(0, newline));
 				buffered = buffered.slice(newline + 1);
-				if (event?.event === "progress") onProgress?.(progressFromEvent(event));
-				else if (event?.event === "summary") summary = event;
-				else if (event?.event === "error") error = event;
+				searchFrom = 0;
+				if (event) onEvent(event);
 			}
 		}
+		const last = parseRegrainEvent(buffered + decoder.decode());
+		if (last) onEvent(last);
 		const code = await proc.exited;
-		return { code, summary, error, stderr: (await stderrText).trim().slice(-2000) };
+		return { code, stderr: (await stderrText).trim().slice(-2000) };
 	} finally {
 		if (killTimer) clearTimeout(killTimer);
 		signal?.removeEventListener("abort", onAbort);
 	}
 }
 
-function regrainErrorText(error: Extract<RegrainEvent, { event: "error" }> | undefined, stderr: string, code: number): string {
+export async function runRegrain(
+	cmd: string[],
+	signal?: AbortSignal,
+	onProgress?: (progress: FilmGrainProgress) => void,
+): Promise<{ code: number; summary?: Extract<RegrainEvent, { event: "summary" }>; error?: Extract<RegrainEvent, { event: "error" }>; stderr: string }> {
+	let summary: Extract<RegrainEvent, { event: "summary" }> | undefined;
+	let error: Extract<RegrainEvent, { event: "error" }> | undefined;
+	const { code, stderr } = await streamRegrain(cmd, signal, (event) => {
+		if (event.event === "progress" && event.frames !== undefined) onProgress?.(progressFromEvent(event));
+		else if (event.event === "summary") summary = event;
+		else if (event.event === "error") error = event;
+	});
+	return { code, summary, error, stderr };
+}
+
+export function regrainErrorText(error: Extract<RegrainEvent, { event: "error" }> | undefined, stderr: string, code: number): string {
 	if (error?.code === "frame_count_mismatch") return "Original and denoised videos have different frame counts";
 	if (error) return error.message.charAt(0).toUpperCase() + error.message.slice(1);
 	const lines = stderr.split(/\r?\n/).filter((line) => line.trim());
@@ -186,6 +203,10 @@ export interface MeasureFilmGrainOptions {
 	justEnough: boolean;
 	/** Where the denoised frame sits inside the source, when known. It is detected when the sizes differ and this is missing. */
 	crop?: FilmGrainCrop;
+	/** The size regrain scales the source to after the crop, for a denoised video that was downscaled. */
+	scale?: { w: number; h: number };
+	/** Measure luma grain only. */
+	lumaOnly?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (progress: FilmGrainProgress) => void;
 }
@@ -204,9 +225,13 @@ export async function measureFilmGrain(opts: MeasureFilmGrainOptions): Promise<n
 		if (signal?.aborted) throw new CancelledError();
 		const args = ["regrain", "diff", sourcePath, denoisedPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[opts.sampling]];
 		if (opts.justEnough) args.push("--just-enough");
+		if (opts.lumaOnly) args.push("--no-chroma");
 		// A denoising server that crops first hands back a smaller frame. regrain then
 		// measures only the matching area of the original.
-		if (original.width !== denoised.width || original.height !== denoised.height) {
+		if (opts.scale) {
+			if (opts.crop) args.push("--crop", `${opts.crop.w}:${opts.crop.h}:${opts.crop.x}:${opts.crop.y}`);
+			args.push("--scale", `${opts.scale.w}x${opts.scale.h}`);
+		} else if (original.width !== denoised.width || original.height !== denoised.height) {
 			const crop =
 				opts.crop ?? (await detectFilmGrainCrop(sourcePath, denoisedPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal));
 			args.push("--crop", `${crop.w}:${crop.h}:${crop.x}:${crop.y}`);
@@ -233,30 +258,21 @@ export async function measureFilmGrain(opts: MeasureFilmGrainOptions): Promise<n
 	}
 }
 
-/** Write a table with grain of a chosen strength for the whole video. Returns its segment count, 0 when the strength adds no grain. */
-export async function generateSyntheticFilmGrainTable(
-	tablePath: string,
-	grain: { strength: number; size: FilmGrainSize; chroma: number },
-	signal?: AbortSignal,
-): Promise<number> {
-	const res = await run(
-		[
-			"regrain",
-			"--progress",
-			"json",
-			"generate",
-			"-o",
-			tablePath,
-			"-y",
-			"--strength",
-			String(grain.strength),
-			"--size",
-			grain.size,
-			"--chroma",
-			String(grain.chroma),
-		],
-		{ signal },
-	);
+/** Synthetic grain of a deviation on the 0 to 255 scale, or the sensor noise of a camera at an ISO for a frame size. */
+export type SyntheticGrain = { size: FilmGrainSize; chroma: number } & ({ strength: number } | { iso: number; resolution: { width: number; height: number } });
+
+/** The regrain generate run that writes `grain` to `tablePath`. */
+export function syntheticGrainArgs(tablePath: string, grain: SyntheticGrain): string[] {
+	const amount =
+		"iso" in grain
+			? ["--iso", String(grain.iso), "--resolution", `${grain.resolution.width}x${grain.resolution.height}`]
+			: ["--strength", String(grain.strength)];
+	return ["regrain", "--progress", "json", "generate", "-o", tablePath, "-y", ...amount, "--size", grain.size, "--chroma", String(grain.chroma)];
+}
+
+/** Write a table with grain of a chosen strength or ISO for the whole video. Returns its segment count, 0 when it adds no grain. */
+export async function generateSyntheticFilmGrainTable(tablePath: string, grain: SyntheticGrain, signal?: AbortSignal): Promise<number> {
+	const res = await run(syntheticGrainArgs(tablePath, grain), { signal });
 	if (signal?.aborted) throw new CancelledError();
 	if (res.code !== 0 || !existsSync(tablePath)) {
 		const failure = res.stdout

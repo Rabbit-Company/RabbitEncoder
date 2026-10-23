@@ -73,6 +73,9 @@ else
 	echo "[entrypoint] CPU supports x86-64-v2"
 fi
 
+# The app shows which builds were picked.
+export RABBIT_CPU_LEVEL="$ARCH_NAME"
+
 # Expose SVT-AV1-ESSENTIAL encoder
 if [ -x "$ARCH_DIR/SVT-AV1-Essential" ]; then
 	ln -sf "$ARCH_DIR/SVT-AV1-Essential" "$TARGET_ESSENTIAL"
@@ -118,7 +121,9 @@ echo "[entrypoint] Using FFprobe: $("$TARGET_FFPROBE" -hide_banner -version | he
 echo "[entrypoint] Using SVT-AV1-Essential: $("$TARGET_ESSENTIAL" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-HDR: $("$TARGET_HDR" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-5FISH: $("$TARGET_5FISH" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+echo "[entrypoint] Using av-denoise: $(av-denoise --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
 echo "[entrypoint] Using regrain: $(regrain --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
+echo "[entrypoint] Using retone: $(retone --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
 
 USER_VS_DIR="/config/vapoursynth/presets"
 if [ ! -d "$USER_VS_DIR" ]; then

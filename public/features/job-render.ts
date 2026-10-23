@@ -7,6 +7,7 @@ import { byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { compareQueuedJobs } from "../../src/queue/priority";
+import { syntheticGrainActive, syntheticGrainMode } from "../../src/core/film-grain-iso";
 
 export function statusLabel(status: JobStatus): string {
 	const labels = {
@@ -379,13 +380,15 @@ export function renderJobCard(job: Job): string {
 		if (job.probe.duration) meta += `<span>${formatDuration(job.probe.duration * 1000)}</span>`;
 	}
 	if (job.kind === "repair") meta += `<span>Subtitle repair, video and audio stream copy</span>`;
-	if (job.kind !== "repair" && job.settings.videoEncode !== "off")
+	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
+	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
+	if (!isToolJob(job) && job.settings.videoEncode !== "off")
 		meta += `<span>${job.settings.quality}, ${job.settings.finalSpeed}${job.settings.downscale ? ", ↓1080p" : ""}</span>`;
-	if (job.kind !== "repair" && job.settings.skipBoosting) meta += `<span>No Boost</span>`;
-	if (job.kind !== "repair" && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
-	if (job.kind !== "repair" && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
-	if (job.kind !== "repair" && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
-	if (job.kind !== "repair" && job.originalSourcePath) {
+	if (!isToolJob(job) && job.settings.skipBoosting) meta += `<span>No Boost</span>`;
+	if (!isToolJob(job) && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
+	if (!isToolJob(job) && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
+	if (!isToolJob(job) && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
+	if (!isToolJob(job) && job.originalSourcePath) {
 		const originalName = job.originalSourcePath.split("/").pop() || job.originalSourcePath;
 		meta += `<span title="Original: ${escapeHtml(job.originalSourcePath)}">Original: ${escapeHtml(originalName)}</span>`;
 		if (job.settings.videoEncode !== "off" && job.settings.subtitleProcessing !== "translate") {
@@ -393,15 +396,11 @@ export function renderJobCard(job: Job): string {
 			else if (job.autoFilmGrain && !done)
 				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${({ all: "Every frame", half: "Half", quarter: "Quarter", eighth: "Eighth" } as const)[job.settings.filmGrainSampling] ?? "Every frame"}</span>`;
 		}
-	} else if (
-		job.kind !== "repair" &&
-		job.settings.videoEncode === "av1" &&
-		job.settings.subtitleProcessing !== "translate" &&
-		!job.settings.filmGrainTablePath
-	) {
+	} else if (!isToolJob(job) && job.settings.videoEncode === "av1" && job.settings.subtitleProcessing !== "translate" && !job.settings.filmGrainTablePath) {
 		if (job.settings.filmGrainRestore && job.settings.denoise !== "off")
 			meta += `<span title="The grain the denoiser removes is measured after Prepare and written back">FGS: restore${job.settings.filmGrainJustEnough ? " (just enough)" : ""}</span>`;
-		else if ((job.settings.filmGrainSyntheticStrength ?? 0) > 0) meta += `<span>Grain: ${job.settings.filmGrainSyntheticStrength}</span>`;
+		else if (syntheticGrainActive(job.settings))
+			meta += `<span>Grain: ${syntheticGrainMode(job.settings) === "iso" ? `ISO ${job.settings.filmGrainSyntheticIso}` : job.settings.filmGrainSyntheticStrength}</span>`;
 	}
 
 	const stepsHtml = active || done || err ? renderSteps(job.steps) : "";
@@ -459,7 +458,7 @@ export function renderJobCard(job: Job): string {
 	</button>`;
 
 	let actions = "";
-	if (job.status === "queued" && job.kind === "repair") {
+	if (job.status === "queued" && isToolJob(job)) {
 		actions = `
 		<div class="move-buttons" data-move-type="file" data-move-job="${job.id}">
 			<button class="btn-icon btn-move" title="Move up" data-action="move-up"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg></button>
@@ -487,7 +486,7 @@ export function renderJobCard(job: Job): string {
       <button class="btn-icon" title="Remove" data-id="${job.id}" data-action="remove">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>`;
-	} else if (active && job.kind === "repair") {
+	} else if (active && isToolJob(job)) {
 		actions = `
 			${infoBtn}
 			<button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
@@ -503,9 +502,9 @@ export function renderJobCard(job: Job): string {
       <button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       </button>`;
-	} else if (err && job.kind === "repair") {
+	} else if (err && isToolJob(job)) {
 		actions = `
-			${repairBtn}
+			${job.kind === "repair" ? repairBtn : ""}
 			<button class="btn-icon" title="Retry" data-id="${job.id}" data-action="retry"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
 			<button class="btn-icon" title="Remove" data-id="${job.id}" data-action="remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
 	} else if (err) {
@@ -523,8 +522,8 @@ export function renderJobCard(job: Job): string {
       </button>`;
 	} else if (done) {
 		actions = `
-			${job.kind === "repair" ? "" : bitrateBtn}
-			${repairBtn}
+			${isToolJob(job) ? "" : bitrateBtn}
+			${job.kind === "hdr" || job.kind === "grain" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;
@@ -824,10 +823,15 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	return html;
 }
 
+/** Repairs and HDR metadata and film grain changes copy the video instead of encoding it, so they have no encode settings or previews. */
+function isToolJob(job: Job): boolean {
+	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain";
+}
+
 export function renderJobsList(jobs: Job[]): string {
 	const tree = buildFolderTree(jobs);
 	let html = "";
-	const priorityRepairs = tree.jobs.filter((job) => job.kind === "repair" && (job.status === "queued" || isActive(job.status))).sort(compareQueuedJobs);
+	const priorityRepairs = tree.jobs.filter((job) => isToolJob(job) && (job.status === "queued" || isActive(job.status))).sort(compareQueuedJobs);
 	const priorityRepairIds = new Set(priorityRepairs.map((job) => job.id));
 
 	for (const job of priorityRepairs) {

@@ -101,6 +101,29 @@ import {
 	openRecentCompare,
 	startCompareRun,
 } from "../features/compare";
+import { closeAbout, closeAboutIfOutside, copyVersions, openAbout } from "../features/about";
+import {
+	chooseHdrFolder,
+	chooseHdrTarget,
+	closeHdrTool,
+	closeHdrToolIfOutside,
+	handleHdrActionsChange,
+	handleHdrActionsClick,
+	handleHdrUpload,
+	openHdrTool,
+	queueHdrChanges,
+} from "../features/hdr-tool";
+import {
+	chooseGrainFolder,
+	chooseGrainTarget,
+	closeGrainTool,
+	closeGrainToolIfOutside,
+	handleGrainActionsChange,
+	handleGrainClick,
+	handleGrainUpload,
+	openGrainTool,
+	queueGrainChanges,
+} from "../features/grain-tool";
 import { closeSubStyleModal, closeSubStyleModalIfOutside, openSubStyleModal, saveCurrentGroupStyle } from "../features/sub-style-modal";
 import {
 	closeRepair,
@@ -222,6 +245,36 @@ export function initEventListeners() {
 	byId("close-series-notes-modal-btn").addEventListener("click", closeSeriesNotesModal);
 	byId("close-series-notes-done-btn").addEventListener("click", closeSeriesNotesModal);
 	byId("series-notes-modal").addEventListener("click", closeSeriesNotesModalIfOutside);
+
+	byId("open-about-btn").addEventListener("click", () => void openAbout());
+	byId("about-close").addEventListener("click", closeAbout);
+	byId("about-done").addEventListener("click", closeAbout);
+	byId("about-modal").addEventListener("click", closeAboutIfOutside);
+	byId("about-copy").addEventListener("click", () => void copyVersions());
+	byId("open-hdr-btn").addEventListener("click", openHdrTool);
+	byId("hdr-close").addEventListener("click", closeHdrTool);
+	byId("hdr-cancel").addEventListener("click", closeHdrTool);
+	byId("hdr-modal").addEventListener("click", closeHdrToolIfOutside);
+	byId("hdr-choose-target").addEventListener("click", chooseHdrTarget);
+	byId("hdr-choose-folder").addEventListener("click", chooseHdrFolder);
+	byId("hdr-actions").addEventListener("change", handleHdrActionsChange);
+	byId("hdr-actions").addEventListener("input", handleHdrActionsChange);
+	byId("hdr-actions").addEventListener("click", handleHdrActionsClick);
+	byId("hdr-upload-input").addEventListener("change", () => void handleHdrUpload());
+	byId("hdr-queue").addEventListener("click", () => void queueHdrChanges());
+
+	byId("open-grain-btn").addEventListener("click", openGrainTool);
+	byId("grain-close").addEventListener("click", closeGrainTool);
+	byId("grain-cancel").addEventListener("click", closeGrainTool);
+	byId("grain-modal").addEventListener("click", closeGrainToolIfOutside);
+	byId("grain-choose-target").addEventListener("click", chooseGrainTarget);
+	byId("grain-choose-folder").addEventListener("click", chooseGrainFolder);
+	byId("grain-actions").addEventListener("change", handleGrainActionsChange);
+	byId("grain-actions").addEventListener("input", handleGrainActionsChange);
+	byId("grain-actions").addEventListener("click", handleGrainClick);
+	byId("grain-inspection").addEventListener("click", handleGrainClick);
+	byId("grain-upload-input").addEventListener("change", () => void handleGrainUpload());
+	byId("grain-queue").addEventListener("click", () => void queueGrainChanges());
 
 	byId("open-compare-btn").addEventListener("click", openCompare);
 	byId("compare-close").addEventListener("click", closeCompare);

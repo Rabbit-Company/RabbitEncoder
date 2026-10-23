@@ -264,8 +264,8 @@ RUN set -eux; \
 
 # regrain measures film grain and writes it into the AV1 encode. It is a static binary
 # and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
-ARG REGRAIN_VERSION=0.2.2
-ARG REGRAIN_SHA256=5f80e837108e0c70520ab985e2b169b6d49d13bc009b14c57fb1f6ea58575be4
+ARG REGRAIN_VERSION=0.3.2
+ARG REGRAIN_SHA256=00e0f3ae0de41c559655d050bd4d8867cb167de86a6e4a58e6558427047a8a87
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/regrain/releases/download/v${REGRAIN_VERSION}/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/regrain.tar.gz \
@@ -274,6 +274,19 @@ RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
  && install -m 755 "/tmp/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2/regrain" /usr/local/bin/regrain \
  && rm -rf /tmp/regrain.tar.gz "/tmp/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2" \
  && regrain --version
+
+# retone measures HDR10+ metadata and writes it into the AV1 encode. It is a static binary
+# and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
+ARG RETONE_VERSION=0.1.3
+ARG RETONE_SHA256=281b69dc945dbb170eb9a4f30994134df81ffe3c1e51d2811ee1e48dc043d021
+RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
+	"https://github.com/Rabbit-Company/retone/releases/download/v${RETONE_VERSION}/retone-v${RETONE_VERSION}-linux-x86_64-v2.tar.gz" \
+	-o /tmp/retone.tar.gz \
+ && echo "${RETONE_SHA256}  /tmp/retone.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/retone.tar.gz -C /tmp \
+ && install -m 755 "/tmp/retone-v${RETONE_VERSION}-linux-x86_64-v2/retone" /usr/local/bin/retone \
+ && rm -rf /tmp/retone.tar.gz "/tmp/retone-v${RETONE_VERSION}-linux-x86_64-v2" \
+ && retone --version
 
 # Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh

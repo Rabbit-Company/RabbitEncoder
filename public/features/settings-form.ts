@@ -241,6 +241,7 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 	renderRadioPills(el("subtitle-processing"), SUBTITLE_PROCESSING_OPTIONS, settings.subtitleProcessing ?? "full", (v) => (settings.subtitleProcessing = v));
 
 	renderDownscaleToggle(el("downscale"), settings.downscale || false, (v) => (settings.downscale = v));
+	renderLabeledToggle(el("hdr10-plus"), settings.hdr10Plus ?? true, "Write HDR10+ metadata", (v) => (settings.hdr10Plus = v));
 	renderRadioPills(el("crop"), CROP_OPTIONS, settings.crop || "off", (v) => {
 		settings.crop = v;
 		// Re-render crop limit to reflect visibility change

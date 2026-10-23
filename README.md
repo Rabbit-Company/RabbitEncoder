@@ -9,6 +9,9 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Auto-Boost-Essential** integration for optimal per-scene CRF zones
 - **Opus** audio encoding with configurable per-channel bitrates
 - **HDR10 metadata** preservation (PQ, BT.2020, mastering display, content light)
+- **HDR10+ metadata** measured for every PQ source with [retone](https://github.com/Rabbit-Company/retone) and written into the AV1 encode, with the scenes of a Dolby Vision source's shots
+- **HDR Metadata tool** to inspect, add, measure, import, change and remove HDR10+, HDR10 and Dolby Vision metadata in existing AV1 MKVs, one file or a whole folder, without re-encoding
+- **Film Grain tool** to inspect, add, replace and remove AV1 film grain synthesis in existing AV1 MKVs, one file or a whole folder, without re-encoding
 - **VapourSynth filter chain** stackable per-job filters (FineDehalo, DehaloAlpha...) with `light` / `medium` / `heavy` presets, full per-parameter overrides, and a hot-reloadable user preset directory for dropping in your own `.vpy` scripts
 - **Web dashboard** for monitoring progress and configuring per-file settings
 - **File watcher** auto-detects new files in the input directory
@@ -79,9 +82,10 @@ For each file, the engine runs:
 
 1. **Probe:** Extract media information such as resolution, audio layout, frame rate, subtitle tracks, and HDR metadata.
 2. **Prepare:** Extract the primary video stream, run the configured VapourSynth passes, and apply the FFmpeg crop/downscale/denoise/deband chain.
-3. **Auto-Boost-Essential:** Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode.
-4. **Audio:** Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
-5. **Subtitles and fonts**
+3. **HDR10+:** For PQ sources, measure HDR10+ metadata of the prepared video with retone.
+4. **Auto-Boost-Essential:** Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode, then write the HDR10+ metadata and film grain into it.
+5. **Audio:** Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
+6. **Subtitles and fonts**
    - Sort, filter, deduplicate, and rename subtitle tracks.
    - Optionally convert SRT subtitles to ASS.
    - Restyle dialogue-classified ASS styles without changing signs, songs, or other untouched styles.
@@ -90,8 +94,8 @@ For each file, the engine runs:
    - Remove unused source font attachments when enabled.
    - Preserve source fonts still referenced by surviving untouched styles or inline `\fn` overrides.
    - Use numbered aliases such as `Noto Sans 2` only when a retained source font already occupies the requested family name.
-6. **Mux:** Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV.
-7. **HDR:** Apply HDR10 metadata with `mkvpropedit` when required.
+7. **Mux:** Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV.
+8. **HDR:** Apply HDR10 metadata with `mkvpropedit` when required.
 
 ## Preview Encoding
 
@@ -119,11 +123,23 @@ When Rabbit denoises the video itself, turn on **Advanced Settings -> AV1 film g
 
 **Pattern -> Static grain pattern** applies the table with `regrain apply --static-grain`. Every frame of a table entry uses the entry's seed, so the decoder lays the same grain pattern over the whole scene like a texture on the screen, instead of a new pattern each frame. It suits light grain on footage that mostly stands still, such as grain that only hides banding in anime. Where the camera pans, the pattern stays in place while the picture moves under it. The pattern changes where the next table entry starts. It applies to every table, also a synthetic one or a table path you enter yourself.
 
-**Synthetic grain** writes grain of a chosen strength with `regrain generate` for jobs where no measured table applies, including jobs without any denoise. **Strength** is the luma deviation on the 0 to 255 scale and 0 turns it off. **Fine** is single pixels like digital camera noise, **Medium** is like most film grain, and **Coarse** forms clumps a few pixels wide. **Chroma** adds color grain. With Restore denoised grain also on, synthetic grain is used when nothing was denoised or the denoiser removed no measurable grain.
+**Synthetic grain** writes grain of a chosen strength with `regrain generate` for jobs where no measured table applies, including jobs without any denoise. **Strength** is given as an **ISO** or as a **Deviation**, and 0 turns it off. **ISO** is the camera sensor noise of `regrain generate --iso`, the photon noise model of libaom that aomenc and SVT-AV1 use for `--photon-noise`, so the same ISO gives the same grain. Rabbit gives regrain the frame size of the encode, after the downscale to 1080p, and the whole 16:9 frame when black bars were cut, so a letterboxed film gets the grain of its frame. A smaller frame has larger pixels and less noise: at 1080p, ISO 200 to 600 gives a deviation of 0.38 to 0.50, about what hides banding in anime, and 4K needs a quarter of the ISO for the same grain. ISO grain is weaker in shadows and stronger in highlights, as a sensor's is. **Deviation** is the luma deviation on the 0 to 255 scale, 0.6 times as strong at black and 0.7 times at white as in the middle, as film grain is. Settings saved before ISO keep their deviation. **Fine** is single pixels like digital camera noise, **Medium** is like most film grain, and **Coarse** forms clumps a few pixels wide. **Chroma** adds color grain. With Restore denoised grain also on, synthetic grain is used when nothing was denoised or the denoiser removed no measurable grain.
 
 After the video is encoded, Rabbit writes the table into the AV1 stream with `regrain apply`, for previews and full encodes. regrain then reads the result back, checks every frame's grain, and decodes it with dav1d before Rabbit continues. SVT-AV1's own `--fgs-table` reads only the first entry of a table, so it is not used. A **Full video** table is applied scene by scene, and each segment keeps the grain measured for it. A **Quick** table is applied as one segment to the whole video. A table path you enter yourself is applied as written, so its timestamps have to match the video. Keep the source table available until encoding finishes. Do not combine the table with `--photon-noise`, `--film-grain`, or `--fgs-table` in custom encoder parameters. Grain the encoder wrote itself is replaced by the table.
 
-The container downloads the checksum-verified [regrain v0.2.2 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.2.2). It is a static binary that uses the container's FFmpeg.
+The container downloads the checksum-verified [regrain v0.3.2 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.3.2). It is a static binary that uses the container's FFmpeg.
+
+### HDR10+ metadata
+
+AV1 encoders cannot measure HDR10+ metadata, so a PQ source used to come out as plain HDR10 even when it had HDR10+ or Dolby Vision. With **HDR -> Write HDR10+ metadata**, which is on by default, Rabbit measures the metadata with [retone](https://github.com/Rabbit-Company/retone) as an **HDR10+** step after Prepare and writes it into the AV1 encode. HDR10+ displays then tone map every scene on its own instead of the whole video at once. The setting only acts on PQ sources encoded to AV1. HLG and SDR sources are encoded as before.
+
+The step measures the video as it will be encoded, after crop, downscale and denoise, so the metadata describes the picture the display gets. Every scene gets one set of values, so a display does not change its tone mapping in the middle of a shot. When the source has Dolby Vision, the scenes follow the shots its colourist marked, read from the Dolby Vision metadata with `retone convert`. When that metadata does not fit the prepared video frame for frame, for example after dropped frames were filled, the scenes are measured instead and the log says so. A Preview measures each sample clip on its own.
+
+After the final encode, `retone apply` writes one HDR10+ metadata OBU right before every shown frame, as the HDR10+ AV1 specification requires, and tags the video as BT.2020 PQ when the encoder left the tags out. When a film grain table follows, regrain's verification decodes the stream with the HDR10+ metadata in it. Otherwise retone reads the result back and decodes it with dav1d itself. When the source states no MaxCLL and MaxFALL, the values the measurement found are written into the MKV colour elements. The step shows the number of scenes and where they came from.
+
+HDR10+ metadata is not worth failing an encode over. When measuring or writing it fails, the step says why, the log has a warning, and the encode finishes as HDR10. The settings code records `hp=0` when the setting is off.
+
+The container downloads the checksum-verified [retone v0.1.3 release](https://github.com/Rabbit-Company/retone/releases/tag/v0.1.3). It is a static binary that uses the container's FFmpeg.
 
 ## Subtitle Repair / Remux
 
@@ -134,6 +150,42 @@ Repair jobs use MKVToolNix stream copying: video and audio codecs are verified b
 Use **Audit folder** to inspect every MKV directly inside a selected folder. Files are grouped as A, B, C, and so on by their ordered audio/subtitle track type, language, title, and flags. Group A is the majority layout. Outliers list their exact differences and open directly in the repair editor. Audits launched from a completed queue folder also pair each encode with its own original input, making missing source subtitles available for plain copying or Rabbit ASS/SRT processing without ever borrowing subtitle content from another episode.
 
 Choose **Edit group** beside a group to change subtitle names, languages, and flags for all of its files at once. Each subtitle row applies to the same ordered subtitle in every episode, using that episode's own track ID and preserving its compression. **Queue changes** validates the whole group against the audit before queueing one metadata repair per file. **Save changes to** defaults to **Existing MKV files**, updating each file after verification. Choose **New .repaired.mkv copies** if you prefer separate output files. Follow progress in the job list and audit again after completion to inspect the results.
+
+## HDR Metadata
+
+**Tools -> HDR Metadata** changes the HDR metadata of AV1 MKVs that already exist, for example encodes made before Rabbit wrote HDR10+, without re-encoding them. Choose **One file** to inspect a video first. Rabbit reads it with retone and shows its HDR formats, colour description, mastering display, MaxCLL and MaxFALL, how many frames carry HDR10+ metadata with its scenes and peak, whether it has Dolby Vision, and the problems `retone check` finds. Other videos, such as HEVC originals, are described but cannot be changed.
+
+| Setting                   | Choices                                                                                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HDR10+**                | Keep, measure it from the video, measure it with the scenes of a Dolby Vision original, import it from a JSON file or another AV1 video, or remove it |
+| **Dolby Vision**          | Remove it, which leaves HDR10. Shown when the file has Dolby Vision                                                                                   |
+| **HDR10 static metadata** | Keep, set the mastering display (BT.2020 or Display P3 with its luminance) with MaxCLL and MaxFALL taken from HDR10+ or entered, or remove it         |
+| **Colour tags**           | Tag the video as BT.2020 PQ. Offered only for video without a transfer tag, since tagging SDR as PQ makes it look washed out                          |
+
+Every change becomes a job in the queue with **Analyze**, **HDR10+** when measuring, **Write** and **Replace** steps. Rabbit extracts the AV1 track, writes the changes with retone, rebuilds the MKV with MKVToolNix from the new video and every other track, attachment, chapter and tag of the original, and gives the video track its name, language, flags, frame timestamps, default duration and colour elements back. The rebuilt file replaces the original only after its tracks, attachments, chapters, duration and timestamps are verified, so a failed job leaves the file as it was. Measuring decodes the whole video, the other changes take seconds.
+
+An HDR10+ JSON file is uploaded from the browser and can be up to 512 MB, enough for a feature film. It must have one entry per frame of the video, as must the Dolby Vision original. A file with Dolby Vision can only be changed when Dolby Vision is removed as well, because the MKV keeps Dolby Vision's configuration on the video track, which a rebuilt track would lose.
+
+Choose **Every MKV in a folder** to queue the same changes for a whole folder, optionally with its subfolders, up to 500 files. A folder can keep, measure or remove HDR10+, but not import it, since every file would need its own original. Files the changes do not fit are skipped and keep their content: SDR files when adding HDR10+, files that already have HDR10+ when **Leave files that already have HDR10+ as they are** is on, and files with nothing to remove. The job shows why it skipped a file.
+
+## Film Grain
+
+**Tools -> Film Grain** changes the film grain synthesis of AV1 MKVs that already exist, without re-encoding them. The player draws AV1 film grain from a few values in every frame header, so changing it leaves the encoded picture and the file size as they are. Use it to take grain out of an encode you do not like, to add a little grain that hides banding in clean or animated video, or to make grain weaker or stronger after watching the result.
+
+Choose **One file** to inspect a video first. Rabbit reads its film grain with regrain and shows how many table entries it has, the average and strongest luma grain and the chroma grain on the 0 to 255 scale, and the problems `regrain check` finds. The modal shows how far the reading is: regrain first reads the table out of the video, then describes and checks every entry on all CPU threads. A film with an entry for every frame, as SVT-AV1 writes it, takes under half a minute. **Download table** saves the video's film grain table, which can be edited and uploaded again or applied to another video.
+
+| Film grain                           | What it does                                                                                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Grain of a chosen strength**       | An ISO or a luma deviation, chroma, and Fine, Medium or Coarse grain, written with `regrain generate` like the encode's synthetic grain. The ISO is for the video's frame size |
+| **Film grain table**                 | An uploaded `.tbl` from regrain, aomenc or **Download table**, matched to the video by time                                                                                    |
+| **Grain measured from the original** | `regrain diff` compares the original with the video and puts back the grain the encode lost, optionally just enough to hide banding                                            |
+| **Remove it**                        | The video plays without grain                                                                                                                                                  |
+
+An uploaded table is checked with `regrain check`, and what `--fix` can correct is corrected, such as comments above the `filmgrn1` line or scaling points out of order. A table with errors regrain cannot correct is refused. **Static grain pattern** gives every frame of a table entry the same pattern, so it stands still instead of moving. Adding grain to a video that has some replaces it. Every change becomes a job with **Analyze**, **Write** and **Replace** steps: Rabbit extracts the AV1 track, writes the grain with regrain, decodes the result with dav1d, and rebuilds and verifies the MKV the same way as the HDR Metadata tool before it replaces the original. A file with Dolby Vision cannot be changed, because a rebuilt video track loses Dolby Vision's configuration. Remove it with HDR Metadata first.
+
+Measuring takes the original the video was encoded from, with the same frames. Rabbit finds the crop and the downscale between them on its own, the way its encodes cut black bars and scale to 1080p, and takes out the video's own grain first so it does not count as grain the encode lost. **Quick (30 s)** measures a representative half minute and gives the whole video that grain, **Full video** gives every scene its own, and **Scan** reads only part of each 48 frames to go faster. Luma grain measured this way matched the grain measured against the clean source within 1% on 360p and 720p test videos from CRF 20 to 45. Chroma is measured only with **Measure chroma grain too**, because colour detail the encode lost counts as chroma grain: a source without any chroma grain measured 0.9 to 5.4 on the 0 to 255 scale from CRF 25 to 45. A folder cannot measure, since every file needs its own original.
+
+Choose **Every MKV in a folder** to queue the same change for a whole folder, optionally with its subfolders, up to 500 files. Files without grain are skipped when removing it, and files that already have grain when **Leave files that already have film grain as they are** is on.
 
 ## Denoising
 
@@ -248,7 +300,7 @@ track's language tag and the detected writing system, in this order:
 The family name written into the ASS is taken from the resolved face, so
 `style`/`overrides` only carry appearance (size, outline, shadow, margins,
 colours, alignment, bold, and variable-font axes). Because axes are face-specific,
-they belong in the per-key override for that face (a static Latin face has none;
+they belong in the per-key override for that face (a static Latin face has none,
 a variable CJK face can pin `wght`).
 
 You can manage font groups entirely from the dashboard ("Manage font groups..."):

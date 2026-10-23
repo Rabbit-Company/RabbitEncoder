@@ -197,8 +197,41 @@ describe("settings code - film grain of Rabbit's own", () => {
 		expect(decoded.filmGrainSyntheticStrength).toBe(0);
 	});
 
+	it("stores ISO grain as iso= and keeps older strength codes as a strength", () => {
+		const code = encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticMode: "iso", filmGrainSyntheticIso: 400, filmGrainSyntheticSize: "fine" });
+		expect(code).toContain("|fg~iso=400,z=fine");
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.filmGrainSyntheticMode).toBe("iso");
+		expect(decoded.filmGrainSyntheticIso).toBe(400);
+		// A strength left over from before switching to ISO is not stored.
+		expect(
+			encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticMode: "iso", filmGrainSyntheticIso: 400, filmGrainSyntheticStrength: 3 }),
+		).not.toContain("s=3");
+		expect(encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticMode: "iso", filmGrainSyntheticIso: 0 })).not.toContain("|fg~");
+		const older = decodeSettingsCode(encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticStrength: 2 }));
+		expect(older.filmGrainSyntheticMode).toBe("strength");
+		expect(older.filmGrainSyntheticStrength).toBe(2);
+	});
+
 	it("drops size and chroma when synthetic grain is off", () => {
 		const code = encodeSettingsCode({ ...getDefaultJobSettings(), filmGrainSyntheticSize: "fine", filmGrainSyntheticChroma: 2 });
 		expect(code).not.toContain("|fg~");
+	});
+});
+
+describe("settings code - HDR10+", () => {
+	it("is on by default and leaves the code at RE1", () => {
+		expect(encodeSettingsCode(getDefaultJobSettings())).toBe("RE1");
+		expect(decodeSettingsCode("RE1").hdr10Plus).toBe(true);
+	});
+
+	it("writes hp=0 when turned off", () => {
+		const code = encodeSettingsCode({ ...getDefaultJobSettings(), hdr10Plus: false });
+		expect(code).toMatch(/c~[^|]*hp=0/);
+		expect(decodeSettingsCode(code).hdr10Plus).toBe(false);
+	});
+
+	it("is not written when the video is not encoded to AV1", () => {
+		expect(encodeSettingsCode({ ...getDefaultJobSettings(), videoEncode: "off", hdr10Plus: false })).not.toContain("hp=");
 	});
 });

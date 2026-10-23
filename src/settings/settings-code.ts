@@ -25,6 +25,7 @@ import type {
 	FilmGrainSize,
 } from "../core/types";
 import { FILM_GRAIN_SIZES } from "../core/types";
+import { grainIso, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
 import { vsRegistry } from "../video/vs-filters";
 import { avdEngineUsesPreset, isAvdEngine, isAvdSelfTuningEngine } from "../video/avd";
 
@@ -75,6 +76,7 @@ const BASELINE: JobSettings = {
 	cropLimit: 0.1,
 	deband: "off",
 	downscale: false,
+	hdr10Plus: true,
 	skipBoosting: false,
 	noPhaseInv: false,
 	dedupeSubtitles: false,
@@ -318,6 +320,7 @@ export function encodeSettingsCode(s: JobSettings): string {
 	if (s.keepBestAudioChannelsOnly !== BASELINE.keepBestAudioChannelsOnly) core.put("kc", s.keepBestAudioChannelsOnly);
 	if (s.removeCommentaryAudio !== BASELINE.removeCommentaryAudio) core.put("rc", s.removeCommentaryAudio);
 	if (s.videoEncode !== "off" && s.filmGrainTablePath?.trim()) core.put("fg", true);
+	if (s.videoEncode === "av1" && (s.hdr10Plus ?? true) !== BASELINE.hdr10Plus) core.put("hp", !!s.hdr10Plus);
 	if (!core.empty) sections.push(core.toString());
 
 	// denoise
@@ -394,9 +397,10 @@ export function encodeSettingsCode(s: JobSettings): string {
 		if ((s.filmGrainRestore ?? false) !== FILM_GRAIN_BASELINE.filmGrainRestore) fg.put("r", !!s.filmGrainRestore);
 		if ((s.filmGrainJustEnough ?? false) !== FILM_GRAIN_BASELINE.filmGrainJustEnough) fg.put("je", !!s.filmGrainJustEnough);
 		if ((s.filmGrainStatic ?? false) !== FILM_GRAIN_BASELINE.filmGrainStatic) fg.put("sg", !!s.filmGrainStatic);
-		const strength = s.filmGrainSyntheticStrength ?? 0;
-		if (strength > 0) {
-			fg.put("s", strength);
+		// Only the mode in use is stored: iso= for ISO grain, s= for a strength.
+		if (syntheticGrainActive(s)) {
+			if (syntheticGrainMode(s) === "iso") fg.put("iso", grainIso(s.filmGrainSyntheticIso ?? 0));
+			else fg.put("s", s.filmGrainSyntheticStrength ?? 0);
 			if ((s.filmGrainSyntheticSize ?? "medium") !== FILM_GRAIN_BASELINE.filmGrainSyntheticSize) fg.put("z", s.filmGrainSyntheticSize!);
 			if ((s.filmGrainSyntheticChroma ?? 0) !== FILM_GRAIN_BASELINE.filmGrainSyntheticChroma) fg.put("ch", s.filmGrainSyntheticChroma!);
 		}
@@ -659,6 +663,7 @@ function applyCore(out: JobSettings, kv: Record<string, string>): void {
 	if (kv.dd !== undefined) out.dedupeSubtitles = kv.dd === "1";
 	if (kv.kc !== undefined) out.keepBestAudioChannelsOnly = kv.kc === "1";
 	if (kv.rc !== undefined) out.removeCommentaryAudio = kv.rc === "1";
+	if (kv.hp !== undefined) out.hdr10Plus = kv.hp === "1";
 }
 
 function applySubtitleDetect(out: JobSettings, kv: Record<string, string>): void {
@@ -803,7 +808,14 @@ function applyFilmGrain(out: JobSettings, kv: Record<string, string>): void {
 	if (kv.r !== undefined) out.filmGrainRestore = kv.r === "1";
 	if (kv.je !== undefined) out.filmGrainJustEnough = kv.je === "1";
 	if (kv.sg !== undefined) out.filmGrainStatic = kv.sg === "1";
-	if (kv.s !== undefined) out.filmGrainSyntheticStrength = Math.min(64, Math.max(0, numOr(kv.s, 0)));
+	if (kv.s !== undefined) {
+		out.filmGrainSyntheticMode = "strength";
+		out.filmGrainSyntheticStrength = Math.min(64, Math.max(0, numOr(kv.s, 0)));
+	}
+	if (kv.iso !== undefined) {
+		out.filmGrainSyntheticMode = "iso";
+		out.filmGrainSyntheticIso = grainIso(numOr(kv.iso, 0));
+	}
 	if (kv.z && (FILM_GRAIN_SIZES as readonly string[]).includes(kv.z)) out.filmGrainSyntheticSize = kv.z as FilmGrainSize;
 	if (kv.ch !== undefined) out.filmGrainSyntheticChroma = Math.min(64, Math.max(0, numOr(kv.ch, 0)));
 }

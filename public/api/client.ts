@@ -7,6 +7,11 @@ import type {
 	FilmGrainRun,
 	FontAxis,
 	GroupStyleConfig,
+	HdrInspection,
+	GrainInspectRun,
+	GrainPlan,
+	HdrPlan,
+	VersionsReport,
 	Job,
 	JobSettings,
 	PreviewState,
@@ -262,6 +267,117 @@ export async function createRepairJob(plan: RepairPlan): Promise<Job> {
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not create repair job");
+	return data;
+}
+
+export async function fetchVersions(): Promise<VersionsReport> {
+	const response = await authFetch(`${API}/api/versions`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the versions");
+	return data;
+}
+
+export async function fetchHdrInspection(path: string): Promise<HdrInspection> {
+	const response = await authFetch(`${API}/api/hdr/inspect?${new URLSearchParams({ path })}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the video");
+	return data;
+}
+
+/** Stores an HDR10+ JSON file on the server for a job to use. */
+export async function uploadHdrMetadata(file: File): Promise<{ path: string; frames: number }> {
+	const response = await authFetch(`${API}/api/hdr/upload`, { method: "POST", headers: { "Content-Type": "application/json" }, body: file });
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not upload the metadata");
+	return data;
+}
+
+export async function createHdrJob(plan: HdrPlan): Promise<Job> {
+	const response = await authFetch(`${API}/api/hdr/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(plan),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the change");
+	return data;
+}
+
+export async function createHdrBatch(options: {
+	folder: string;
+	recursive: boolean;
+	plan: Partial<HdrPlan>;
+}): Promise<{ jobIds: string[]; skipped: string[] }> {
+	const response = await authFetch(`${API}/api/hdr/batch`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the folder");
+	return data;
+}
+
+/** Starts reading the film grain of a video on the server. */
+export async function startGrainInspection(path: string): Promise<GrainInspectRun> {
+	const response = await authFetch(`${API}/api/grain/inspect`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the video");
+	return data;
+}
+
+export async function fetchGrainInspectRun(id: string): Promise<GrainInspectRun> {
+	const response = await authFetch(`${API}/api/grain/inspect/${encodeURIComponent(id)}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the video");
+	return data;
+}
+
+export async function cancelGrainInspection(id: string): Promise<void> {
+	await authFetch(`${API}/api/grain/inspect/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Save the film grain table of a video through the browser. */
+export async function downloadGrainTable(path: string): Promise<void> {
+	const res = await authFetch(`${API}/api/grain/table?${new URLSearchParams({ path })}`);
+	await saveResponse(res, "film-grain.tbl");
+}
+
+/** Stores a film grain table on the server for a job to use. */
+export async function uploadGrainTable(file: File): Promise<{ path: string; entries: number; fixed: number; warnings: number }> {
+	const response = await authFetch(`${API}/api/grain/upload`, { method: "POST", headers: { "Content-Type": "text/plain" }, body: file });
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not upload the table");
+	return data;
+}
+
+export async function createGrainJob(plan: GrainPlan): Promise<Job> {
+	const response = await authFetch(`${API}/api/grain/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(plan),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the change");
+	return data;
+}
+
+export async function createGrainBatch(options: {
+	folder: string;
+	recursive: boolean;
+	plan: Partial<GrainPlan>;
+}): Promise<{ jobIds: string[]; skipped: string[] }> {
+	const response = await authFetch(`${API}/api/grain/batch`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the folder");
 	return data;
 }
 

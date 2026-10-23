@@ -8,6 +8,7 @@ import { appState } from "../state";
 import { formatDuration } from "./job-render";
 import { openPreviewReferencePicker } from "./repair";
 import { renderLabeledToggle, renderRadioPills } from "./settings-controls";
+import { grainIso, MAX_GRAIN_ISO, MIN_GRAIN_ISO, syntheticGrainMode } from "../../src/core/film-grain-iso";
 
 let pollTimer: number | undefined;
 /** Bumped whenever the section is rebuilt or closed, so late responses are dropped. */
@@ -18,7 +19,16 @@ export function stopFilmGrainSettings(): void {
 	window.clearTimeout(pollTimer);
 }
 
-function renderStrengthGrid(container: HTMLElement, fields: { label: string; value: number; onChange: (value: number) => void }[]): void {
+interface StrengthField {
+	label: string;
+	value: number;
+	onChange: (value: number) => void;
+	min?: number;
+	max?: number;
+	step?: number;
+}
+
+function renderStrengthGrid(container: HTMLElement, fields: StrengthField[]): void {
 	container.innerHTML = "";
 	const grid = document.createElement("div");
 	grid.className = "auto-threshold-grid";
@@ -29,13 +39,15 @@ function renderStrengthGrid(container: HTMLElement, fields: { label: string; val
 		span.textContent = field.label;
 		const input = document.createElement("input");
 		input.type = "number";
-		input.min = "0";
-		input.max = "64";
-		input.step = "0.1";
+		const min = field.min ?? 0;
+		const max = field.max ?? 64;
+		input.min = String(min);
+		input.max = String(max);
+		input.step = String(field.step ?? 0.1);
 		input.value = String(field.value);
 		input.onchange = () => {
 			const n = parseFloat(input.value);
-			const v = Number.isFinite(n) ? Math.min(64, Math.max(0, n)) : 0;
+			const v = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : 0;
 			input.value = String(v);
 			field.onChange(v);
 		};
@@ -78,10 +90,41 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		(v) => (settings.filmGrainJustEnough = v),
 	);
 	renderLabeledToggle(byId("advanced-film-grain-static"), settings.filmGrainStatic === true, "Static grain pattern", (v) => (settings.filmGrainStatic = v));
-	renderStrengthGrid(byId("advanced-film-grain-synthetic-strength"), [
-		{ label: "luma", value: settings.filmGrainSyntheticStrength ?? 0, onChange: (v) => (settings.filmGrainSyntheticStrength = v) },
-		{ label: "chroma", value: settings.filmGrainSyntheticChroma ?? 0, onChange: (v) => (settings.filmGrainSyntheticChroma = v) },
-	]);
+	const renderSyntheticStrength = (): void => {
+		const iso = syntheticGrainMode(settings) === "iso";
+		const chroma: StrengthField = {
+			label: "chroma",
+			value: settings.filmGrainSyntheticChroma ?? 0,
+			onChange: (v) => (settings.filmGrainSyntheticChroma = v),
+		};
+		renderStrengthGrid(byId("advanced-film-grain-synthetic-strength"), [
+			iso
+				? {
+						label: "ISO",
+						value: settings.filmGrainSyntheticIso ?? 0,
+						min: 0,
+						max: MAX_GRAIN_ISO,
+						step: 50,
+						onChange: (v) => (settings.filmGrainSyntheticIso = grainIso(v)),
+					}
+				: { label: "luma", value: settings.filmGrainSyntheticStrength ?? 0, onChange: (v) => (settings.filmGrainSyntheticStrength = v) },
+			chroma,
+		]);
+		byId("advanced-film-grain-synthetic-hint").textContent = iso
+			? `Camera sensor noise at this ISO, for the frame size of the encode, as aomenc and SVT-AV1 --photon-noise use it. ISO 200 to 600 hides banding at 1080p, 4K needs about a quarter of the ISO for the same grain. It is weaker in shadows, as a sensor's is. 0 turns synthetic grain off, values from ${MIN_GRAIN_ISO} add grain. Chroma is a deviation on the 0 to 255 scale.`
+			: "Deviation on the 0 to 255 scale. Luma 0 turns synthetic grain off.";
+	};
+	renderRadioPills(
+		byId("advanced-film-grain-synthetic-mode"),
+		["iso", "strength"] as const,
+		syntheticGrainMode(settings),
+		(v) => {
+			settings.filmGrainSyntheticMode = v;
+			renderSyntheticStrength();
+		},
+		(v) => (v === "iso" ? "ISO" : "Deviation"),
+	);
+	renderSyntheticStrength();
 	renderRadioPills(
 		byId("advanced-film-grain-synthetic-size"),
 		FILM_GRAIN_SIZES,

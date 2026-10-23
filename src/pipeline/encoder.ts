@@ -58,9 +58,25 @@ import { seriesNotesDir } from "../translate/series-notes";
 import { finalizeOutput } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
-import { ensureFilmGrainTable, generateSyntheticFilmGrainTable, measureFilmGrain, needsFilmGrainTable } from "../video/film-grain-generator";
+import { grainIso, isoResolution, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
+import {
+	ensureFilmGrainTable,
+	generateSyntheticFilmGrainTable,
+	measureFilmGrain,
+	needsFilmGrainTable,
+	regrainErrorText,
+	runRegrain,
+} from "../video/film-grain-generator";
 import type { FilmGrainCrop } from "../video/film-grain-crop";
-import { formatFilmGrainProgress, parseRegrainEvent } from "../video/film-grain-progress";
+import { formatFilmGrainProgress } from "../video/film-grain-progress";
+import {
+	applyArgs as hdr10PlusApplyArgs,
+	describeMeasurement,
+	measureHdr10Plus,
+	retoneErrorText,
+	runRetone,
+	type Hdr10PlusMeasurement,
+} from "../video/hdr10plus";
 
 export { CancelledError } from "../core/process";
 
@@ -326,9 +342,9 @@ export async function encodeJob(
 	const ownFilmGrain =
 		job.settings.videoEncode === "av1" && job.settings.subtitleProcessing !== "translate" && !generateFilmGrain && !job.settings.filmGrainTablePath?.trim();
 	const restoreFilmGrain = ownFilmGrain && job.settings.filmGrainRestore === true && job.settings.denoise !== "off";
-	const syntheticGrainStrength = ownFilmGrain ? (job.settings.filmGrainSyntheticStrength ?? 0) : 0;
+	const syntheticGrain = ownFilmGrain && syntheticGrainActive(job.settings);
 	if (
-		(generateFilmGrain || job.settings.filmGrainTablePath?.trim() || restoreFilmGrain || syntheticGrainStrength > 0) &&
+		(generateFilmGrain || job.settings.filmGrainTablePath?.trim() || restoreFilmGrain || syntheticGrain) &&
 		job.settings.videoEncode !== "off" &&
 		/--(?:photon-noise|film-grain|fgs-table)(?:\s|=|$)/.test(job.settings.customEncoderParams || "")
 	)
@@ -342,7 +358,13 @@ export async function encodeJob(
 	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise.
 	const filmGrainStep: JobStep | null = generateFilmGrain || restoreFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
 	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : S_PREPARE;
-	const shownSteps = (): JobStep[] => (filmGrainStep ? [...steps.slice(0, filmGrainStepAt), filmGrainStep, ...steps.slice(filmGrainStepAt)] : [...steps]);
+	// Shown once the probe finds a PQ source, right after Prepare and the Film Grain step that follows it.
+	let hdr10PlusStep: JobStep | null = null;
+	const shownSteps = (): JobStep[] => {
+		const shown = filmGrainStep ? [...steps.slice(0, filmGrainStepAt), filmGrainStep, ...steps.slice(filmGrainStepAt)] : [...steps];
+		if (hdr10PlusStep) shown.splice(shown.indexOf(restoreFilmGrain && filmGrainStep ? filmGrainStep : steps[S_PREPARE]!) + 1, 0, hdr10PlusStep);
+		return shown;
+	};
 
 	function setStep(target: number | JobStep, partial: Partial<JobStep>) {
 		const step = typeof target === "number" ? steps[target]! : target;
@@ -394,6 +416,10 @@ export async function encodeJob(
 			}
 		}
 
+		// HDR10+ needs PQ, and only an AV1 encode can carry it.
+		if (job.settings.hdr10Plus !== false && job.settings.videoEncode === "av1" && probe.isHDR) {
+			hdr10PlusStep = { label: "HDR10+", status: "pending", progress: 0 };
+		}
 		setStep(S_PROBE, { status: "done", progress: 100 });
 
 		// Film grain table. regrain uses every core, so it runs here and not beside another job.
@@ -413,12 +439,21 @@ export async function encodeJob(
 			// A table without entries means the denoiser removed no measurable grain, so there is nothing to add.
 			if (writeEncoderFilmGrainTable(filmGrainTablePath, join(tempDir, "film-grain.tbl"), opts.clipStartSeconds) === 0) filmGrainTablePath = "";
 		}
-		if (syntheticGrainStrength > 0) {
+		if (syntheticGrain) {
 			checkCancelled();
 			const syntheticTable = join(tempDir, "film-grain-synthetic.tbl");
+			const shape = { size: job.settings.filmGrainSyntheticSize ?? "medium", chroma: job.settings.filmGrainSyntheticChroma ?? 0 };
+			// ISO noise is for the frame the encode will have: Prepare scales video taller than 1080p to 1080p.
+			const scale = job.settings.downscale && probe.height > 1080 ? 1080 / probe.height : 1;
 			const segments = await generateSyntheticFilmGrainTable(
 				syntheticTable,
-				{ strength: syntheticGrainStrength, size: job.settings.filmGrainSyntheticSize ?? "medium", chroma: job.settings.filmGrainSyntheticChroma ?? 0 },
+				syntheticGrainMode(job.settings) === "iso"
+					? {
+							...shape,
+							iso: grainIso(job.settings.filmGrainSyntheticIso ?? 0),
+							resolution: isoResolution(Math.round(probe.width * scale), Math.round(probe.height * scale)),
+						}
+					: { ...shape, strength: job.settings.filmGrainSyntheticStrength ?? 0 },
 				signal,
 			);
 			if (segments > 0 && writeEncoderFilmGrainTable(syntheticTable, join(tempDir, "film-grain.tbl")) > 0) filmGrainTablePath = syntheticTable;
@@ -853,6 +888,33 @@ export async function encodeJob(
 					progress: 100,
 					detail: applied ? `${segments} ${segments === 1 ? "segment" : "segments"}` : "The denoiser removed no measurable grain",
 				});
+			}
+		}
+
+		// HDR10+ metadata is measured on the video as it will be encoded, after crop, downscale and denoise.
+		// retone uses every core, so it runs here and not beside another job. A Dolby Vision source gives
+		// the scenes its shots. A preview clip has none of the source's frame numbers, so its scenes are measured.
+		let hdr10Plus: { path: string; measurement: Hdr10PlusMeasurement } | null = null;
+		if (hdr10PlusStep) {
+			checkCancelled();
+			setStep(hdr10PlusStep, { status: "active", progress: 0, detail: "Measuring HDR10+ metadata" });
+			const metadataPath = join(tempDir, "hdr10plus.json");
+			try {
+				const measurement = await measureHdr10Plus({
+					videoPath: preparedVideo,
+					dolbyVisionPath: probe.hasDolbyVision && !previewMode ? job.inputPath : undefined,
+					metadataPath,
+					signal,
+					onProgress: (progress) => setStep(hdr10PlusStep!, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
+				});
+				hdr10Plus = { path: metadataPath, measurement };
+				setStep(hdr10PlusStep, { status: "done", progress: 100, detail: describeMeasurement(measurement) });
+			} catch (error) {
+				if (error instanceof CancelledError) throw error;
+				// The encode is still good without HDR10+, so the job goes on as HDR10.
+				const reason = error instanceof Error ? error.message : String(error);
+				Logger.warn(`[hdr10+] Measuring failed, encoding without HDR10+: ${reason}`);
+				setStep(hdr10PlusStep, { status: "done", progress: 100, detail: `Skipped: ${reason}` });
 			}
 		}
 
@@ -1325,6 +1387,31 @@ export async function encodeJob(
 					throw new Error("Encoder did not produce output .ivf file");
 				}
 
+				// HDR10+ goes in before the grain, so regrain's verify decodes the stream with both.
+				// Without a grain table retone decodes it itself.
+				if (hdr10Plus) {
+					checkCancelled();
+					const encodeDetail = steps[S_FINAL]!.detail;
+					setStep(S_FINAL, { detail: "Writing HDR10+ metadata" });
+					const hdrIvf = join(tempDir, "source_video_hdr10plus.ivf");
+					rmSync(hdrIvf, { force: true });
+					const hdrRes = await runRetone(hdr10PlusApplyArgs(ivfFile, hdr10Plus.path, hdrIvf, !filmGrainTablePath), stageSignal, (progress) =>
+						setStep(S_FINAL, { detail: `Writing HDR10+ metadata | ${formatFilmGrainProgress(progress)}` }),
+					);
+					checkCancelled();
+					if (hdrRes.code === 0 && existsSync(hdrIvf) && statSync(hdrIvf).size > 0) {
+						renameSync(hdrIvf, ivfFile);
+					} else {
+						// An encode that took hours is kept, as HDR10 without the dynamic metadata.
+						rmSync(hdrIvf, { force: true });
+						const reason = retoneErrorText(hdrRes);
+						Logger.warn(`[hdr10+] Writing HDR10+ metadata failed, keeping the encode without it: ${reason}`);
+						if (hdr10PlusStep) setStep(hdr10PlusStep, { detail: `Not written: ${reason}` });
+						hdr10Plus = null;
+					}
+					setStep(S_FINAL, { detail: encodeDetail });
+				}
+
 				// SVT-AV1 reads only the first entry of a table, so the grain is written into the
 				// finished stream instead. That keeps every scene's own grain.
 				if (filmGrainTablePath) {
@@ -1335,16 +1422,12 @@ export async function encodeJob(
 					rmSync(grainIvf, { force: true });
 					const applyArgs = ["regrain", "apply", ivfFile, "-o", grainIvf, "-t", join(tempDir, "film-grain.tbl"), "-y", "--verify", "--progress", "json"];
 					if (job.settings.filmGrainStatic) applyArgs.push("--static-grain");
-					const grainRes = await run(applyArgs, { signal: stageSignal });
+					const grainRes = await runRegrain(applyArgs, stageSignal, (progress) =>
+						setStep(S_FINAL, { detail: `Applying film grain | ${formatFilmGrainProgress(progress)}` }),
+					);
 					checkCancelled();
-					if (grainRes.code !== 0 || !existsSync(grainIvf) || statSync(grainIvf).size === 0) {
-						const failure = grainRes.stdout
-							.split("\n")
-							.map(parseRegrainEvent)
-							.find((event) => event?.event === "error");
-						const reason = failure?.event === "error" ? failure.message : (grainRes.stderr || grainRes.stdout).trim().slice(-500) || `exit ${grainRes.code}`;
-						throw new Error(`Adding film grain failed: ${reason}`);
-					}
+					if (grainRes.code !== 0 || !existsSync(grainIvf) || statSync(grainIvf).size === 0)
+						throw new Error(`Adding film grain failed: ${regrainErrorText(grainRes.error, grainRes.stderr, grainRes.code)}`);
 					renameSync(grainIvf, ivfFile);
 					setStep(S_FINAL, { detail: encodeDetail });
 				}
@@ -2011,6 +2094,16 @@ export async function encodeJob(
 					]
 				: []),
 
+			// Only when HDR10+ metadata was written into the video.
+			...(hdr10Plus
+				? [
+						"<Simple>",
+						"<Name>RETONE</Name>",
+						`<Simple><Name>VERSION</Name><String>${escapeXml(config.retone.version || "unknown")}</String></Simple>`,
+						"</Simple>",
+					]
+				: []),
+
 			...(effectiveSourceTag ? [`<Simple><Name>SOURCE</Name><String>${escapeXml(effectiveSourceTag)}</String></Simple>`] : []),
 			"</Tag></Tags>",
 		].join("\n");
@@ -2229,7 +2322,7 @@ export async function encodeJob(
 		}
 
 		setStep(S_MUX, { progress: 75, detail: "Applying color metadata" });
-		await applyColorMetadata(finalOutput, probe, signal);
+		await applyColorMetadata(finalOutput, probe, signal, hdr10Plus?.measurement);
 
 		if (previewMode && sink) {
 			const encodedClip = join(sink.dir, "encoded.mkv");

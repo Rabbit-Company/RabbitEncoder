@@ -100,7 +100,15 @@ export function locateFilmGrainCrop(originals: GrayFrame[], denoised: GrayFrame[
 	return { w, h, x: bestX, y: bestY };
 }
 
-async function grayFrame(inputPath: string, outputPath: string, seconds: number, width: number, height: number, signal?: AbortSignal): Promise<GrayFrame> {
+async function grayFrame(
+	inputPath: string,
+	outputPath: string,
+	seconds: number,
+	width: number,
+	height: number,
+	signal?: AbortSignal,
+	filter?: string,
+): Promise<GrayFrame> {
 	const result = await run(
 		[
 			"ffmpeg",
@@ -117,7 +125,7 @@ async function grayFrame(inputPath: string, outputPath: string, seconds: number,
 			"-frames:v",
 			"1",
 			"-vf",
-			"format=gray",
+			filter ? `${filter},format=gray` : "format=gray",
 			"-f",
 			"rawvideo",
 			"-an",
@@ -142,6 +150,8 @@ export async function detectFilmGrainCrop(
 	duration: number,
 	workDir: string,
 	signal?: AbortSignal,
+	/** Applied to the original first, such as a downscale to the size `original` gives. */
+	originalFilter?: string,
 ): Promise<FilmGrainCrop> {
 	const originals: GrayFrame[] = [];
 	const crops: GrayFrame[] = [];
@@ -149,7 +159,7 @@ export async function detectFilmGrainCrop(
 		if (signal?.aborted) throw new CancelledError();
 		const seconds = duration * position;
 		const [a, b] = await Promise.all([
-			grayFrame(originalPath, join(workDir, `crop-original-${index}.raw`), seconds, original.width, original.height, signal),
+			grayFrame(originalPath, join(workDir, `crop-original-${index}.raw`), seconds, original.width, original.height, signal, originalFilter),
 			grayFrame(denoisedPath, join(workDir, `crop-denoised-${index}.raw`), seconds, denoised.width, denoised.height, signal),
 		]);
 		originals.push(a);
@@ -158,4 +168,50 @@ export async function detectFilmGrainCrop(
 	const crop = locateFilmGrainCrop(originals, crops);
 	if (!crop) throw new Error("Could not locate the denoised frame inside the original because the sampled frames are too flat");
 	return crop;
+}
+
+/** How regrain diff turns the original into the picture of a video made from it: a crop in the original's pixels, then a downscale. */
+export interface FilmGrainGeometry {
+	crop?: FilmGrainCrop;
+	scale?: { w: number; h: number };
+}
+
+/**
+ * Finds how a video was cut and scaled from its original, as Rabbit and most pipelines do: crop black bars, then
+ * downscale. The scale is taken from the side that was not cropped, and the crop is found in the scaled original.
+ */
+export async function detectFilmGrainGeometry(
+	originalPath: string,
+	videoPath: string,
+	original: { width: number; height: number },
+	video: { width: number; height: number },
+	duration: number,
+	workDir: string,
+	signal?: AbortSignal,
+): Promise<FilmGrainGeometry> {
+	const { width: W, height: H } = original;
+	const { width: w, height: h } = video;
+	if (w === W && h === H) return {};
+	if (w > W || h > H) throw new Error(`The video is ${w}x${h} and larger than the ${W}x${H} original, so it cannot be cut from it`);
+	const factor = Math.max(w / W, h / H);
+	// Within a few pixels of the original's size, the video is only cropped.
+	if (factor > 0.995) return { crop: await detectFilmGrainCrop(originalPath, videoPath, original, video, duration, workDir, signal) };
+	const scaled = { width: Math.max(w, Math.round(W * factor)), height: Math.max(h, Math.round(H * factor)) };
+	if (scaled.width === w && scaled.height === h) return { scale: { w, h } };
+	const at = await detectFilmGrainCrop(
+		originalPath,
+		videoPath,
+		scaled,
+		video,
+		duration,
+		workDir,
+		signal,
+		`scale=${scaled.width}:${scaled.height}:flags=lanczos`,
+	);
+	const cropW = Math.min(W, Math.round(w / factor));
+	const cropH = Math.min(H, Math.round(h / factor));
+	return {
+		crop: { w: cropW, h: cropH, x: Math.min(W - cropW, Math.round(at.x / factor)), y: Math.min(H - cropH, Math.round(at.y / factor)) },
+		scale: { w, h },
+	};
 }

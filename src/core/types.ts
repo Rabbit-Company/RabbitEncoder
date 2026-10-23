@@ -21,6 +21,9 @@ export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
 /** How large synthetic grain is: single pixels, film grain, or clumps a few pixels wide. */
 export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
 export type FilmGrainSize = (typeof FILM_GRAIN_SIZES)[number];
+/** How the strength of synthetic grain is given: as a deviation, or as the sensor noise of a camera at an ISO. */
+export const FILM_GRAIN_SYNTHETIC_MODES = ["strength", "iso"] as const;
+export type FilmGrainSyntheticMode = (typeof FILM_GRAIN_SYNTHETIC_MODES)[number];
 export type AudioEncodeMode = "opus" | "copy";
 export type SubtitleProcessingMode = "full" | "copy" | "translate";
 
@@ -210,6 +213,10 @@ export interface JobSettings {
 	filmGrainSyntheticSize?: FilmGrainSize;
 	/** Synthetic chroma grain deviation on a 0 to 255 scale. */
 	filmGrainSyntheticChroma?: number;
+	/** Missing on settings saved before ISO grain, which gave a strength. */
+	filmGrainSyntheticMode?: FilmGrainSyntheticMode;
+	/** Camera sensor noise at this ISO, for the video's frame size. 0 turns it off. */
+	filmGrainSyntheticIso?: number;
 	videoEncode: VideoEncodeMode;
 	audioEncode: AudioEncodeMode;
 	subtitleProcessing: SubtitleProcessingMode;
@@ -240,6 +247,8 @@ export interface JobSettings {
 	gpuDevice: string;
 	deband: DebandLevel;
 	downscale: boolean;
+	/** Measure HDR10+ metadata and write it into AV1 encodes of PQ sources, with the scenes of a Dolby Vision source. */
+	hdr10Plus?: boolean;
 	skipBoosting: boolean;
 	noPhaseInv: boolean;
 	dedupeSubtitles: boolean;
@@ -446,7 +455,143 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
-export type JobKind = "encode" | "repair";
+export type JobKind = "encode" | "repair" | "hdr" | "grain";
+
+/** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
+ * the scenes of a Dolby Vision original, or take it from a file. */
+export type HdrPlusAction = "keep" | "remove" | "measure" | "dolby-vision" | "file";
+export type HdrStaticAction = "keep" | "remove" | "set";
+export type HdrMasteringPrimaries = "p3" | "bt2020";
+
+/** Changes to the HDR metadata of an AV1 MKV, made without re-encoding and written over the file. */
+export interface HdrPlan {
+	targetPath: string;
+	hdr10Plus: HdrPlusAction;
+	/** "dolby-vision": the Dolby Vision original. "file": an AV1 video that carries HDR10+ metadata. */
+	sourcePath?: string;
+	/** "file": an uploaded HDR10+ JSON file. */
+	metadataPath?: string;
+	removeDolbyVision: boolean;
+	staticMetadata: HdrStaticAction;
+	masteringPrimaries?: HdrMasteringPrimaries;
+	masteringMaxNits?: number;
+	masteringMinNits?: number;
+	/** MaxCLL and MaxFALL from the HDR10+ metadata the file ends up with. */
+	lightFromHdr10Plus?: boolean;
+	maxCll?: number;
+	maxFall?: number;
+	/** Tag the video as BT.2020 PQ. Only allowed when it has no transfer tag. */
+	fixColor: boolean;
+	/** Part of a folder batch: files the plan does not fit are skipped instead of failing. */
+	batch?: boolean;
+	/** Folder batches: leave files that already carry HDR10+ metadata unchanged. */
+	skipExisting?: boolean;
+}
+
+export interface HdrFinding {
+	severity: "error" | "warning";
+	code: string;
+	message: string;
+}
+
+/** What retone found in a video. Only AV1 in MKV with one video track can be changed. */
+export interface HdrInspection {
+	path: string;
+	codec: string;
+	editable: boolean;
+	/** Why the file cannot be changed. */
+	reason?: string;
+	formats: string[];
+	width: number;
+	height: number;
+	frames: number | null;
+	frameRate: number | null;
+	colorPrimaries: number | null;
+	transferCharacteristics: number | null;
+	matrixCoefficients: number | null;
+	colorDescription: string;
+	isPq: boolean;
+	/** No transfer tag, so the video may be tagged as PQ. */
+	untagged: boolean;
+	masteringDisplay: { primaries: string; maxNits: number; minNits: number } | null;
+	contentLight: { maxCll: number; maxFall: number } | null;
+	hdr10PlusFrames: number;
+	hdr10PlusScenes: number | null;
+	hdr10PlusMaxCll: number | null;
+	hdr10PlusMaxFall: number | null;
+	dolbyVision: boolean;
+	findings: HdrFinding[];
+}
+
+/** What a film grain job writes: no grain, grain of a chosen strength, an uploaded table, or the grain the encode lost compared with its original. */
+export type GrainAction = "remove" | "synthetic" | "table" | "measure";
+
+/** A change to the film grain synthesis of an AV1 MKV, made without re-encoding and written over the file. */
+export interface GrainPlan {
+	targetPath: string;
+	action: GrainAction;
+	/** "synthetic": deviation on the 0 to 255 scale, or the sensor noise at `iso`. */
+	strength?: number;
+	iso?: number;
+	size?: FilmGrainSize;
+	chroma?: number;
+	/** "table": an uploaded film grain table. */
+	tablePath?: string;
+	/** "measure": the original with grain that the video was encoded from. */
+	sourcePath?: string;
+	/** "measure": put back only enough of the measured grain to hide banding. */
+	justEnough?: boolean;
+	/** "measure": also measure chroma grain. Off by default, since colour detail the encode lost counts as chroma grain. */
+	measureChroma?: boolean;
+	sampling?: FilmGrainSampling;
+	range?: FilmGrainRange;
+	/** Keep each table entry's seed on every frame, so the grain pattern stands still. */
+	staticGrain?: boolean;
+	/** Part of a folder batch: files the plan does not fit are skipped instead of failing. */
+	batch?: boolean;
+	/** Folder batches: leave files that already have film grain unchanged. */
+	skipExisting?: boolean;
+}
+
+/** How far a film grain inspection is. `percent` is null while regrain reads the video, which it cannot measure. */
+export interface GrainInspectProgress {
+	stage: "video" | "table" | "measure";
+	percent: number | null;
+	detail: string;
+}
+
+/** A film grain inspection running on the server, which the Film Grain tool polls. */
+export interface GrainInspectRun {
+	id: string;
+	path: string;
+	status: "running" | "done" | "error" | "cancelled";
+	startedAt: number;
+	progress: GrainInspectProgress;
+	result?: GrainInspection;
+	error?: string;
+}
+
+/** What regrain found in a video. Only AV1 in MKV with one video track can be changed. */
+export interface GrainInspection {
+	path: string;
+	codec: string;
+	editable: boolean;
+	/** Why the file cannot be changed. */
+	reason?: string;
+	width: number;
+	height: number;
+	frames: number | null;
+	frameRate: number | null;
+	/** Table entries, one for every run of frames with the same grain. 0 means no grain. */
+	entries: number;
+	/** Average and strongest luma grain deviation on the 0 to 255 scale, null without grain. */
+	luma: number | null;
+	lumaMax: number | null;
+	/** Average chroma grain deviation of Cb and Cr. */
+	chroma: number | null;
+	findings: HdrFinding[];
+}
+
 export type RepairTrackSource = "target" | "source";
 export type RepairTrackMode = "copy" | "rabbit";
 export type RepairCompression = "preserve" | "none" | "zlib" | "auto";
@@ -599,6 +744,8 @@ export interface Job {
 	encodedFileSize?: string;
 	replaceSource: boolean;
 	repairPlan?: RepairPlan;
+	hdrPlan?: HdrPlan;
+	grainPlan?: GrainPlan;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 
@@ -620,6 +767,7 @@ export interface AppConfig {
 	systemFontDirs: string[];
 	languageDetector: LanguageDetector;
 	regrain: { version: string | null };
+	retone: { version: string | null };
 }
 
 export interface SubtitlePreviewTrack {

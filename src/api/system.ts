@@ -4,12 +4,15 @@ import { getSystemStats } from "../core/system";
 import { listOpenClDevices } from "../video/opencl";
 import { listVulkanDevices } from "../video/vulkan";
 import { listAvdDevices } from "../video/avd";
+import { getVersions } from "../core/versions";
 
 export function registerSystemRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/system", async (c) => {
 		const stats = await getSystemStats(config.tempDir);
 		return c.json(stats);
 	});
+
+	app.get("/api/versions", async (c) => c.json(await getVersions()));
 
 	app.get("/api/opencl-devices", async (c) => {
 		const devices = await listOpenClDevices();
