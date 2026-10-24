@@ -8,6 +8,7 @@ BIN_DIR="/opt/binaries"
 TARGET_ESSENTIAL="/usr/local/bin/SVT-AV1-Essential"
 TARGET_HDR="/usr/local/bin/SVT-AV1-HDR"
 TARGET_5FISH="/usr/local/bin/SVT-AV1-5FISH"
+TARGET_TRITIUM="/usr/local/bin/SVT-AV1-Tritium"
 TARGET_FFMPEG="/usr/local/bin/ffmpeg"
 TARGET_FFPROBE="/usr/local/bin/ffprobe"
 
@@ -91,6 +92,11 @@ if [ -x "$ARCH_DIR/SVT-AV1-5FISH" ]; then
 	ln -sf "$ARCH_DIR/SVT-AV1-5FISH" "$TARGET_5FISH"
 fi
 
+# Expose SVT-AV1-Tritium encoder
+if [ -x "$ARCH_DIR/SVT-AV1-Tritium" ]; then
+	ln -sf "$ARCH_DIR/SVT-AV1-Tritium" "$TARGET_TRITIUM"
+fi
+
 if [ -x /opt/vs-venv/bin/vapoursynth ]; then
   export VSSCRIPT_PATH="$("/opt/vs-venv/bin/vapoursynth" get-vsscript)"
 fi
@@ -121,6 +127,7 @@ echo "[entrypoint] Using FFprobe: $("$TARGET_FFPROBE" -hide_banner -version | he
 echo "[entrypoint] Using SVT-AV1-Essential: $("$TARGET_ESSENTIAL" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-HDR: $("$TARGET_HDR" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using SVT-AV1-5FISH: $("$TARGET_5FISH" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+echo "[entrypoint] Using SVT-AV1-Tritium: $("$TARGET_TRITIUM" --version | head -n1 | sed -E 's/.* v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
 echo "[entrypoint] Using av-denoise: $(av-denoise --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
 echo "[entrypoint] Using regrain: $(regrain --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"
 echo "[entrypoint] Using retone: $(retone --version | head -n1 | sed -E 's/^[^ ]+ ([^ ]+).*/\1/')"

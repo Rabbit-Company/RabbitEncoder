@@ -10,6 +10,7 @@ describe("tool versions", () => {
 		expect(parse("FFprobe", "ffprobe version 8.1.3 Copyright (c) 2007-2026 the FFmpeg developers")).toBe("8.1.3");
 		expect(parse("SVT-AV1-Essential", "SVT-AV1-Essential v3.1.2-Essential (release)")).toBe("3.1.2-Essential");
 		expect(parse("SVT-AV1-HDR", "SVT-AV1-HDR v3.1.0 (release)")).toBe("3.1.0");
+		expect(parse("SVT-AV1-Tritium", "SVT-AV1-Tritium v4.2.0-6c9c898 (release)")).toBe("4.2.0-6c9c898");
 		expect(parse("av-denoise", "av-denoise 0.5.0\n")).toBe("0.5.0");
 		expect(parse("VapourSynth", "VapourSynth Video Processing Library\nCopyright (c) 2012-2025 Fredrik Mellbin\nCore R72\nAPI R4.1")).toBe("R72");
 		expect(parse("regrain", "regrain 0.2.3 (x86_64-unknown-linux-musl)")).toBe("0.2.3");
@@ -21,7 +22,7 @@ describe("tool versions", () => {
 
 	test("cover av-denoise and every tool the entrypoint names", () => {
 		const names = TOOLS.map((tool) => tool.name);
-		for (const name of ["FFmpeg", "FFprobe", "SVT-AV1-Essential", "SVT-AV1-HDR", "SVT-AV1-5FISH", "av-denoise", "regrain", "retone"])
+		for (const name of ["FFmpeg", "FFprobe", "SVT-AV1-Essential", "SVT-AV1-HDR", "SVT-AV1-5FISH", "SVT-AV1-Tritium", "av-denoise", "regrain", "retone"])
 			expect(names).toContain(name);
 	});
 

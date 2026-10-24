@@ -999,7 +999,10 @@ export async function encodeJob(
 				if (enc.usesAutoBoost) {
 					const colorParams = svtColorParamsFromProbe(probe);
 					const custom = job.settings.customEncoderParams?.trim() ?? "";
-					const finalParams = `${colorParams}${custom ? ` ${custom}` : ""}`;
+					// ABE takes the base CRF from --crf in the fast params and the preset from --preset in the final params
+					const manual = job.settings.manualQuality;
+					const fastParams = manual ? `${colorParams} --crf ${job.settings.manualCrf}` : colorParams;
+					const finalParams = `${fastParams}${manual ? ` --preset ${job.settings.manualPreset}` : ""}${custom ? ` ${custom}` : ""}`;
 
 					const abeArgs = [
 						"python3",
@@ -1014,7 +1017,7 @@ export async function encodeJob(
 						"--final-speed",
 						job.settings.finalSpeed,
 						"--fast-params",
-						colorParams,
+						fastParams,
 						"--final-params",
 						finalParams,
 						"--json-stream",
@@ -1213,7 +1216,8 @@ export async function encodeJob(
 					const customParams = (job.settings.customEncoderParams || "").trim();
 					const customList = customParams.length > 0 ? customParams.split(/\s+/) : [];
 
-					const y4mFifo = join(tempDir, "direct_y4m.fifo");
+					// Tritium sends any input without a .y4m/.yuv extension to FFMS2
+					const y4mFifo = join(tempDir, "direct_fifo.y4m");
 					try {
 						unlinkSync(y4mFifo);
 					} catch {}

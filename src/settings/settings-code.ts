@@ -1,4 +1,4 @@
-import { isValidEncoder } from "../core/encoders";
+import { getEncoder, isValidEncoder } from "../core/encoders";
 import type {
 	JobSettings,
 	EncoderQuality,
@@ -39,6 +39,7 @@ export const SETTINGS_CODE_PREFIX = `RE${SETTINGS_CODE_FORMAT}`;
  */
 const BASELINE: JobSettings = {
 	encoder: "svt-av1-essential",
+	manualQuality: false,
 	manualCrf: 24,
 	manualPreset: 4,
 	customEncoderParams: "",
@@ -303,18 +304,22 @@ export function encodeSettingsCode(s: JobSettings): string {
 	// core
 	const core = new Section("c");
 	if (s.encoder !== BASELINE.encoder) core.put("en", s.encoder);
-	if (s.manualCrf !== BASELINE.manualCrf) core.put("cr", s.manualCrf);
-	if (s.manualPreset !== BASELINE.manualPreset) core.put("pr", s.manualPreset);
+	// Only the rate control the encoder actually uses goes into the code
+	const autoBoost = getEncoder(s.encoder).usesAutoBoost;
+	const manual = !autoBoost || s.manualQuality;
+	if (autoBoost && s.manualQuality !== BASELINE.manualQuality) core.put("mq", s.manualQuality);
+	if (manual && s.manualCrf !== BASELINE.manualCrf) core.put("cr", s.manualCrf);
+	if (manual && s.manualPreset !== BASELINE.manualPreset) core.put("pr", s.manualPreset);
 	if (s.customEncoderParams !== BASELINE.customEncoderParams) core.put("cp", esc(s.customEncoderParams));
-	if (s.quality !== BASELINE.quality) core.put("q", QUALITY_TO_CODE[s.quality] ?? QUALITY_TO_CODE.medium);
-	if (s.finalSpeed !== BASELINE.finalSpeed) core.put("sp", SPEED_TO_CODE[s.finalSpeed] ?? SPEED_TO_CODE.slow);
+	if (!manual && s.quality !== BASELINE.quality) core.put("q", QUALITY_TO_CODE[s.quality] ?? QUALITY_TO_CODE.medium);
+	if (!manual && s.finalSpeed !== BASELINE.finalSpeed) core.put("sp", SPEED_TO_CODE[s.finalSpeed] ?? SPEED_TO_CODE.slow);
 	if (s.videoEncode !== BASELINE.videoEncode) core.put("v", s.videoEncode);
 	if (s.audioEncode !== BASELINE.audioEncode) core.put("a", s.audioEncode);
 	if (s.subtitleProcessing !== BASELINE.subtitleProcessing) core.put("su", s.subtitleProcessing);
 	if (s.crop !== BASELINE.crop) core.put("crp", CROP_TO_CODE[s.crop] ?? CROP_TO_CODE.off);
 	if (s.cropLimit !== BASELINE.cropLimit) core.put("cl", s.cropLimit);
 	if (s.downscale !== BASELINE.downscale) core.put("ds", s.downscale);
-	if (s.skipBoosting !== BASELINE.skipBoosting) core.put("sb", s.skipBoosting);
+	if (autoBoost && s.skipBoosting !== BASELINE.skipBoosting) core.put("sb", s.skipBoosting);
 	if (s.noPhaseInv !== BASELINE.noPhaseInv) core.put("np", s.noPhaseInv);
 	if (s.dedupeSubtitles !== BASELINE.dedupeSubtitles) core.put("dd", s.dedupeSubtitles);
 	if (s.keepBestAudioChannelsOnly !== BASELINE.keepBestAudioChannelsOnly) core.put("kc", s.keepBestAudioChannelsOnly);
@@ -647,6 +652,7 @@ function splitList(v: string | undefined): string[] {
 
 function applyCore(out: JobSettings, kv: Record<string, string>): void {
 	if (kv.en && isValidEncoder(kv.en)) out.encoder = kv.en;
+	if (kv.mq !== undefined) out.manualQuality = kv.mq === "1";
 	if (kv.cr !== undefined) out.manualCrf = numOr(kv.cr, out.manualCrf);
 	if (kv.pr !== undefined) out.manualPreset = numOr(kv.pr, out.manualPreset);
 	if (kv.cp !== undefined) out.customEncoderParams = unesc(kv.cp);

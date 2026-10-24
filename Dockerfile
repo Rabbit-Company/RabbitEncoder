@@ -223,6 +223,9 @@ RUN mkdir -p /opt/binaries/x86_64_v2 /opt/binaries/x86_64_v3 /opt/binaries/x86_6
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v2/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v3/SVT-AV1-5FISH \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/SVT-AV1-5FISH" -o /opt/binaries/x86_64_v4/SVT-AV1-5FISH \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/SVT-AV1-Tritium" -o /opt/binaries/x86_64_v2/SVT-AV1-Tritium \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/SVT-AV1-Tritium" -o /opt/binaries/x86_64_v3/SVT-AV1-Tritium \
+ && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/SVT-AV1-Tritium" -o /opt/binaries/x86_64_v4/SVT-AV1-Tritium \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v2/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v2/ffmpeg.tar.zst \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v3/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v3/ffmpeg.tar.zst \
  && curl -fsSL --retry 2 "${CDN_BASE}/x86_64_v4/ffmpeg.tar.zst" -o /opt/binaries/x86_64_v4/ffmpeg.tar.zst \
@@ -238,6 +241,9 @@ RUN mkdir -p /opt/binaries/x86_64_v2 /opt/binaries/x86_64_v3 /opt/binaries/x86_6
 	/opt/binaries/x86_64_v2/SVT-AV1-5FISH \
 	/opt/binaries/x86_64_v3/SVT-AV1-5FISH \
 	/opt/binaries/x86_64_v4/SVT-AV1-5FISH \
+	/opt/binaries/x86_64_v2/SVT-AV1-Tritium \
+	/opt/binaries/x86_64_v3/SVT-AV1-Tritium \
+	/opt/binaries/x86_64_v4/SVT-AV1-Tritium \
 # Extract FFmpeg tarballs
  && mkdir -p /opt \
  && tar --zstd -xpf /opt/binaries/x86_64_v2/ffmpeg.tar.zst -C /opt \

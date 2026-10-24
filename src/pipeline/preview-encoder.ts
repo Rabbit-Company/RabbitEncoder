@@ -46,6 +46,10 @@ export function previewDirFor(config: AppConfig, jobId: string): string {
 
 export function previewSettingsFingerprint(s: JobSettings): string {
 	return JSON.stringify({
+		encoder: s.encoder,
+		manualQuality: s.manualQuality,
+		manualCrf: s.manualCrf,
+		manualPreset: s.manualPreset,
 		quality: s.quality,
 		finalSpeed: s.finalSpeed,
 		customEncoderParams: s.customEncoderParams,

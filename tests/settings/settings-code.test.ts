@@ -13,6 +13,31 @@ describe("settings code — Essential quality presets", () => {
 	}
 });
 
+describe("settings code — Essential manual CRF and preset", () => {
+	it("round-trips manual rate control", () => {
+		const settings = getDefaultJobSettings();
+		settings.manualQuality = true;
+		settings.manualCrf = 32;
+		settings.manualPreset = 2;
+		const decoded = decodeSettingsCode(encodeSettingsCode(settings));
+		expect(decoded.manualQuality).toBe(true);
+		expect(decoded.manualCrf).toBe(32);
+		expect(decoded.manualPreset).toBe(2);
+	});
+
+	it("writes only the rate control that is used", () => {
+		const base = getDefaultJobSettings();
+		const mk = (o: Partial<JobSettings>) => encodeSettingsCode({ ...base, ...o });
+		expect(mk({ quality: "high", finalSpeed: "slower", manualCrf: 30 })).toBe("RE1|c~q=h,sp=sr");
+		expect(mk({ manualQuality: true, manualCrf: 30, manualPreset: 2, quality: "high" })).toBe("RE1|c~mq=1,cr=30,pr=2");
+		expect(mk({ encoder: "svt-av1-tritium", manualCrf: 30, quality: "high", manualQuality: true, skipBoosting: true })).toBe("RE1|c~en=svt-av1-tritium,cr=30");
+	});
+
+	it("keeps quality presets for older codes", () => {
+		expect(decodeSettingsCode("RE1").manualQuality).toBe(false);
+	});
+});
+
 describe("settings code — font/style not carried (RE1 compat)", () => {
 	it("never emits font/style/group fields", () => {
 		const s: JobSettings = { ...getDefaultJobSettings(), fontGroup: "Anime old", convertSrtToAss: true };

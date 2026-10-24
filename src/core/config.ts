@@ -24,6 +24,7 @@ const DEFAULT_BITRATES: AudioChannelBitrates = {
 
 const DEFAULT_JOB_SETTINGS: JobSettings = {
 	encoder: "svt-av1-essential",
+	manualQuality: false,
 	manualCrf: 24,
 	manualPreset: 4,
 	customEncoderParams: "",

@@ -14,13 +14,26 @@ export function wireEncoderControls(prefix: "default" | "job", settings: JobSett
 	const applyVisibility = () => {
 		const def = ENCODERS[settings.encoder] || ENCODERS["svt-av1-essential"];
 		const direct = !def.usesAutoBoost;
-		id("abe-controls").style.display = direct ? "none" : "";
-		id("manual-controls").style.display = direct ? "" : "none";
+		const manual = direct || settings.manualQuality;
+		id("quality-mode-group").style.display = direct ? "none" : "";
+		id("abe-controls").style.display = manual ? "none" : "";
+		id("manual-controls").style.display = manual ? "" : "none";
 		// skip-boosting is an ABE concept - hide it for direct encoders if present
 		const sb = byId(`${prefix}-skip-boosting`);
 		const sbGroup = sb.closest<HTMLElement>(".setting-group");
 		if (sbGroup) sbGroup.style.display = direct ? "none" : "";
 	};
+
+	renderRadioPills(
+		id("quality-mode"),
+		["presets", "manual"] as const,
+		settings.manualQuality ? "manual" : "presets",
+		(v) => {
+			settings.manualQuality = v === "manual";
+			applyVisibility();
+		},
+		(v) => (v === "manual" ? "CRF and preset" : "Quality and speed"),
+	);
 
 	// Encoder picker (render labels, store ids)
 	const encEl = id("encoder");

@@ -2,6 +2,7 @@ import type { AudioPreviewResult, AudioPreviewTrack, Job, JobStatus, JobStep, Su
 import type { FolderStats, FolderTimeEstimate, FolderTreeNode } from "../ui/models";
 import { authFetch, fetchJobs } from "../api/client";
 import { API } from "../config/api-base";
+import { ENCODERS } from "../config/options";
 import { sortNodeChildren } from "./queue-order";
 import { byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
@@ -382,8 +383,11 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "repair") meta += `<span>Subtitle repair, video and audio stream copy</span>`;
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
-	if (!isToolJob(job) && job.settings.videoEncode !== "off")
-		meta += `<span>${job.settings.quality}, ${job.settings.finalSpeed}${job.settings.downscale ? ", ↓1080p" : ""}</span>`;
+	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
+		const manual = !ENCODERS[job.settings.encoder]?.usesAutoBoost || job.settings.manualQuality;
+		const rate = manual ? `CRF ${job.settings.manualCrf}, preset ${job.settings.manualPreset}` : `${job.settings.quality}, ${job.settings.finalSpeed}`;
+		meta += `<span>${rate}${job.settings.downscale ? ", ↓1080p" : ""}</span>`;
+	}
 	if (!isToolJob(job) && job.settings.skipBoosting) meta += `<span>No Boost</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
 	if (!isToolJob(job) && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;

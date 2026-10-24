@@ -50,6 +50,18 @@ export const ENCODERS: Record<EncoderId, EncoderDef> = {
 		presetMin: -1,
 		presetMax: 13,
 	},
+	"svt-av1-tritium": {
+		id: "svt-av1-tritium",
+		label: "SVT-AV1-Tritium",
+		binary: "SVT-AV1-Tritium",
+		usesAutoBoost: false,
+		defaultCrf: 24,
+		defaultPreset: 4,
+		crfMin: 1,
+		crfMax: 70,
+		presetMin: -1,
+		presetMax: 13,
+	},
 };
 
 export const ENCODER_IDS = Object.keys(ENCODERS) as EncoderId[];

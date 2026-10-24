@@ -257,6 +257,10 @@
 
 									<!-- Settings of the selected encoder -->
 									<div class="nested-settings">
+										<div class="setting-group" id="default-quality-mode-group">
+											<label>Rate Control</label>
+											<div class="radio-group" id="default-quality-mode"></div>
+										</div>
 										<div class="nested-settings-set" id="default-abe-controls">
 											<div class="setting-group">
 												<label>Video Quality</label>
@@ -265,10 +269,6 @@
 											<div class="setting-group">
 												<label>Encoder Speed</label>
 												<div class="radio-group" id="default-speed"></div>
-											</div>
-											<div class="setting-group">
-												<label>Boosting</label>
-												<div class="toggle-group" id="default-skip-boosting"></div>
 											</div>
 										</div>
 										<div class="nested-settings-set" id="default-manual-controls" style="display: none">
@@ -283,6 +283,10 @@
 												<label>Preset <span id="default-preset-val"></span></label>
 												<input type="range" id="default-preset-slider" min="-1" max="13" step="1" />
 											</div>
+										</div>
+										<div class="setting-group">
+											<label>Boosting</label>
+											<div class="toggle-group" id="default-skip-boosting"></div>
 										</div>
 									</div>
 								</div>
@@ -552,6 +556,10 @@
 
 									<!-- Settings of the selected encoder -->
 									<div class="nested-settings">
+										<div class="setting-group" id="job-quality-mode-group">
+											<label>Rate Control</label>
+											<div class="radio-group" id="job-quality-mode"></div>
+										</div>
 										<div class="nested-settings-set" id="job-abe-controls">
 											<div class="setting-group">
 												<label>Video Quality</label>
@@ -560,10 +568,6 @@
 											<div class="setting-group">
 												<label>Encoder Speed</label>
 												<div class="radio-group" id="job-speed"></div>
-											</div>
-											<div class="setting-group">
-												<label>Boosting</label>
-												<div class="toggle-group" id="job-skip-boosting"></div>
 											</div>
 										</div>
 										<div class="nested-settings-set" id="job-manual-controls" style="display: none">
@@ -578,6 +582,10 @@
 												<label>Preset <span id="job-preset-val"></span></label>
 												<input type="range" id="job-preset-slider" min="-1" max="13" step="1" />
 											</div>
+										</div>
+										<div class="setting-group">
+											<label>Boosting</label>
+											<div class="toggle-group" id="job-skip-boosting"></div>
 										</div>
 									</div>
 								</div>

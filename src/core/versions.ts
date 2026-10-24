@@ -68,6 +68,13 @@ export const TOOLS: ToolSpec[] = [
 		parse: firstMatch(/v(\d+\.\d+\.\d+[^\s]*)/),
 	},
 	{
+		name: "SVT-AV1-Tritium",
+		command: ["SVT-AV1-Tritium", "--version"],
+		purpose: "AV1 encoder",
+		url: "https://github.com/Uranite/svt-av1-tritium",
+		parse: firstMatch(/v(\d+\.\d+\.\d+[^\s]*)/),
+	},
+	{
 		name: "av-denoise",
 		command: ["av-denoise", "--version"],
 		purpose: "GPU denoisers",

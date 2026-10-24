@@ -227,6 +227,7 @@ const strList = (v: unknown): string[] | undefined =>
 
 const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	encoder: (v) => (isValidEncoder(v as string) ? (v as EncoderId) : undefined),
+	manualQuality: bool,
 	manualCrf: numIn(1, 70), // NOTE: original did not round CRF — numIn preserves that
 	manualPreset: intIn(-1, 13), // original rounded preset
 	customEncoderParams: str(2000),

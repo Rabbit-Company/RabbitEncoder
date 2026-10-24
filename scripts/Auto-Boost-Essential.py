@@ -1072,6 +1072,7 @@ def calculate_zones(ranges: list[float], hr: bool, nframe: int) -> None:
                 new_crf = crf + limit
             elif adjustment > limit:
                 new_crf = crf - limit
+            new_crf = min(70, max(1, new_crf))
 
             if index == len(ranges)-1:
                 end_range = nframe

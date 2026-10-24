@@ -1,0 +1,19 @@
+services:
+  svt-av1-tritium-builder:
+    build:
+      context: .
+      args:
+        SVTAV1TRITIUM_REPO: https://github.com/Uranite/svt-av1-tritium.git
+        # Tritium has no release tags and main is rebased onto SVT-AV1-HDR,
+        # so pin a commit from main here if you need a reproducible build.
+        SVTAV1TRITIUM_REF: main
+    container_name: rabbit-svt-av1-tritium-builder
+    volumes:
+      - ./svt-av1-tritium-dist:/out
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      # Set to 0 to disable profile-guided optimization (faster build, slightly
+      # slower encoder). PGO is otherwise applied per-level when the build host
+      # can execute that micro-architecture (v4/AVX-512 needs an AVX-512 host).
+      ENABLE_PGO: "1"
+    tty: true

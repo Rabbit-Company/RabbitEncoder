@@ -1,4 +1,4 @@
-export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish";
+export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
 export type EncoderQuality = "lower" | "low" | "medium" | "high" | "higher";
 export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
 export type DenoiseLevel = "off" | "light" | "medium" | "heavy" | "auto";
@@ -142,6 +142,8 @@ export interface GradfunLevelParams {
 
 export interface JobSettings {
 	encoder: EncoderId;
+	/** Auto-Boost-Essential uses manualCrf and manualPreset instead of quality and finalSpeed. */
+	manualQuality: boolean;
 	manualCrf: number;
 	manualPreset: number;
 	customEncoderParams: string;
