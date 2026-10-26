@@ -31,8 +31,8 @@ export interface LibraryNode extends LibraryEntry {
 	loading: boolean;
 	encoded: boolean;
 	queued: boolean;
-	videoCount: number;
-	encodedCount: number;
+	videoCount?: number;
+	encodedCount?: number;
 	size: number;
 }
 

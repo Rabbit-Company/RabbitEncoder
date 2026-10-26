@@ -29,6 +29,7 @@ import {
 	handleLibraryEncode,
 	handleLibraryTranslate,
 	openLibrary,
+	setLibraryFolderStats,
 	toggleNodeCheck,
 	toggleNodeExpand,
 } from "../features/library";
@@ -472,6 +473,7 @@ export function initEventListeners() {
 	});
 
 	byId("open-library-btn").addEventListener("click", openLibrary);
+	inputById("library-folder-stats").addEventListener("change", (event) => setLibraryFolderStats((event.target as HTMLInputElement).checked));
 	byId("close-library-btn").addEventListener("click", closeLibrary);
 	byId("close-subtitle-preview-btn").addEventListener("click", closeSubPreview);
 	byId("library-modal").addEventListener("click", closeLibraryIfOutside);

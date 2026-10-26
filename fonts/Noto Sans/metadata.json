@@ -1,8 +1,8 @@
 {
-  "label": "Noto Sans",
-  "faces": {
-    "sc.ttf": { "keys": ["zh", "zh-cn", "zh-hans", "zh-sg", "chs"] },
-    "tc.ttf": { "keys": ["zh-tw", "zh-hant", "cht", "zh-mo"] },
-    "hk.ttf": { "keys": ["zh-hk", "yue", "zh-hant-hk"] }
-  }
+	"label": "Noto Sans",
+	"faces": {
+		"sc.ttf": { "keys": ["zh", "zh-cn", "zh-hans", "zh-sg", "chs"] },
+		"tc.ttf": { "keys": ["zh-tw", "zh-hant", "cht", "zh-mo"] },
+		"hk.ttf": { "keys": ["zh-hk", "yue", "zh-hant-hk"] }
+	}
 }

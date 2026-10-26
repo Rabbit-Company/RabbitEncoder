@@ -76,12 +76,12 @@ export function renderLibrarySearchResults(nodes: LibraryNode[]): void {
 	for (const node of nodes) {
 		if (node.type === "directory") {
 			const state = getNodeCheckState(node.path);
-			const pending = (node.videoCount || 0) - (node.encodedCount || 0);
+			const pending = node.videoCount === undefined ? 0 : node.videoCount - (node.encodedCount ?? 0);
 			const meta = [];
-			if (node.videoCount > 0 && pending === 0) meta.push(`<span class="library-encoded-badge">encoded</span>`);
+			if (node.videoCount !== undefined && node.videoCount > 0 && pending === 0) meta.push(`<span class="library-encoded-badge">encoded</span>`);
 			if (pending > 0) meta.push(`${pending} to encode`);
 			rows += `
-				<div class="tree-node tree-folder search-result">
+				<div class="tree-node tree-folder search-result${node.videoCount !== undefined && node.videoCount > 0 && pending === 0 ? " is-encoded" : ""}">
 					<div class="tree-row" style="padding-left:16px">
 						${renderCheckbox(node.path, state.checked, state.indeterminate)}
 						<svg class="tree-icon tree-icon-folder" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -204,8 +204,8 @@ export function createTreeNode(entry: LibraryEntry, depth: number, parentPath: s
 		loading: false,
 		encoded: entry.encoded || false,
 		queued: entry.type === "file" && appState.libraryQueuedPaths.has(entry.path),
-		videoCount: entry.videoCount || 0,
-		encodedCount: entry.encodedCount || 0,
+		videoCount: entry.videoCount,
+		encodedCount: entry.encodedCount,
 		size: entry.size || 0,
 	};
 }

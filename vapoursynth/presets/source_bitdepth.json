@@ -1,0 +1,25 @@
+{
+	"id": "source_bitdepth",
+	"name": "Source bit depth",
+	"description": "Set the bit depth before other filters. By default, sources below 10 bits are raised to 10 bits. Turn on conversion of higher bit depths to reduce 12 bit or 16 bit sources. The final AV1 encode stays at 10 bits.",
+	"category": "Source",
+	"supports": { "bitDepth": [8, 10, 12, 14, 16], "hdr": true },
+	"levels": ["on"],
+	"params": [
+		{
+			"key": "target_bits",
+			"label": "Target bit depth",
+			"type": "enum",
+			"enum": ["8", "10", "12", "16"],
+			"defaults": { "on": "10" },
+			"help": "Bit depth for this filter pass. Raising bit depth does not restore missing detail. The final encoder converts the video to 10 bits."
+		},
+		{
+			"key": "convert_higher",
+			"label": "Convert sources above target",
+			"type": "bool",
+			"defaults": { "on": false },
+			"help": "Also reduce sources above the target bit depth. Ordered dithering helps limit banding. When this is off, 12 bit and 16 bit sources stay unchanged if the target is 10 bits."
+		}
+	]
+}

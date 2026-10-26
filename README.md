@@ -67,6 +67,8 @@ If `ORGANIZATION` is set to `RabbitCompany` (the default), then any file ending 
 
 This means you can safely run Encode Folder on the same series multiple times (only new or unencoded files will be queued).
 
+The Library browser skips recursive folder counts by default, so opening folders on network storage stays fast. It still shows sizes and encoded badges for video files in the open folder. Turn on **Show folder counts and encoded status** in the Library window to scan subfolders and show video totals and green badges for fully encoded folders. This choice is saved in your browser. Encoding still skips files that are already encoded when counts are off.
+
 If `RECYCLE_BIN_DIR` is set, the original of every library file that is replaced in place is moved into that directory instead of being overwritten or deleted, keeping its full path:
 
 ```
@@ -221,13 +223,16 @@ Rabbit Encoder ships with a VapourSynth filter system that lets you stack arbitr
 
 Built-in presets live under `/app/vapoursynth/presets` inside the container and are namespaced as `stock:<id>`:
 
-| Preset ID            | Name         | Description                                                                                                                                        |
-| -------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stock:finedehalo`   | FineDehalo   | Reduces dark/bright halos around high-contrast edges. Best for anime and DVD upscales.                                                             |
-| `stock:dehalo_alpha` | Dehalo Alpha | Classic halo reduction via `vs-jetpack`'s `dehalo_alpha`.                                                                                          |
-| `stock:f3k_deband`   | F3K Deband   | Removes color banding in smooth gradients while preserving detail. Wraps `vszip.Deband` (modern f3kdb successor) and can re-grain after debanding. |
+| Preset ID               | Name             | Description                                                                                                                                                                                                                                                                   |
+| ----------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stock:finedehalo`      | FineDehalo       | Reduces dark/bright halos around high-contrast edges. Best for anime and DVD upscales.                                                                                                                                                                                        |
+| `stock:dehalo_alpha`    | Dehalo Alpha     | Classic halo reduction via `vs-jetpack`'s `dehalo_alpha`.                                                                                                                                                                                                                     |
+| `stock:f3k_deband`      | F3K Deband       | Removes color banding in smooth gradients while preserving detail. Wraps `vszip.Deband` (modern f3kdb successor) and can re-grain after debanding.                                                                                                                            |
+| `stock:source_bitdepth` | Source bit depth | Choose 8, 10, 12, or 16 bits for the filter pass. By default, sources below 10 bits are raised to 10 bits. Turn on **Convert sources above target** to reduce sources with more bits. Reductions use ordered dithering. The preset does not trim frames or change frame rate. |
 
 Every preset declares its own `levels` (typically `light`, `medium`, `heavy`) and a set of tunable parameters. You can pick a level per job and override individual params per-level in the dashboard's **Advanced Settings -> VapourSynth Filters** panel.
+
+The source bit depth preset changes the video sent to later filters. The final AV1 encode converts video to 10 bits. Choosing 8 or 12 bits for this preset does not make an output file with that bit depth. Reducing bit depth discards precision even if a later filter raises it again.
 
 ### User custom presets
 

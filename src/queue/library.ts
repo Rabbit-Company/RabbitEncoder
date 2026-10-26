@@ -63,7 +63,7 @@ export function listMediaFiles(selectedPath: string): string[] {
  * List the contents of a directory within a library path.
  * Returns folders and video files, marking already-encoded files.
  */
-export function browseFolder(folderPath: string, organization: string): LibraryEntry[] {
+export function browseFolder(folderPath: string, organization: string, includeFolderStats = false): LibraryEntry[] {
 	const resolved = resolve(folderPath);
 	if (!existsSync(resolved)) return [];
 
@@ -79,13 +79,12 @@ export function browseFolder(folderPath: string, organization: string): LibraryE
 			const fullPath = join(resolved, entry.name);
 
 			if (entry.isDirectory()) {
-				const counts = countVideosRecursive(fullPath, organization);
+				const counts = includeFolderStats ? countVideosRecursive(fullPath, organization) : null;
 				entries.push({
 					name: entry.name,
 					path: fullPath,
 					type: "directory",
-					videoCount: counts.total,
-					encodedCount: counts.encoded,
+					...(counts ? { videoCount: counts.total, encodedCount: counts.encoded } : {}),
 				});
 			} else {
 				const ext = extname(entry.name).toLowerCase();

@@ -57,7 +57,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			return c.json({ error: "Path is not within any configured library directory" }, 403);
 		}
 
-		const entries = browseFolder(path, config.organization);
+		const entries = browseFolder(path, config.organization, c.query().get("folderStats") === "1");
 		return c.json({ path, entries });
 	});
 

@@ -14,6 +14,7 @@ export const appState = {
 
 	librarySearchScope: null as string | null,
 	librarySearchQuery: "",
+	libraryFolderStats: localStorage.getItem("rabbit-library-folder-stats") === "1",
 	expandedFolders: new Set<string>(),
 	libraryDirs: [] as LibraryDir[],
 	libraryNodes: new Map<string, LibraryNode>(),

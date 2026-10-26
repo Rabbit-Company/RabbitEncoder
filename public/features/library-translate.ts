@@ -122,7 +122,7 @@ async function loadSeriesNotes(): Promise<void> {
 	}
 }
 
-export function openTranslateSetup(paths: string[], fileCount: number): void {
+export function openTranslateSetup(paths: string[], fileCount: number | null): void {
 	selectedPaths = [...paths];
 	const last = loadLastChoice();
 	const defaultTargets = appState.defaults?.translateTargetLanguages?.join(", ") ?? "";
@@ -130,7 +130,8 @@ export function openTranslateSetup(paths: string[], fileCount: number): void {
 	byId<HTMLSelectElement>("library-translate-type").value = last.type || "full";
 	inputById("library-translate-targets").value = last.targets || defaultTargets;
 	inputById("library-translate-references").value = last.references ?? appState.defaults?.translateReferenceLanguages?.join(", ") ?? "";
-	byId("library-translate-count").textContent = `${fileCount} video${fileCount === 1 ? "" : "s"} selected`;
+	byId("library-translate-count").textContent =
+		fileCount === null ? "Selected videos will be counted when queued" : `${fileCount} video${fileCount === 1 ? "" : "s"} selected`;
 	showError("");
 	buttonById("library-translate-submit").disabled = !renderAiSummary();
 	byId("library-translate-notes").style.display = "none";

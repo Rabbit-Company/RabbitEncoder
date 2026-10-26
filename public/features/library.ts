@@ -15,6 +15,8 @@ import { appState } from "../state";
 import { openQueueSetup } from "./library-queue-setup";
 import { openTranslateSetup } from "./library-translate";
 
+let libraryLoadVersion = 0;
+
 /**
  * In translate-only mode, already-encoded files are the primary target
  * (backfilling subtitle languages into previous output), so they stay
@@ -33,7 +35,8 @@ export async function fetchLibraryDirs() {
 }
 
 export async function fetchLibraryBrowse(path?: string | null): Promise<{ entries: LibraryEntry[] }> {
-	const res = await authFetch(`${API}/api/library/browse?path=${encodeURIComponent(path ?? "")}`);
+	const res = await authFetch(`${API}/api/library/browse?path=${encodeURIComponent(path ?? "")}&folderStats=${appState.libraryFolderStats ? "1" : "0"}`);
+	if (!res.ok) throw new Error("Failed to browse library folder");
 	return res.json();
 }
 
@@ -124,6 +127,7 @@ export async function toggleNodeExpand(path: string): Promise<void> {
 		renderLibraryTree();
 		try {
 			const data = await fetchLibraryBrowse(node.path);
+			if (appState.libraryNodes.get(path) !== node) return;
 			const entries = data.entries || [];
 			node.children = [];
 			for (const entry of entries) {
@@ -169,8 +173,9 @@ export function getCheckedPaths(includeEncoded = encodedSelectable()): string[] 
 	return paths;
 }
 
-export function countSelectedToEncode(includeEncoded = encodedSelectable()): number {
+export function countSelectedToEncode(includeEncoded = encodedSelectable()): number | null {
 	let total = 0;
+	let unknown = false;
 	function count(path: string): void {
 		const node = appState.libraryNodes.get(path);
 		if (!node) return;
@@ -180,7 +185,10 @@ export function countSelectedToEncode(includeEncoded = encodedSelectable()): num
 		}
 		const state = getNodeCheckState(path);
 		if (state.checked) {
-			total += includeEncoded ? node.videoCount || 0 : (node.videoCount || 0) - (node.encodedCount || 0);
+			if (node.videoCount === undefined && node.children) {
+				for (const childPath of node.children) count(childPath);
+			} else if (node.videoCount === undefined) unknown = true;
+			else total += includeEncoded ? node.videoCount : node.videoCount - (node.encodedCount ?? 0);
 			return;
 		}
 		if (state.indeterminate && node.children) {
@@ -191,7 +199,7 @@ export function countSelectedToEncode(includeEncoded = encodedSelectable()): num
 		const root = appState.libraryNodes.get(dir.path);
 		if (root) count(root.path);
 	}
-	return total;
+	return unknown ? null : total;
 }
 
 export function renderLibraryTree() {
@@ -221,14 +229,15 @@ export function renderTreeNode(node: LibraryNode): string {
 
 export function renderTreeFolder(node: LibraryNode, checked: boolean, indeterminate: boolean, indent: number): string {
 	const chevronClass = node.expanded ? "expanded" : "";
-	const encodedClass = node.videoCount > 0 && node.videoCount === node.encodedCount ? " is-encoded" : "";
-	const pending = encodedSelectable() ? node.videoCount || 0 : (node.videoCount || 0) - (node.encodedCount || 0);
+	const encodedClass = node.videoCount !== undefined && node.videoCount > 0 && node.videoCount === node.encodedCount ? " is-encoded" : "";
+	const pending = node.videoCount === undefined ? 0 : encodedSelectable() ? node.videoCount : node.videoCount - (node.encodedCount ?? 0);
 	const actionWord = encodedSelectable() ? "to translate" : "to encode";
 
 	let metaParts = [];
-	if (node.videoCount > 0 && node.videoCount === node.encodedCount) metaParts.push(`<span class="library-encoded-badge">encoded</span>`);
+	if (node.videoCount !== undefined && node.videoCount > 0 && node.videoCount === node.encodedCount)
+		metaParts.push(`<span class="library-encoded-badge">encoded</span>`);
 	if (pending > 0) metaParts.push(`${pending} ${actionWord}`);
-	if (node.videoCount > 0) metaParts.push(`${node.videoCount} video${node.videoCount !== 1 ? "s" : ""}`);
+	if (node.videoCount !== undefined && node.videoCount > 0) metaParts.push(`${node.videoCount} video${node.videoCount !== 1 ? "s" : ""}`);
 
 	let childrenHtml = "";
 	if (node.expanded && node.children) {
@@ -300,16 +309,30 @@ export function updateLibraryFooter() {
 	const encodeBtn = buttonById("library-encode-btn");
 	const count = countSelectedToEncode();
 	const action = encodedSelectable() ? "translation" : "encoding";
-	if (count > 0) {
+	if (count === null && getCheckedPaths().length > 0) {
+		note.textContent = `Selection ready for ${action}. Videos will be counted when queued.`;
+		encodeBtn.disabled = false;
+	} else if (count !== null && count > 0) {
 		note.textContent = `${count} file${count !== 1 ? "s" : ""} selected for ${action}`;
 		encodeBtn.disabled = false;
 	} else {
 		note.textContent = `Select folders or files to ${encodedSelectable() ? "translate" : "encode"}`;
 		encodeBtn.disabled = true;
 	}
-	buttonById("library-translate-btn").disabled = countSelectedToEncode(true) === 0;
+	const translateCount = countSelectedToEncode(true);
+	buttonById("library-translate-btn").disabled = translateCount === null ? getCheckedPaths(true).length === 0 : translateCount === 0;
 }
+
+export function setLibraryFolderStats(enabled: boolean): void {
+	appState.libraryFolderStats = enabled;
+	try {
+		localStorage.setItem("rabbit-library-folder-stats", enabled ? "1" : "0");
+	} catch {}
+	void openLibrary();
+}
+
 export async function openLibrary() {
+	const loadVersion = ++libraryLoadVersion;
 	const modal = byId("library-modal");
 	const content = byId("library-content");
 	const note = byId("library-note");
@@ -318,6 +341,7 @@ export async function openLibrary() {
 	note.textContent = "";
 	encodeBtn.disabled = true;
 	buttonById("library-translate-btn").disabled = true;
+	inputById("library-folder-stats").checked = appState.libraryFolderStats;
 	modal.style.display = "";
 
 	try {
@@ -327,15 +351,20 @@ export async function openLibrary() {
 			} catch {}
 		}
 
-		appState.libraryDirs = await fetchLibraryDirs();
+		const dirs = await fetchLibraryDirs();
+		if (loadVersion !== libraryLoadVersion) return;
+		appState.libraryDirs = dirs;
 		if (appState.libraryDirs.length === 0) {
 			content.innerHTML = `<div class="library-empty">No library directories configured.<br>Set <code>LIBRARY_DIRS</code> in your docker-compose.yml</div>`;
 			return;
 		}
 		appState.libraryNodes.clear();
 		try {
-			refreshLibraryQueuedPaths(await fetchJobs());
+			const jobs = await fetchJobs();
+			if (loadVersion !== libraryLoadVersion) return;
+			refreshLibraryQueuedPaths(jobs);
 		} catch {}
+		if (loadVersion !== libraryLoadVersion) return;
 
 		appState.librarySearchScope = null;
 		appState.librarySearchQuery = "";
@@ -344,17 +373,18 @@ export async function openLibrary() {
 		updateLibrarySearchPlaceholder();
 
 		for (const dir of appState.libraryDirs) {
-			const rootNode = createTreeNode({ path: dir.path, name: dir.name, type: "directory", videoCount: 0, encodedCount: 0 }, 0, null);
+			const rootNode = createTreeNode({ path: dir.path, name: dir.name, type: "directory" }, 0, null);
 			appState.libraryNodes.set(dir.path, rootNode);
 		}
 		renderLibraryTree();
 		updateLibraryFooter();
 	} catch {
-		content.innerHTML = `<div class="library-empty">Failed to load library</div>`;
+		if (loadVersion === libraryLoadVersion) content.innerHTML = `<div class="library-empty">Failed to load library</div>`;
 	}
 }
 
 export function closeLibrary() {
+	libraryLoadVersion++;
 	byId("library-modal").style.display = "none";
 }
 

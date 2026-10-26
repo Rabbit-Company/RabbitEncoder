@@ -1358,6 +1358,19 @@ a.btn {
 	border-bottom: 1px solid var(--border-subtle);
 	color: var(--text-2);
 }
+.library-stats-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 14px;
+	font-size: 0.75rem;
+	color: var(--text-2);
+	border-bottom: 1px solid var(--border-subtle);
+	cursor: pointer;
+}
+.library-stats-toggle input {
+	margin: 0;
+}
 .library-search-input {
 	flex: 1;
 	min-width: 0;
