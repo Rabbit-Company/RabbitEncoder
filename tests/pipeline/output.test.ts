@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "os";
 import { join } from "path";
 import type { AppConfig, Job } from "../../src/core/types";
-import { copyFileWithProgress, finalizeOutput, stageFileWithProgress } from "../../src/pipeline/output";
+import { copyFileWithProgress, finalizeOutput, formatTransferDetail, formatTransferRate, stageFileWithProgress } from "../../src/pipeline/output";
 
 describe("finalizeOutput for library jobs", () => {
 	let root: string;
@@ -134,5 +134,12 @@ describe("output transfer progress", () => {
 
 		expect(readFileSync(source, "utf-8")).toBe("video and audio");
 		expect(readFileSync(destination, "utf-8")).toBe("video and audio");
+	});
+
+	test("shows transfer speeds in decimal megabits and gigabits per second", () => {
+		expect(formatTransferRate(12_500_000)).toBe("100.0 Mbps");
+		expect(formatTransferRate(156_250_000)).toBe("1.25 Gbps");
+		expect(formatTransferDetail("Writing output", 524_288, 1_048_576, 12_500_000)).toBe("Writing output 512.00 KiB / 1.00 MiB (100.0 Mbps)");
+		expect(formatTransferDetail("Downloading source", 0, 1_048_576)).toBe("Downloading source 0.00 B / 1.00 MiB");
 	});
 });

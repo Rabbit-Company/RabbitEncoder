@@ -70,7 +70,7 @@ import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { seriesNotesDir } from "../translate/series-notes";
-import { finalizeOutput, moveFileWithProgress, stageFileWithProgress } from "./output";
+import { finalizeOutput, formatTransferDetail, moveFileWithProgress, stageFileWithProgress } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { grainIso, isoResolution, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
@@ -440,10 +440,10 @@ export async function encodeJob(
 				setStep(S_STAGE, { status: "done", progress: 100, detail: "Using network source because temp space is low" });
 			} else {
 				const stagedSource = join(tempDir, `source${extname(job.inputPath)}`);
-				await stageFileWithProgress(job.inputPath, stagedSource, signal, (copied, total, finished) => {
+				await stageFileWithProgress(job.inputPath, stagedSource, signal, (copied, total, finished, bytesPerSecond) => {
 					setStep(S_STAGE, {
 						progress: finished ? 100 : total > 0 ? Math.min(99, (copied / total) * 100) : 0,
-						detail: `Downloading source ${humanSize(copied)} / ${humanSize(total)}`,
+						detail: formatTransferDetail("Downloading source", copied, total, bytesPerSecond),
 					});
 				});
 				sourcePath = stagedSource;
@@ -2495,10 +2495,10 @@ export async function encodeJob(
 
 		if (previewMode && sink) {
 			const encodedClip = join(sink.dir, "encoded.mkv");
-			await moveFileWithProgress(finalOutput, encodedClip, signal, (copied, total, finished) => {
+			await moveFileWithProgress(finalOutput, encodedClip, signal, (copied, total, finished, bytesPerSecond) => {
 				setStep(S_WRITE, {
 					progress: finished ? 99 : total > 0 ? Math.min(98, (copied / total) * 98) : 0,
-					detail: `Writing preview ${humanSize(copied)} / ${humanSize(total)}`,
+					detail: formatTransferDetail("Writing preview", copied, total, bytesPerSecond),
 				});
 			});
 			setStep(S_WRITE, { progress: 99, detail: "Capturing preview" });

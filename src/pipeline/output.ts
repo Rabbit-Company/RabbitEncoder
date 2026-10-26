@@ -76,7 +76,17 @@ export function resolveUniqueOutputPath(dir: string, filename: string, ignorePat
  * callers never go on to destroy an original that was not saved.
  */
 export type OutputProgress = (percent: number, detail: string) => void;
-export type ByteProgress = (copied: number, total: number, finished: boolean) => void;
+export type ByteProgress = (copied: number, total: number, finished: boolean, bytesPerSecond?: number) => void;
+
+export function formatTransferRate(bytesPerSecond: number): string {
+	const megabitsPerSecond = (bytesPerSecond * 8) / 1_000_000;
+	return megabitsPerSecond >= 1_000 ? `${(megabitsPerSecond / 1_000).toFixed(2)} Gbps` : `${megabitsPerSecond.toFixed(1)} Mbps`;
+}
+
+export function formatTransferDetail(label: string, copied: number, total: number, bytesPerSecond?: number): string {
+	const amount = total > 1 ? `${label} ${humanSize(copied)} / ${humanSize(total)}` : label;
+	return bytesPerSecond === undefined ? amount : `${amount} (${formatTransferRate(bytesPerSecond)})`;
+}
 
 /** Move within a filesystem, or stream through a temporary destination file across filesystems. */
 export async function moveFileWithProgress(source: string, destination: string, signal?: AbortSignal, onProgress?: ByteProgress): Promise<void> {
@@ -117,20 +127,30 @@ async function transferFileWithProgress(
 	const total = sourceStat.size;
 	const partial = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.part`);
 	let copied = 0;
-	let lastReported = 0;
+	let lastReported = performance.now();
+	const samples = [{ at: lastReported, copied: 0 }];
+	const report = (finished: boolean) => {
+		const now = performance.now();
+		samples.push({ at: now, copied });
+		while (samples.length > 2 && now - samples[1]!.at > 3_000) samples.shift();
+		const elapsed = now - samples[0]!.at;
+		const bytesPerSecond = elapsed >= 500 ? Math.max(0, ((copied - samples[0]!.copied) * 1_000) / elapsed) : undefined;
+		onProgress?.(copied, total, finished, bytesPerSecond);
+	};
 	const counter = new Transform({
 		transform(chunk: Buffer, _encoding, callback) {
 			copied += chunk.length;
-			const now = Date.now();
+			const now = performance.now();
 			if (now - lastReported >= 250 || copied === total) {
-				onProgress?.(copied, total, false);
+				report(false);
 				lastReported = now;
 			}
 			callback(null, chunk);
 		},
 	});
+	const timer = onProgress ? setInterval(() => report(false), 1_000) : undefined;
 	try {
-		onProgress?.(0, total, false);
+		report(false);
 		await pipeline(createReadStream(source), counter, createWriteStream(partial, { flags: "wx" }), { signal });
 		if (signal?.aborted) throw new CancelledError();
 		try {
@@ -141,20 +161,22 @@ async function transferFileWithProgress(
 		}
 		renameSync(partial, destination);
 		if (removeSource) unlinkSync(source);
-		onProgress?.(total, total, true);
+		report(true);
 	} catch (error) {
 		try {
 			unlinkSync(partial);
 		} catch {}
 		if (signal?.aborted) throw new CancelledError();
 		throw error;
+	} finally {
+		if (timer) clearInterval(timer);
 	}
 }
 
 function reportTransfer(onProgress: OutputProgress | undefined, start: number, end: number, label: string): ByteProgress {
-	return (copied, total, finished) => {
+	return (copied, total, finished, bytesPerSecond) => {
 		const fraction = finished ? 1 : total > 0 ? Math.min(0.99, copied / total) : 0;
-		const detail = total > 1 ? `${label} ${humanSize(copied)} / ${humanSize(total)}` : label;
+		const detail = formatTransferDetail(label, copied, total, bytesPerSecond);
 		onProgress?.(start + (end - start) * fraction, detail);
 	};
 }
