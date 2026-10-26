@@ -13,10 +13,12 @@ import { syntheticGrainActive, syntheticGrainMode } from "../../src/core/film-gr
 export function statusLabel(status: JobStatus): string {
 	const labels = {
 		queued: "Queued",
+		staging_source: "Downloading Source",
 		probing: "Analyzing",
 		encoding_video: "Video",
 		encoding_audio: "Audio",
 		muxing: "Muxing",
+		writing_output: "Writing Output",
 		done: "Done",
 		error: "Error",
 		cancelled: "Cancelled",
@@ -25,7 +27,7 @@ export function statusLabel(status: JobStatus): string {
 }
 
 export function isActive(status: JobStatus): boolean {
-	return ["probing", "encoding_video", "encoding_audio", "muxing"].includes(status);
+	return ["staging_source", "probing", "encoding_video", "encoding_audio", "muxing", "writing_output"].includes(status);
 }
 
 export function formatDuration(ms: number): string {

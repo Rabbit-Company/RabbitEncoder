@@ -10,6 +10,7 @@ import { runTranslateStep, type TranslatedTrack } from "../translate/translate-s
 import { seriesNotesDir } from "../translate/series-notes";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style"; // NOTE: match the import path encoder.ts uses for DEFAULT_STYLE_APPEARANCE
 import { finalizeOutput } from "./output";
+import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
 
 /**
@@ -28,12 +29,14 @@ import { identifyMatroska } from "./repair";
 const T_ANALYZE = 0;
 const T_TRANSLATE = 1;
 const T_MUX = 2;
+const T_WRITE = 3;
 
 function makeSteps(): JobStep[] {
 	return [
 		{ label: "Analyze", status: "pending", progress: 0 },
 		{ label: "Translate", status: "pending", progress: 0 },
-		{ label: "Mux & Finish", status: "pending", progress: 0 },
+		{ label: "Mux", status: "pending", progress: 0 },
+		{ label: "Write Output", status: "pending", progress: 0 },
 	];
 }
 
@@ -258,7 +261,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			detail: translated.length ? `Added ${translated.length} track(s)` : "Nothing to translate",
 		});
 
-		// Mux & Finish
+		// Mux
 		checkCancelled();
 		setStep(T_MUX, { status: "active", progress: 0 });
 		updateJob({ status: "muxing" });
@@ -270,6 +273,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 		if (translated.length === 0) {
 			if (job.replaceSource) {
 				setStep(T_MUX, { status: "done", progress: 100, detail: "Nothing to translate. Source unchanged." });
+				setStep(T_WRITE, { status: "done", progress: 100, detail: "Source unchanged" });
 				updateJob({
 					status: "done",
 					currentStage: "Complete",
@@ -284,8 +288,12 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 				return;
 			}
 
-			setStep(T_MUX, { progress: 50, detail: "Nothing to translate. Moving to output." });
-			outputPath = await finalizeOutput(job, config, job.inputPath, job.filename, signal);
+			setStep(T_MUX, { status: "done", progress: 100, detail: "Nothing to mux" });
+			setStep(T_WRITE, { status: "active", progress: 0, detail: "Writing output" });
+			updateJob({ status: "writing_output" });
+			outputPath = await finalizeOutput(job, config, job.inputPath, job.filename, signal, (progress, detail) => {
+				setStep(T_WRITE, { progress, detail });
+			});
 		} else {
 			const finalOutput = join(tempDir, "final.mkv");
 			const ordered = orderTranslatedByPriority(translated, job.settings.subtitleLanguagePriority);
@@ -311,10 +319,16 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			}
 			mkvArgs.push("--track-order", trackOrder);
 
-			setStep(T_MUX, { progress: 20, detail: `Adding ${ordered.length} translated track(s)` });
+			setStep(T_MUX, { progress: 5, detail: `Adding ${ordered.length} translated track(s)` });
 			Logger.info(`[translate-only] Muxing: ${ordered.map((t) => t.language).join(", ")} → ${basename(job.inputPath)}`);
 
-			const res = await run(mkvArgs, { signal });
+			const res = await run([mkvArgs[0]!, "--gui-mode", ...mkvArgs.slice(1)], {
+				signal,
+				onStdoutLine: (line) => {
+					const percent = mkvtoolnixProgress(line);
+					if (percent !== null) setStep(T_MUX, { progress: Math.max(5, percent), detail: `Adding ${ordered.length} translated track(s)` });
+				},
+			});
 			checkCancelled();
 			// mkvmerge: 0 = ok, 1 = completed with warnings, 2 = error.
 			if (res.code !== 0 && res.code !== 1) {
@@ -324,10 +338,14 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 				Logger.warn(`[translate-only] mkvmerge finished with warnings: ${(res.stderr || res.stdout).trim().slice(-300)}`);
 			}
 
-			setStep(T_MUX, { progress: 85, detail: "Moving to output" });
+			setStep(T_MUX, { status: "done", progress: 100 });
+			setStep(T_WRITE, { status: "active", progress: 0, detail: "Writing output" });
+			updateJob({ status: "writing_output" });
 
 			const outputFilename = `${stem}.mkv`;
-			outputPath = await finalizeOutput(job, config, finalOutput, outputFilename, signal);
+			outputPath = await finalizeOutput(job, config, finalOutput, outputFilename, signal, (progress, detail) => {
+				setStep(T_WRITE, { progress, detail });
+			});
 
 			if (!job.replaceSource) {
 				try {
@@ -338,7 +356,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 
 		const finalName = basename(outputPath);
 
-		setStep(T_MUX, { status: "done", progress: 100 });
+		setStep(T_WRITE, { status: "done", progress: 100 });
 
 		updateJob({
 			status: "done",

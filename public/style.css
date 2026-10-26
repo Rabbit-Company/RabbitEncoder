@@ -399,10 +399,12 @@ a.btn {
 	background: var(--bg-3);
 	color: var(--text-2);
 }
+.status-staging_source,
 .status-probing,
 .status-encoding_video,
 .status-encoding_audio,
-.status-muxing {
+.status-muxing,
+.status-writing_output {
 	background: var(--accent-glow);
 	color: var(--accent);
 }

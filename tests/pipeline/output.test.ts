@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { AppConfig, Job } from "../../src/core/types";
-import { finalizeOutput } from "../../src/pipeline/output";
+import { copyFileWithProgress, finalizeOutput, stageFileWithProgress } from "../../src/pipeline/output";
 
 describe("finalizeOutput for library jobs", () => {
 	let root: string;
@@ -70,5 +70,69 @@ describe("finalizeOutput for library jobs", () => {
 
 		expect(readdirSync(library)).toEqual(["Episode 1 [AV1].mkv"]);
 		expect(existsSync(bin)).toBe(false);
+	});
+});
+
+describe("output transfer progress", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "rabbit-transfer-"));
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	test("reports bytes and publishes the destination after a successful copy", async () => {
+		const source = join(root, "source.mkv");
+		const destination = join(root, "output.mkv");
+		const data = Buffer.alloc(256 * 1024, 42);
+		writeFileSync(source, data);
+		chmodSync(source, 0o640);
+		const modifiedAt = new Date("2024-01-01T00:00:00Z");
+		utimesSync(source, modifiedAt, modifiedAt);
+		const updates: Array<[number, number, boolean]> = [];
+
+		await copyFileWithProgress(source, destination, undefined, (copied, total, finished) => {
+			if (!finished) expect(existsSync(destination)).toBe(false);
+			updates.push([copied, total, finished]);
+		});
+
+		expect(readFileSync(destination)).toEqual(data);
+		expect(statSync(destination).mode & 0o777).toBe(0o640);
+		expect(statSync(destination).mtime.getTime()).toBe(modifiedAt.getTime());
+		expect(existsSync(source)).toBe(false);
+		expect(updates[0]).toEqual([0, data.length, false]);
+		expect(updates.at(-1)).toEqual([data.length, data.length, true]);
+		expect(readdirSync(root)).toEqual(["output.mkv"]);
+	});
+
+	test("cancellation keeps the source and removes the incomplete destination", async () => {
+		const source = join(root, "source.mkv");
+		const destination = join(root, "output.mkv");
+		writeFileSync(source, Buffer.alloc(256 * 1024, 42));
+		const controller = new AbortController();
+
+		await expect(
+			copyFileWithProgress(source, destination, controller.signal, (copied) => {
+				if (copied > 0) controller.abort();
+			}),
+		).rejects.toHaveProperty("name", "CancelledError");
+
+		expect(existsSync(source)).toBe(true);
+		expect(existsSync(destination)).toBe(false);
+		expect(readdirSync(root)).toEqual(["source.mkv"]);
+	});
+
+	test("staging keeps the original source available", async () => {
+		const source = join(root, "source.mkv");
+		const destination = join(root, "local.mkv");
+		writeFileSync(source, "video and audio");
+
+		await stageFileWithProgress(source, destination);
+
+		expect(readFileSync(source, "utf-8")).toBe("video and audio");
+		expect(readFileSync(destination, "utf-8")).toBe("video and audio");
 	});
 });

@@ -7,7 +7,10 @@ export class CancelledError extends Error {
 	}
 }
 
-export async function run(cmd: string[], opts?: { cwd?: string; signal?: AbortSignal }): Promise<{ code: number; stdout: string; stderr: string }> {
+export async function run(
+	cmd: string[],
+	opts?: { cwd?: string; signal?: AbortSignal; onStdoutLine?: (line: string) => void },
+): Promise<{ code: number; stdout: string; stderr: string }> {
 	const proc = Bun.spawn(cmd, {
 		stdout: "pipe",
 		stderr: "pipe",
@@ -35,7 +38,10 @@ export async function run(cmd: string[], opts?: { cwd?: string; signal?: AbortSi
 
 	// Drain both pipes while the child is running. Analysis tools and encoders can
 	// write enough diagnostics to fill stderr before they exit.
-	const [stdoutText, stderrText] = await Promise.all([new Response(proc.stdout).text().catch(() => ""), new Response(proc.stderr).text().catch(() => "")]);
+	const [stdoutText, stderrText] = await Promise.all([
+		opts?.onStdoutLine ? readLines(proc.stdout, opts.onStdoutLine).catch(() => "") : new Response(proc.stdout).text().catch(() => ""),
+		new Response(proc.stderr).text().catch(() => ""),
+	]);
 	const code = await proc.exited;
 
 	if (onAbort && opts?.signal) {
@@ -43,6 +49,28 @@ export async function run(cmd: string[], opts?: { cwd?: string; signal?: AbortSi
 	}
 
 	return { code, stdout: stdoutText.trim(), stderr: stderrText.trim() };
+}
+
+async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<string> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let output = "";
+	let pending = "";
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		const chunk = decoder.decode(value, { stream: true });
+		output += chunk;
+		pending += chunk;
+		const lines = pending.split(/[\r\n]/);
+		pending = lines.pop() ?? "";
+		for (const line of lines) if (line) onLine(line);
+	}
+	const tail = decoder.decode();
+	output += tail;
+	pending += tail;
+	if (pending) onLine(pending);
+	return output;
 }
 
 export function humanSize(bytes: number): string {

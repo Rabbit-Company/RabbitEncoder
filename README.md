@@ -82,12 +82,14 @@ The recycle bin is never emptied automatically, so delete the originals yourself
 
 For each file, the engine runs:
 
-1. **Probe:** Extract media information such as resolution, audio layout, frame rate, subtitle tracks, and HDR metadata.
-2. **Prepare:** Extract the primary video stream, run the configured VapourSynth passes, and apply the FFmpeg crop/downscale/denoise/deband chain.
-3. **HDR10+:** For PQ sources, measure HDR10+ metadata of the prepared video with retone.
-4. **Auto-Boost-Essential:** Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode, then write the HDR10+ metadata and film grain into it.
-5. **Audio:** Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
-6. **Subtitles and fonts**
+1. **Download Source:** Copy an NFS or SMB source into the local temporary folder before reading its metadata or tracks. The progress bar shows bytes copied. Local sources are used directly. The copy is skipped when the temporary folder is on network storage or lacks space for the source and a 512 MiB reserve.
+2. **Probe:** Extract media information such as resolution, audio layout, frame rate, subtitle tracks, and HDR metadata from the working source.
+3. **Read Source:** Read video timestamps and copy the video stream into the temporary working folder. The detail text shows the progress of each operation.
+4. **Prepare:** Correct frame timing, run the configured VapourSynth passes, and apply crop, scaling, debanding, and denoising.
+5. **HDR10+:** For PQ sources, measure HDR10+ metadata of the prepared video with retone.
+6. **Auto-Boost-Essential:** Run scene analysis, quality metrics, CRF-zone generation, and the final AV1 encode, then write the HDR10+ metadata and film grain into it.
+7. **Audio:** Sort, filter, deduplicate, and encode selected audio tracks to Opus through a FLAC pipe, or copy them when configured.
+8. **Subtitles and fonts**
    - Sort, filter, deduplicate, and rename subtitle tracks.
    - Optionally convert SRT subtitles to ASS.
    - Restyle dialogue-classified ASS styles without changing signs, songs, or other untouched styles.
@@ -96,8 +98,8 @@ For each file, the engine runs:
    - Remove unused source font attachments when enabled.
    - Preserve source fonts still referenced by surviving untouched styles or inline `\fn` overrides.
    - Use numbered aliases such as `Noto Sans 2` only when a retained source font already occupies the requested family name.
-7. **Mux:** Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV.
-8. **HDR:** Apply HDR10 metadata with `mkvpropedit` when required.
+9. **Mux:** Merge video, audio, subtitles, chapters, fonts, and metadata into the final MKV, then apply color metadata. The progress bar follows mkvmerge.
+10. **Write Output:** Move the finished MKV to its destination. When the destination is on another filesystem, the progress bar shows bytes transferred, including a source copy to the recycle bin when needed.
 
 ## Preview Encoding
 

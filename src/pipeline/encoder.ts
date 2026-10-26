@@ -1,4 +1,17 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync, rmSync, symlinkSync, renameSync, linkSync, copyFileSync } from "fs";
+import {
+	existsSync,
+	readFileSync,
+	writeFileSync,
+	mkdirSync,
+	statSync,
+	statfsSync,
+	unlinkSync,
+	rmSync,
+	symlinkSync,
+	renameSync,
+	linkSync,
+	copyFileSync,
+} from "fs";
 import { join, parse as parsePath, extname, basename } from "path";
 import type { Job, JobStep, AppConfig, EncodeJobOptions, SubtitleBurnMode, AudioStreamInfo, SubtitleStreamInfo } from "../core/types";
 import { probeFile, getOpusBitrateForLayout, getAudioReplacementLabel, normalizeLayout } from "./probe";
@@ -43,6 +56,8 @@ import { detectSourceTag, detectReleaseGroup, getResolutionTag, extractBaseTitle
 import pkg from "../../package.json";
 import { buildPrepareFilterConfig } from "../video/filters";
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
+import { ffmpegProgress, mkvtoolnixProgress, preparePhaseProgress } from "./prepare-progress";
+import { shouldStageSource } from "./source-staging";
 import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
 import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
@@ -55,7 +70,7 @@ import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { seriesNotesDir } from "../translate/series-notes";
-import { finalizeOutput } from "./output";
+import { finalizeOutput, moveFileWithProgress, stageFileWithProgress } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { grainIso, isoResolution, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
@@ -80,21 +95,31 @@ import {
 
 export { CancelledError } from "../core/process";
 
-const S_PROBE = 0;
-const S_PREPARE = 1;
-const S_FAST = 2;
-const S_METRICS = 3;
-const S_SCENES = 4;
-const S_ZONES = 5;
-const S_FINAL = 6;
-const S_AUDIO = 7;
-const S_TRANSLATE = 8;
-const S_SUBS = 9;
-const S_MUX = 10;
+const S_STAGE = 0;
+const S_PROBE = 1;
+const S_READ = 2;
+const S_PREPARE = 3;
+const S_FAST = 4;
+const S_METRICS = 5;
+const S_SCENES = 6;
+const S_ZONES = 7;
+const S_FINAL = 8;
+const S_AUDIO = 9;
+const S_TRANSLATE = 10;
+const S_SUBS = 11;
+const S_MUX = 12;
+const S_WRITE = 13;
+
+const READ_TIMECODES_END = 35;
+const PREPARE_CFR_END = 10;
+const PREPARE_VS_END = 30;
+const PREPARE_WORK_START = 40;
 
 function makeSteps(): JobStep[] {
 	return [
+		{ label: "Download Source", status: "pending", progress: 0 },
 		{ label: "Analyze", status: "pending", progress: 0 },
+		{ label: "Read Source", status: "pending", progress: 0 },
 		{ label: "Prepare", status: "pending", progress: 0 },
 		{ label: "Fast Pass", status: "pending", progress: 0 },
 		{ label: "Metrics", status: "pending", progress: 0 },
@@ -104,7 +129,8 @@ function makeSteps(): JobStep[] {
 		{ label: "Audio", status: "pending", progress: 0 },
 		{ label: "Translate", status: "pending", progress: 0 },
 		{ label: "Subtitles", status: "pending", progress: 0 },
-		{ label: "Mux & Finish", status: "pending", progress: 0 },
+		{ label: "Mux", status: "pending", progress: 0 },
+		{ label: "Write Output", status: "pending", progress: 0 },
 	];
 }
 
@@ -335,6 +361,7 @@ export async function encodeJob(
 	const sink = opts.preview ?? null;
 	const tempDir = join(config.tempDir, job.id);
 	mkdirSync(tempDir, { recursive: true });
+	let sourcePath = job.inputPath;
 	// A preview clip never measures a table itself: the preview does that on the full video first.
 	const generateFilmGrain = !previewMode && needsFilmGrainTable(job);
 	// A table from the original or a path always wins. Otherwise the grain Rabbit's own
@@ -357,7 +384,7 @@ export async function encodeJob(
 	const steps = makeSteps();
 	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise.
 	const filmGrainStep: JobStep | null = generateFilmGrain || restoreFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
-	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : S_PREPARE;
+	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : S_READ;
 	// Shown once the probe finds a PQ source, right after Prepare and the Film Grain step that follows it.
 	let hdr10PlusStep: JobStep | null = null;
 	const shownSteps = (): JobStep[] => {
@@ -399,12 +426,40 @@ export async function encodeJob(
 	}
 
 	try {
+		checkCancelled();
+		setStep(S_STAGE, { status: "active", progress: 0, detail: "Checking source location" });
+		updateJob({ status: "staging_source" });
+		const sourceFilesystem = statfsSync(job.inputPath).type;
+		const tempFilesystem = statfsSync(tempDir).type;
+		if (!previewMode && shouldStageSource(sourceFilesystem, tempFilesystem)) {
+			const sourceSize = statSync(job.inputPath).size;
+			const tempStats = statfsSync(tempDir);
+			const freeBytes = tempStats.bavail * tempStats.bsize;
+			if (freeBytes < sourceSize + 512 * 1024 * 1024) {
+				Logger.warn(`[source] Skipping local source copy because the temp folder has only ${humanSize(freeBytes)} free for a ${humanSize(sourceSize)} file`);
+				setStep(S_STAGE, { status: "done", progress: 100, detail: "Using network source because temp space is low" });
+			} else {
+				const stagedSource = join(tempDir, `source${extname(job.inputPath)}`);
+				await stageFileWithProgress(job.inputPath, stagedSource, signal, (copied, total, finished) => {
+					setStep(S_STAGE, {
+						progress: finished ? 100 : total > 0 ? Math.min(99, (copied / total) * 100) : 0,
+						detail: `Downloading source ${humanSize(copied)} / ${humanSize(total)}`,
+					});
+				});
+				sourcePath = stagedSource;
+				setStep(S_STAGE, { status: "done", progress: 100, detail: "Source copied to local temp storage" });
+			}
+		} else {
+			setStep(S_STAGE, { status: "done", progress: 100, detail: previewMode ? "Preview source is local" : "Source used directly" });
+		}
+
 		// Probe
 		checkCancelled();
 		setStep(S_PROBE, { status: "active", progress: 0 });
 		updateJob({ status: "probing" });
 
-		const probe = await probeFile(job.inputPath);
+		const probe = await probeFile(sourcePath);
+		probe.filename = job.filename;
 		updateJob({ probe });
 
 		let sourceTag = detectSourceTag(stem);
@@ -426,7 +481,7 @@ export async function encodeJob(
 		if (filmGrainStep && generateFilmGrain) {
 			checkCancelled();
 			setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring film grain" });
-			await ensureFilmGrainTable(job, config, signal, (progress) => {
+			await ensureFilmGrainTable({ ...job, inputPath: sourcePath }, config, signal, (progress) => {
 				setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) });
 			});
 			checkCancelled();
@@ -459,23 +514,72 @@ export async function encodeJob(
 			if (segments > 0 && writeEncoderFilmGrainTable(syntheticTable, join(tempDir, "film-grain.tbl")) > 0) filmGrainTablePath = syntheticTable;
 		}
 
-		// Prepare
+		// Read the source into the local working directory.
 		checkCancelled();
-		setStep(S_PREPARE, { status: "active", progress: 0 });
+		setStep(S_READ, { status: "active", progress: 0, detail: "Reading video timestamps" });
 
 		const preparedVideo = join(tempDir, "source_video.mkv");
 		const timecodesFile = join(tempDir, "timecodes_v2.txt");
+		const lastStepUpdate = new Map<number, number>();
+		const reportStep = (step: number, progress: number, detail: string) => {
+			const now = Date.now();
+			if (now - (lastStepUpdate.get(step) ?? 0) < 500) return;
+			lastStepUpdate.set(step, now);
+			setStep(step, { progress, detail });
+		};
 
-		const tcRes = await run(["mkvextract", job.inputPath, "timestamps_v2", `${probe.videoStreamIndex}:${timecodesFile}`], { signal });
+		const tcRes = await run(["mkvextract", "--gui-mode", sourcePath, "timestamps_v2", `${probe.videoStreamIndex}:${timecodesFile}`], {
+			signal,
+			onStdoutLine: (line) => {
+				const percent = mkvtoolnixProgress(line);
+				if (percent !== null) reportStep(S_READ, preparePhaseProgress(0, READ_TIMECODES_END, percent / 100), `Reading video timestamps: ${percent}%`);
+			},
+		});
 		if (tcRes.code !== 0) {
 			Logger.warn(`[prepare] Timecodes extraction failed, will use default timing: ${tcRes.stderr || tcRes.stdout}`);
 		}
+		checkCancelled();
+		setStep(S_READ, { progress: READ_TIMECODES_END, detail: "Copying video stream" });
 
-		const extractRes = await run(["ffmpeg", "-y", "-i", job.inputPath, "-map", `0:v:0`, "-c:v", "copy", "-an", "-sn", preparedVideo], { signal });
+		const extractRes = await run(
+			[
+				"ffmpeg",
+				"-nostdin",
+				"-hide_banner",
+				"-loglevel",
+				"error",
+				"-nostats",
+				"-stats_period",
+				"1",
+				"-progress",
+				"pipe:1",
+				"-y",
+				"-i",
+				sourcePath,
+				"-map",
+				`0:v:0`,
+				"-c:v",
+				"copy",
+				"-an",
+				"-sn",
+				preparedVideo,
+			],
+			{
+				signal,
+				onStdoutLine: (line) => {
+					const fraction = ffmpegProgress(line, probe.duration);
+					if (fraction !== null)
+						reportStep(S_READ, preparePhaseProgress(READ_TIMECODES_END, 100, fraction), `Copying video stream: ${Math.round(fraction * 100)}%`);
+				},
+			},
+		);
 
+		checkCancelled();
 		if (extractRes.code !== 0) {
 			throw new Error(`Failed to extract video stream: ${extractRes.stderr || extractRes.stdout}`);
 		}
+		setStep(S_READ, { status: "done", progress: 100, detail: "Video stream copied" });
+		setStep(S_PREPARE, { status: "active", progress: 0, detail: "Checking frame timing" });
 
 		// A source that is CFR apart from a few dropped frames gets those gaps
 		// filled with duplicates here, so every later stage sees a plain CFR file.
@@ -492,8 +596,34 @@ export async function encodeJob(
 
 				const cfrVideo = join(tempDir, "source_video_cfr.mkv");
 				const cfrRes = await run(
-					["ffmpeg", "-y", "-v", "error", "-nostats", "-i", preparedVideo, "-vf", buildCfrFilter(plan), ...FFV1_ENCODE_ARGS, "-an", "-sn", cfrVideo],
-					{ signal },
+					[
+						"ffmpeg",
+						"-nostdin",
+						"-y",
+						"-v",
+						"error",
+						"-nostats",
+						"-stats_period",
+						"1",
+						"-progress",
+						"pipe:1",
+						"-i",
+						preparedVideo,
+						"-vf",
+						buildCfrFilter(plan),
+						...FFV1_ENCODE_ARGS,
+						"-an",
+						"-sn",
+						cfrVideo,
+					],
+					{
+						signal,
+						onStdoutLine: (line) => {
+							const fraction = ffmpegProgress(line, probe.duration);
+							if (fraction !== null)
+								reportStep(S_PREPARE, preparePhaseProgress(0, PREPARE_CFR_END, fraction), `Filling dropped frames: ${Math.round(fraction * 100)}%`);
+						},
+					},
 				);
 				checkCancelled();
 				const cfrFrames = cfrRes.code === 0 ? await probeVideoFrameCount(cfrVideo, signal) : null;
@@ -511,10 +641,11 @@ export async function encodeJob(
 				}
 			}
 		}
+		setStep(S_PREPARE, { progress: PREPARE_CFR_END, detail: "Preparing video filters" });
 
 		if (sink) {
 			// Preview: source comparison still (raw clip, first subtitle burned in).
-			await sink.capture(job.inputPath, "source.png", burnModeForFirstSub(probe.subtitleStreams));
+			await sink.capture(sourcePath, "source.png", burnModeForFirstSub(probe.subtitleStreams));
 		}
 
 		// VapourSynth filter chain
@@ -535,8 +666,8 @@ export async function encodeJob(
 
 				const outPath = join(tempDir, `vs_${i}_${manifest.bareId}.mkv`);
 				const label = `${manifest.name} (${entry.level})`;
-				const passBaseProgress = (i / activeVsEntries.length) * 4.5;
-				const passShare = 4.5 / activeVsEntries.length;
+				const passBaseProgress = PREPARE_CFR_END + (i / activeVsEntries.length) * (PREPARE_VS_END - PREPARE_CFR_END);
+				const passShare = (PREPARE_VS_END - PREPARE_CFR_END) / activeVsEntries.length;
 
 				setStep(S_PREPARE, { progress: passBaseProgress, detail: `${label}: ${fmtFrames(0, totalFrames)}` });
 				Logger.info(`[prepare] VS pass ${i + 1}/${activeVsEntries.length}: ${manifest.id} level=${entry.level}`);
@@ -549,7 +680,7 @@ export async function encodeJob(
 					totalFrames,
 					signal,
 					onProgress: (current, fps) => {
-						const passFrac = totalFrames > 0 ? current / totalFrames : 0;
+						const passFrac = totalFrames > 0 ? Math.min(1, current / totalFrames) : 0;
 						setStep(S_PREPARE, {
 							progress: passBaseProgress + passShare * passFrac,
 							detail: formatVsProgressDetail(manifest.name, entry.level, current, totalFrames, fps),
@@ -575,12 +706,13 @@ export async function encodeJob(
 
 			Logger.info(`[prepare] VapourSynth chain complete (${activeVsEntries.length} pass(es))`);
 		}
+		setStep(S_PREPARE, { progress: PREPARE_VS_END, detail: "Planning video filters" });
 
 		// Prepare filter pass (downscale + deband + denoise)
 		let autoPlan: DenoisePlan | null = null;
 		if (job.settings.denoise === "auto") {
 			checkCancelled();
-			setStep(S_PREPARE, { progress: 4.7, detail: "Analyzing noise..." });
+			setStep(S_PREPARE, { progress: 32, detail: "Analyzing noise" });
 			try {
 				const metric = job.settings.autoDenoiseMetric;
 				const thresholds = metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds;
@@ -593,8 +725,9 @@ export async function encodeJob(
 			updateJob({ autoDenoisePlan: autoPlan });
 		}
 
+		setStep(S_PREPARE, { progress: 35, detail: "Checking crop and filter settings" });
 		const prepareFilter = await buildPrepareFilterConfig({
-			inputPath: job.inputPath,
+			inputPath: sourcePath,
 			crop: job.settings.crop,
 			cropLimit: job.settings.cropLimit,
 			downscale: job.settings.downscale,
@@ -616,8 +749,10 @@ export async function encodeJob(
 
 		// av-denoise has no CPU fallback, so stop here rather than after the filter pass.
 		if (prepareFilter?.deferredAvd) {
+			setStep(S_PREPARE, { progress: 38, detail: "Checking denoiser device" });
 			await assertAvdDeviceUsable(prepareFilter.deferredAvd.engine, prepareFilter.deferredAvd.device);
 		}
+		setStep(S_PREPARE, { progress: PREPARE_WORK_START, detail: "Preparing video passes" });
 
 		// The grain Rabbit's denoiser removes is measured against the video as it is right before the denoise,
 		// with the same crop and downscale. Every later stage replaces preparedVideo with a new file, so a
@@ -625,20 +760,40 @@ export async function encodeJob(
 		let grainReference: { path: string; crop?: FilmGrainCrop } | null = null;
 		const denoisesHere =
 			!!prepareFilter && (prepareFilter.steps.some((step) => step.kind === "denoise") || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd);
+		const geometry = prepareFilter?.steps.filter((step) => step.kind === "crop" || step.kind === "downscale") ?? [];
+		const needsGrainReferenceScale = restoreFilmGrain && denoisesHere && geometry.some((step) => step.kind === "downscale");
+		// Segmented stages need the FFV1 file from this pass for accurate cuts.
+		const needsFilterPass = !!prepareFilter && (!!prepareFilter.filter || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd?.plan);
+		const hasAvdPass = !!(prepareFilter?.deferredAvd?.plan || prepareFilter?.deferredAvd?.level);
+		const workPassCount = Number(needsGrainReferenceScale) + Number(needsFilterPass) + Number(!!prepareFilter?.deferredAutoDenoise) + Number(hasAvdPass);
+		let workPassIndex = 0;
+		const workProgress = (fraction: number, detail: string) => {
+			const start = preparePhaseProgress(PREPARE_WORK_START, 99, workPassIndex / Math.max(1, workPassCount));
+			const end = preparePhaseProgress(PREPARE_WORK_START, 99, (workPassIndex + 1) / Math.max(1, workPassCount));
+			setStep(S_PREPARE, { progress: preparePhaseProgress(start, end, fraction), detail });
+		};
+		const completeWorkPass = (detail: string) => {
+			workProgress(1, detail);
+			workPassIndex++;
+		};
 		if (restoreFilmGrain && denoisesHere) {
 			checkCancelled();
 			const referencePath = join(tempDir, "source_video_grain_reference.mkv");
 			rmSync(referencePath, { force: true });
-			const geometry = prepareFilter!.steps.filter((step) => step.kind === "crop" || step.kind === "downscale");
-			if (geometry.some((step) => step.kind === "downscale")) {
-				setStep(S_PREPARE, { progress: 4.8, detail: "Scaling the film grain reference" });
+			if (needsGrainReferenceScale) {
+				workProgress(0, "Scaling the film grain reference");
 				const refRes = await run(
 					[
 						"ffmpeg",
+						"-nostdin",
 						"-y",
 						"-v",
 						"error",
 						"-nostats",
+						"-stats_period",
+						"1",
+						"-progress",
+						"pipe:1",
 						"-i",
 						preparedVideo,
 						"-vf",
@@ -648,11 +803,23 @@ export async function encodeJob(
 						"-sn",
 						referencePath,
 					],
-					{ signal },
+					{
+						signal,
+						onStdoutLine: (line) => {
+							const fraction = ffmpegProgress(line, probe.duration);
+							if (fraction !== null)
+								reportStep(
+									S_PREPARE,
+									preparePhaseProgress(PREPARE_WORK_START, 99, (workPassIndex + fraction) / workPassCount),
+									`Scaling film grain reference: ${Math.round(fraction * 100)}%`,
+								);
+						},
+					},
 				);
 				checkCancelled();
 				if (refRes.code !== 0) throw new Error(`Film grain reference failed: ${(refRes.stderr || refRes.stdout).trim().slice(-500)}`);
 				grainReference = { path: referencePath };
+				completeWorkPass("Film grain reference ready");
 			} else {
 				try {
 					linkSync(preparedVideo, referencePath);
@@ -663,15 +830,11 @@ export async function encodeJob(
 			}
 		}
 
-		// The segmented stages cut by time, which is only frame-accurate on the intra-only FFV1 this pass writes,
-		// so it also runs with an empty filter when one of them follows.
-		const needsFilterPass = !!prepareFilter && (!!prepareFilter.filter || !!prepareFilter.deferredAutoDenoise || !!prepareFilter.deferredAvd?.plan);
-
 		if (prepareFilter && needsFilterPass) {
 			checkCancelled();
 
 			const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
-			setStep(S_PREPARE, { progress: 5, detail: `${prepareFilter.label}: ${fmtFrames(0, totalFrames)}` });
+			workProgress(0, `${prepareFilter.label}: ${fmtFrames(0, totalFrames)}`);
 			Logger.debug(`[prepare] Applying filters: ${prepareFilter.filter} (${totalFrames} frames)`);
 
 			const filteredVideo = join(tempDir, "source_video_filtered.mkv");
@@ -727,10 +890,7 @@ export async function encodeJob(
 										lastUpdate = now;
 										const fps = computeFps(current, filterStartedAt);
 										const fpsStr = fps ? ` (${fps} fps)` : "";
-										setStep(S_PREPARE, {
-											progress: 5 + pct2(current, totalFrames) * 0.95,
-											detail: `${prepareFilter.label}: ${fmtFrames(current, totalFrames)}${fpsStr}`,
-										});
+										workProgress(current / totalFrames, `${prepareFilter.label}: ${fmtFrames(current, totalFrames)}${fpsStr}`);
 									}
 								} else if (part.trim()) {
 									errLines.push(part);
@@ -760,6 +920,7 @@ export async function encodeJob(
 
 			unlinkSync(preparedVideo);
 			renameSync(filteredVideo, preparedVideo);
+			completeWorkPass("Video filters complete");
 
 			Logger.info(`[prepare] Filter pass complete`);
 		}
@@ -770,6 +931,7 @@ export async function encodeJob(
 			const denoisedVideo = join(tempDir, "source_video_denoised.mkv");
 
 			Logger.info(`[prepare] Running segmented GPU auto-denoise (${plan.length} ranges, ${backend} on device ${gpuDevice})`);
+			workProgress(0, "Starting auto denoise GPU");
 
 			await runSegmentedAutoDenoiseGpu(
 				preparedVideo,
@@ -781,16 +943,14 @@ export async function encodeJob(
 				tempDir,
 				nlmeansParams,
 				(i, n, label) => {
-					setStep(S_PREPARE, {
-						progress: 5 + (95 * i) / n,
-						detail: `Auto denoise GPU, segment ${i}/${n} (${label})`,
-					});
+					workProgress(n > 0 ? i / n : 0, `Auto denoise GPU, segment ${i}/${n} (${label})`);
 				},
 				signal,
 			);
 
 			unlinkSync(preparedVideo);
 			renameSync(denoisedVideo, preparedVideo);
+			completeWorkPass("Auto denoise GPU complete");
 
 			Logger.info(`[prepare] Segmented GPU auto-denoise complete`);
 		}
@@ -802,6 +962,7 @@ export async function encodeJob(
 
 			if (plan) {
 				Logger.info(`[prepare] Running segmented av-denoise auto-denoise (${plan.length} ranges, ${engine} on device ${device})`);
+				workProgress(0, `${label}: starting segments`);
 
 				await runSegmentedAutoDenoiseAvd(
 					preparedVideo,
@@ -813,17 +974,14 @@ export async function encodeJob(
 					device,
 					tempDir,
 					(i, n, segLabel) => {
-						setStep(S_PREPARE, {
-							progress: 5 + (95 * i) / n,
-							detail: `${label}, segment ${Math.min(n, Math.floor(i) + 1)}/${n} (${segLabel})`,
-						});
+						workProgress(n > 0 ? i / n : 0, `${label}, segment ${Math.min(n, Math.floor(i) + 1)}/${n} (${segLabel})`);
 					},
 					signal,
 				);
 			} else if (level) {
 				const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
 				Logger.info(`[prepare] Running av-denoise (${engine}, level=${level}, device ${device})`);
-				setStep(S_PREPARE, { progress: 5, detail: `${label}: analyzing scenes` });
+				workProgress(0, `${label}: analyzing scenes`);
 
 				await runAvdPass({
 					inputPath: preparedVideo,
@@ -834,10 +992,7 @@ export async function encodeJob(
 					device,
 					signal,
 					onProgress: (current, fps) => {
-						setStep(S_PREPARE, {
-							progress: 5 + pct2(current, totalFrames) * 0.95,
-							detail: `${label}: ${fmtFrames(current, totalFrames)}${fps ? ` (${fps} fps)` : ""}`,
-						});
+						workProgress(totalFrames > 0 ? current / totalFrames : 0, `${label}: ${fmtFrames(current, totalFrames)}${fps ? ` (${fps} fps)` : ""}`);
 					},
 				});
 			}
@@ -845,6 +1000,7 @@ export async function encodeJob(
 			if (existsSync(denoisedVideo)) {
 				unlinkSync(preparedVideo);
 				renameSync(denoisedVideo, preparedVideo);
+				completeWorkPass(`${label} complete`);
 				Logger.info(`[prepare] av-denoise complete`);
 			}
 		}
@@ -902,7 +1058,7 @@ export async function encodeJob(
 			try {
 				const measurement = await measureHdr10Plus({
 					videoPath: preparedVideo,
-					dolbyVisionPath: probe.hasDolbyVision && !previewMode ? job.inputPath : undefined,
+					dolbyVisionPath: probe.hasDolbyVision && !previewMode ? sourcePath : undefined,
 					metadataPath,
 					signal,
 					onProgress: (progress) => setStep(hdr10PlusStep!, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
@@ -960,7 +1116,7 @@ export async function encodeJob(
 		const zlibDecisions = new Map<string, boolean>();
 
 		// Font state is populated by subtitle preparation and consumed by mux.
-		const sourceExt = extname(job.inputPath).toLowerCase();
+		const sourceExt = extname(sourcePath).toLowerCase();
 		const occupiedFontNames = new Set<string>();
 		// Fonts still referenced by untouched source subtitle content after the
 		// provisional restyle. Only this set may keep source font attachments.
@@ -1545,7 +1701,7 @@ export async function encodeJob(
 							"ffmpeg",
 							"-y",
 							"-i",
-							job.inputPath,
+							sourcePath,
 							"-map",
 							`0:${stream.index}`,
 							"-vn",
@@ -1574,7 +1730,7 @@ export async function encodeJob(
 						continue;
 					}
 
-					const ffArgs = ["ffmpeg", "-y", "-i", job.inputPath, "-map", `0:${stream.index}`, "-vn", "-sn", "-dn", "-c:a", "flac"];
+					const ffArgs = ["ffmpeg", "-y", "-i", sourcePath, "-map", `0:${stream.index}`, "-vn", "-sn", "-dn", "-c:a", "flac"];
 
 					if (delaySec < 0) {
 						ffArgs.push("-af", `atrim=start=${Math.abs(delaySec)}`);
@@ -1668,7 +1824,7 @@ export async function encodeJob(
 					const allSubtitleStreams = filterIgnoredTracks(probe.subtitleStreams || [], DEFAULT_IGNORE_KEYWORD, "subtitle");
 					await analyzeSubtitleStreams(
 						allSubtitleStreams,
-						job.inputPath,
+						sourcePath,
 						tempDir,
 						{
 							langDetect: job.settings.subtitleLangDetect,
@@ -1740,7 +1896,7 @@ export async function encodeJob(
 				try {
 					translatedTracks = await runTranslateStep({
 						subtitleStreams,
-						inputPath: job.inputPath,
+						inputPath: sourcePath,
 						tempDir,
 						settings: job.settings,
 						subtitleStyle: { ...DEFAULT_STYLE_APPEARANCE, fontName: job.settings.fontGroup },
@@ -1814,7 +1970,7 @@ export async function encodeJob(
 					checkCancelled();
 					setStep(S_SUBS, { progress: 20, detail: `Extracting ${plannedSubs.length} subtitle track(s)` });
 
-					const extractArgs: string[] = ["ffmpeg", "-y", "-i", job.inputPath];
+					const extractArgs: string[] = ["ffmpeg", "-y", "-i", sourcePath];
 					for (const planned of plannedSubs) {
 						extractArgs.push("-map", `0:${planned.stream.index}`, "-c:s", "copy", "-vn", "-an", "-map_chapters", "-1", "-map_metadata", "-1", planned.subFile);
 					}
@@ -1834,7 +1990,7 @@ export async function encodeJob(
 									"ffmpeg",
 									"-y",
 									"-i",
-									job.inputPath,
+									sourcePath,
 									"-map",
 									`0:${planned.stream.index}`,
 									"-c:s",
@@ -1904,7 +2060,7 @@ export async function encodeJob(
 							}
 						} else if (isAss) {
 							const rawPath = join(tempDir, `sub_${planned.stream.index}.raw.ass`);
-							const materialized = await materializeAssForInspection(job.inputPath, planned.stream.index, planned.subFile, rawPath, stageSignal);
+							const materialized = await materializeAssForInspection(sourcePath, planned.stream.index, planned.subFile, rawPath, stageSignal);
 							if (materialized.ok) {
 								preparedAss.set(planned.stream.index, {
 									rawPath,
@@ -1946,7 +2102,7 @@ export async function encodeJob(
 					// family identity. Therefore an unused Noto Sans does not force
 					// "Noto Sans 2", while a Noto Sans still used by signs does.
 					if (sourceExt === ".mkv" || sourceExt === ".mks") {
-						const sourceNames = await scanMkvAttachmentFontNames(job.inputPath, tempDir, sourceAttachmentUsedFonts, effectiveRemoveUnusedFonts, stageSignal);
+						const sourceNames = await scanMkvAttachmentFontNames(sourcePath, tempDir, sourceAttachmentUsedFonts, effectiveRemoveUnusedFonts, stageSignal);
 						if (sourceNames) {
 							for (const name of sourceNames) occupiedFontNames.add(name);
 						} else {
@@ -2247,7 +2403,7 @@ export async function encodeJob(
 			try {
 				unlinkSync(safeSourceLink);
 			} catch {}
-			symlinkSync(job.inputPath, safeSourceLink);
+			symlinkSync(sourcePath, safeSourceLink);
 
 			const refFlags = ["--no-video", "--no-global-tags", "--no-track-tags"];
 			if (!skipAudioEncode) refFlags.push("--no-audio");
@@ -2285,10 +2441,9 @@ export async function encodeJob(
 
 			if (skipAudioEncode) {
 				const audioRef = join(tempDir, "source_ref_audio.mkv");
-				const remuxRes = await run(
-					["ffmpeg", "-y", "-i", job.inputPath, "-map", "0:a?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", audioRef],
-					{ signal: stageSignal },
-				);
+				const remuxRes = await run(["ffmpeg", "-y", "-i", sourcePath, "-map", "0:a?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", audioRef], {
+					signal: stageSignal,
+				});
 				if (remuxRes.code === 0 && existsSync(audioRef)) {
 					mkvArgs.push("--no-video", "--no-subtitles", "--no-chapters", "--no-global-tags", "--no-track-tags", audioRef);
 					passes.push("audio");
@@ -2299,7 +2454,7 @@ export async function encodeJob(
 
 			if (skipSubtitleProcessing) {
 				const subsRef = join(tempDir, "source_ref_subs.mkv");
-				const remuxRes = await run(["ffmpeg", "-y", "-i", job.inputPath, "-map", "0:s?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", subsRef], {
+				const remuxRes = await run(["ffmpeg", "-y", "-i", sourcePath, "-map", "0:s?", "-map_metadata", "-1", "-map_chapters", "-1", "-c", "copy", subsRef], {
 					signal: stageSignal,
 				});
 				if (remuxRes.code === 0 && existsSync(subsRef)) {
@@ -2318,35 +2473,50 @@ export async function encodeJob(
 			}
 		}
 
-		setStep(S_MUX, { progress: 50, detail: `Merging MKV` });
+		setStep(S_MUX, { progress: 10, detail: "Merging MKV" });
 
-		const mergeRes = await run(mkvArgs, { signal });
+		const mergeRes = await run([mkvArgs[0]!, "--gui-mode", ...mkvArgs.slice(1)], {
+			signal,
+			onStdoutLine: (line) => {
+				const percent = mkvtoolnixProgress(line);
+				if (percent !== null) setStep(S_MUX, { progress: 10 + percent * 0.8, detail: "Merging MKV" });
+			},
+		});
+		checkCancelled();
 		if (mergeRes.code !== 0 && mergeRes.code !== 1) {
 			throw new Error(`mkvmerge failed: ${mergeRes.stderr || mergeRes.stdout}`);
 		}
 
-		setStep(S_MUX, { progress: 75, detail: "Applying color metadata" });
+		setStep(S_MUX, { progress: 90, detail: "Applying color metadata" });
 		await applyColorMetadata(finalOutput, probe, signal, hdr10Plus?.measurement);
+		setStep(S_MUX, { status: "done", progress: 100 });
+		setStep(S_WRITE, { status: "active", progress: 0, detail: "Writing output" });
+		updateJob({ status: "writing_output" });
 
 		if (previewMode && sink) {
 			const encodedClip = join(sink.dir, "encoded.mkv");
-			const cp = await run(["cp", finalOutput, encodedClip], { signal });
-			if (cp.code !== 0) throw new Error(`Preview clip copy failed: ${cp.stderr || cp.stdout}`);
+			await moveFileWithProgress(finalOutput, encodedClip, signal, (copied, total, finished) => {
+				setStep(S_WRITE, {
+					progress: finished ? 99 : total > 0 ? Math.min(98, (copied / total) * 98) : 0,
+					detail: `Writing preview ${humanSize(copied)} / ${humanSize(total)}`,
+				});
+			});
+			setStep(S_WRITE, { progress: 99, detail: "Capturing preview" });
 			await sink.capture(encodedClip, "encode.png", burnModeForFirstSub(opts.precomputed?.subtitleStreams ?? probe.subtitleStreams));
-			setStep(S_MUX, { status: "done", progress: 100 });
+			setStep(S_WRITE, { status: "done", progress: 100 });
 			try {
 				rmSync(tempDir, { recursive: true, force: true });
 			} catch {}
 			return;
 		}
 
-		setStep(S_MUX, { progress: 85, detail: "Moving to output" });
-
-		const outputPath = await finalizeOutput(job, config, finalOutput, outputFilename, signal);
+		const outputPath = await finalizeOutput(job, config, finalOutput, outputFilename, signal, (progress, detail) => {
+			setStep(S_WRITE, { progress, detail });
+		});
 
 		const finalName = basename(outputPath);
 
-		setStep(S_MUX, { status: "done", progress: 100 });
+		setStep(S_WRITE, { status: "done", progress: 100 });
 
 		updateJob({
 			status: "done",

@@ -397,10 +397,12 @@ export function resetDefaults(): JobSettings {
 export function getAllJobs(): Job[] {
 	return Array.from(jobs.values()).sort((a, b) => {
 		const order: Record<string, number> = {
+			staging_source: 0,
 			probing: 0,
 			encoding_video: 0,
 			encoding_audio: 0,
 			muxing: 0,
+			writing_output: 0,
 			queued: 1,
 			done: 2,
 			error: 3,

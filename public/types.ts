@@ -58,7 +58,8 @@ export interface AvdParams {
 	scales: Record<AvdSelfTuningEngine, number>;
 }
 
-export type JobStatus = "queued" | "probing" | "encoding_video" | "encoding_audio" | "muxing" | "done" | "error" | "cancelled";
+export type JobStatus =
+	"queued" | "staging_source" | "probing" | "encoding_video" | "encoding_audio" | "muxing" | "writing_output" | "done" | "error" | "cancelled";
 
 export const MEDIA_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".webm", ".flv", ".ts", ".mov"]);
 

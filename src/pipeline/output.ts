@@ -1,16 +1,17 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "fs";
+import { chmodSync, createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, utimesSync } from "fs";
+import { randomUUID } from "crypto";
 import { basename, dirname, extname, join, parse as parsePath, resolve } from "path";
+import { pipeline } from "stream/promises";
+import { Transform } from "stream";
 import type { AppConfig, Job } from "../core/types";
 import { Logger } from "../core/logger";
-import { run } from "../core/process";
+import { CancelledError, humanSize } from "../core/process";
 
 /**
  * Shared output finalization for every pipeline (full encode, translate-only).
  *
- * Extracted verbatim from encoder.ts so the "library replace-in-place vs
- * watched-input → output dir" contract cannot drift between pipelines.
- * encoder.ts should delete its local copies of resolveUniqueOutputPath and
- * cleanupAssociatedFiles and import them from here instead.
+ * Both pipelines use this module for output paths, source recycling, and
+ * progress while transferring files between filesystems.
  */
 
 /**
@@ -74,25 +75,97 @@ export function resolveUniqueOutputPath(dir: string, filename: string, ignorePat
  * gets a numeric suffix instead. Throws if the source could not be moved, so
  * callers never go on to destroy an original that was not saved.
  */
-export async function recycleSource(sourcePath: string, recycleBinDir: string, signal?: AbortSignal): Promise<string> {
+export type OutputProgress = (percent: number, detail: string) => void;
+export type ByteProgress = (copied: number, total: number, finished: boolean) => void;
+
+/** Move within a filesystem, or stream through a temporary destination file across filesystems. */
+export async function moveFileWithProgress(source: string, destination: string, signal?: AbortSignal, onProgress?: ByteProgress): Promise<void> {
+	if (signal?.aborted) throw new CancelledError();
+	if (resolve(source) === resolve(destination)) {
+		onProgress?.(1, 1, true);
+		return;
+	}
+	try {
+		renameSync(source, destination);
+		onProgress?.(1, 1, true);
+		return;
+	} catch (error: any) {
+		if (error?.code !== "EXDEV") throw error;
+	}
+	await copyFileWithProgress(source, destination, signal, onProgress);
+}
+
+/** Stream a move through a hidden destination file and publish it after the copy succeeds. */
+export async function copyFileWithProgress(source: string, destination: string, signal?: AbortSignal, onProgress?: ByteProgress): Promise<void> {
+	await transferFileWithProgress(source, destination, true, signal, onProgress);
+}
+
+/** Copy a source into the working directory while keeping the original. */
+export async function stageFileWithProgress(source: string, destination: string, signal?: AbortSignal, onProgress?: ByteProgress): Promise<void> {
+	await transferFileWithProgress(source, destination, false, signal, onProgress);
+}
+
+async function transferFileWithProgress(
+	source: string,
+	destination: string,
+	removeSource: boolean,
+	signal?: AbortSignal,
+	onProgress?: ByteProgress,
+): Promise<void> {
+	if (signal?.aborted) throw new CancelledError();
+	const sourceStat = statSync(source);
+	const total = sourceStat.size;
+	const partial = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.part`);
+	let copied = 0;
+	let lastReported = 0;
+	const counter = new Transform({
+		transform(chunk: Buffer, _encoding, callback) {
+			copied += chunk.length;
+			const now = Date.now();
+			if (now - lastReported >= 250 || copied === total) {
+				onProgress?.(copied, total, false);
+				lastReported = now;
+			}
+			callback(null, chunk);
+		},
+	});
+	try {
+		onProgress?.(0, total, false);
+		await pipeline(createReadStream(source), counter, createWriteStream(partial, { flags: "wx" }), { signal });
+		if (signal?.aborted) throw new CancelledError();
+		try {
+			chmodSync(partial, sourceStat.mode & 0o777);
+			utimesSync(partial, sourceStat.atime, sourceStat.mtime);
+		} catch (error: any) {
+			Logger.warn(`[output] Could not preserve file permissions or timestamps: ${error?.message || error}`);
+		}
+		renameSync(partial, destination);
+		if (removeSource) unlinkSync(source);
+		onProgress?.(total, total, true);
+	} catch (error) {
+		try {
+			unlinkSync(partial);
+		} catch {}
+		if (signal?.aborted) throw new CancelledError();
+		throw error;
+	}
+}
+
+function reportTransfer(onProgress: OutputProgress | undefined, start: number, end: number, label: string): ByteProgress {
+	return (copied, total, finished) => {
+		const fraction = finished ? 1 : total > 0 ? Math.min(0.99, copied / total) : 0;
+		const detail = total > 1 ? `${label} ${humanSize(copied)} / ${humanSize(total)}` : label;
+		onProgress?.(start + (end - start) * fraction, detail);
+	};
+}
+
+export async function recycleSource(sourcePath: string, recycleBinDir: string, signal?: AbortSignal, onProgress?: ByteProgress): Promise<string> {
 	const source = resolve(sourcePath);
 	const binDir = join(recycleBinDir, dirname(source));
 	mkdirSync(binDir, { recursive: true });
 	const binPath = resolveUniqueOutputPath(binDir, basename(source));
 
-	try {
-		renameSync(source, binPath);
-	} catch {
-		// Different filesystem: copy, then drop the source.
-		const copied = await run(["cp", "--reflink=auto", source, binPath], { signal });
-		if (copied.code !== 0) {
-			try {
-				unlinkSync(binPath);
-			} catch {}
-			throw new Error(`Failed to move source to recycle bin: ${(copied.stderr || copied.stdout).trim().slice(-300)}`);
-		}
-		unlinkSync(source);
-	}
+	await moveFileWithProgress(source, binPath, signal, onProgress);
 
 	Logger.info(`[library] Moved source to recycle bin: ${binPath}`);
 	return binPath;
@@ -112,7 +185,14 @@ export async function recycleSource(sourcePath: string, recycleBinDir: string, s
  * caller's responsibility (matching encodeJob's existing behavior), because
  * some flows finalize by moving the input file itself.
  */
-export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: string, outputFilename: string, signal?: AbortSignal): Promise<string> {
+export async function finalizeOutput(
+	job: Job,
+	config: AppConfig,
+	finishedFile: string,
+	outputFilename: string,
+	signal?: AbortSignal,
+	onProgress?: OutputProgress,
+): Promise<string> {
 	let outputPath: string;
 
 	if (job.replaceSource) {
@@ -122,25 +202,24 @@ export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: 
 
 		// Overwriting in place: the source has to be out of the way first.
 		if (overwritesSource && config.recycleBinDir) {
-			await recycleSource(job.inputPath, config.recycleBinDir, signal);
+			await recycleSource(job.inputPath, config.recycleBinDir, signal, reportTransfer(onProgress, 0, 20, "Recycling source"));
 		}
 
-		const moveRes = await run(["mv", finishedFile, outputPath], { signal });
-		if (moveRes.code !== 0) {
-			await run(["cp", finishedFile, outputPath], { signal });
-			unlinkSync(finishedFile);
-		}
+		const outputStart = overwritesSource && config.recycleBinDir ? 20 : 0;
+		const outputEnd = !overwritesSource && config.recycleBinDir ? 80 : 100;
+		await moveFileWithProgress(finishedFile, outputPath, signal, reportTransfer(onProgress, outputStart, outputEnd, "Writing output"));
 
 		if (!overwritesSource) {
 			cleanupAssociatedFiles(job.inputPath);
 			try {
 				if (config.recycleBinDir) {
-					await recycleSource(job.inputPath, config.recycleBinDir, signal);
+					await recycleSource(job.inputPath, config.recycleBinDir, signal, reportTransfer(onProgress, 80, 100, "Recycling source"));
 				} else {
 					unlinkSync(job.inputPath);
 					Logger.info(`[library] Removed source: ${job.filename}`);
 				}
 			} catch (err: any) {
+				if (err instanceof CancelledError) throw err;
 				Logger.warn(`[library] Failed to ${config.recycleBinDir ? "recycle" : "remove"} source ${job.filename}:`, { "error.message": err?.message });
 			}
 		}
@@ -151,11 +230,7 @@ export async function finalizeOutput(job: Job, config: AppConfig, finishedFile: 
 		mkdirSync(outputSubDir, { recursive: true });
 		outputPath = resolveUniqueOutputPath(outputSubDir, outputFilename);
 
-		const moveRes = await run(["mv", finishedFile, outputPath], { signal });
-		if (moveRes.code !== 0) {
-			await run(["cp", finishedFile, outputPath], { signal });
-			unlinkSync(finishedFile);
-		}
+		await moveFileWithProgress(finishedFile, outputPath, signal, reportTransfer(onProgress, 0, 100, "Writing output"));
 	}
 
 	return outputPath;
