@@ -516,7 +516,7 @@ export interface SubtitleAddTrack {
 	fromPicture?: boolean;
 	forced?: boolean;
 	original?: boolean;
-	/** For a track read from a picture track: the default of its language, as no kept track is. */
+	/** The default of its language, as no track the video keeps is. Decided when the job runs. */
 	isDefault?: boolean;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { findTranslateSource, planTrackOrder, type ExistingTrack } from "../../src/pipeline/translate-only";
+import { existingSubtitleKind, findTranslateSource, planTrackOrder, type ExistingTrack } from "../../src/pipeline/translate-only";
 import type { SubtitleStreamInfo } from "../../src/core/types";
 
 const streams: SubtitleStreamInfo[] = [
@@ -55,6 +55,26 @@ describe("planTrackOrder", () => {
 
 	it("orders several new tracks and never moves existing ones", () => {
 		expect(planTrackOrder(file, ["dan", "fre"], ["eng", "*"])).toBe("0:0,0:1,0:2,0:3,1:0,0:4,0:5,2:0");
+	});
+
+	it("puts text read from pictures before the pictures and before forced tracks of its language", () => {
+		const tracks: ExistingTrack[] = [
+			{ id: 0, type: "video" },
+			{ id: 1, type: "audio", language: "jpn" },
+			{ id: 2, type: "subtitles", language: "eng", kind: "full", text: false },
+			{ id: 3, type: "subtitles", language: "eng", kind: "forced", text: false },
+			{ id: 4, type: "subtitles", language: "slv", kind: "full", text: true },
+		];
+		expect(planTrackOrder(tracks, [{ language: "eng", kind: "full", text: true }], ["eng", "slv", "*"])).toBe("0:0,0:1,1:0,0:2,0:3,0:4");
+		expect(planTrackOrder(tracks, [{ language: "eng", kind: "full", text: true }], ["eng", "slv", "*"], "picture-first")).toBe("0:0,0:1,0:2,1:0,0:3,0:4");
+		expect(planTrackOrder(tracks, [{ language: "eng", kind: "sdh", text: true }], ["eng", "slv", "*"])).toBe("0:0,0:1,0:2,1:0,0:3,0:4");
+	});
+
+	it("reads the kind of existing tracks from their flags and names", () => {
+		expect(existingSubtitleKind({ codec_id: "S_HDMV/PGS", forced_track: true })).toEqual({ kind: "forced", text: false });
+		expect(existingSubtitleKind({ codec_id: "S_TEXT/UTF8", track_name: "English SDH" })).toEqual({ kind: "sdh", text: true });
+		expect(existingSubtitleKind({ codec_id: "S_TEXT/ASS", track_name: "Signs & Songs" })).toEqual({ kind: "forced", text: true });
+		expect(existingSubtitleKind({ codec_id: "S_TEXT/ASS", track_name: "Full Subtitles [SubsPlease]" })).toEqual({ kind: "full", text: true });
 	});
 
 	it("appends when the file has no subtitles", () => {

@@ -6,7 +6,8 @@ import { inflateSync } from "zlib";
 import { getDefaultJobSettings } from "../../src/core/config";
 import { run } from "../../src/core/process";
 import type { AppConfig, Job, JobSettings } from "../../src/core/types";
-import { cleanOcrText, ocrDefaults } from "../../src/ocr/ocr";
+import { cleanOcrText } from "../../src/ocr/ocr";
+import { addedDefaults } from "../../src/translate/translate-step";
 import { decodeRle, parsePgs } from "../../src/ocr/pgs";
 import { encodeGrayPng } from "../../src/ocr/png";
 import { runTranslateOnlyJob } from "../../src/pipeline/translate-only";
@@ -73,18 +74,26 @@ describe("PGS decoding", () => {
 	});
 });
 
-describe("ocrDefaults", () => {
-	const pgs = (index: number, language: string, extra: Record<string, unknown> = {}) => ({ index, codec: "hdmv_pgs_subtitle", language, ...extra });
-	it("makes a read track the default only when nothing kept of its language is", () => {
-		expect([...ocrDefaults([pgs(2, "eng")], [pgs(2, "eng")])]).toEqual([]);
-		expect([...ocrDefaults([], [pgs(2, "eng")])]).toEqual([2]);
+describe("addedDefaults", () => {
+	const stream = (index: number, language: string, extra: Record<string, unknown> = {}) => ({ index, codec: "hdmv_pgs_subtitle", language, ...extra });
+	it("makes an added track the default only when nothing kept of its language is", () => {
+		expect([...addedDefaults([stream(2, "eng")], [{ language: "eng", trackType: "full" }])]).toEqual([]);
+		expect([...addedDefaults([], [{ language: "eng", trackType: "full" }])]).toEqual([0]);
 		// A forced track is never the default, so it leaves the language without one.
-		expect([...ocrDefaults([pgs(3, "eng", { isForced: true })], [pgs(2, "eng")])]).toEqual([2]);
+		expect([...addedDefaults([stream(3, "eng", { isForced: true })], [{ language: "eng", trackType: "full" }])]).toEqual([0]);
+		// An SDH track of the language already is, so a downloaded full track does not make it two.
+		expect([...addedDefaults([stream(4, "slv", { isHearingImpaired: true, title: "SDH" })], [{ language: "sl", trackType: "full" }])]).toEqual([]);
 	});
 
-	it("prefers the full track to SDH and never picks a forced one", () => {
-		const read = [pgs(4, "slv", { title: "SDH", isHearingImpaired: true }), pgs(5, "slv"), pgs(6, "ger", { isForced: true })];
-		expect([...ocrDefaults([], read)]).toEqual([5]);
+	it("prefers full to SDH, and never picks forced tracks or extra languages", () => {
+		const added = [
+			{ language: "slv", trackType: "sdh" },
+			{ language: "slv", trackType: "full" },
+			{ language: "ger", trackType: "forced" },
+			{ language: "spa", trackType: "full", extra: true },
+			{ language: "fre", trackType: "sdh" },
+		];
+		expect([...addedDefaults([], added)].sort()).toEqual([1, 4]);
 	});
 });
 
@@ -198,12 +207,13 @@ describe("cleanOcrText", () => {
 
 		const info = JSON.parse((await run(["mkvmerge", "-J", done.inputPath])).stdout);
 		const subs = (info.tracks as any[]).filter((t) => t.type === "subtitles");
+		// Text comes before pictures of the same language, as for native tracks.
 		expect(subs.map((t) => [t.codec, t.properties.track_name])).toEqual([
-			["HDMV PGS", "English"],
 			["SubRip/SRT", "Full Subtitles [OCR]"],
+			["HDMV PGS", "English"],
 		]);
 		const out = join(root, "read.srt");
-		await run(["mkvextract", done.inputPath, "tracks", `${subs[1].id}:${out}`]);
+		await run(["mkvextract", done.inputPath, "tracks", `${subs[0].id}:${out}`]);
 		const srt = readFileSync(out, "utf-8");
 		expect(srt).toContain("00:00:02,000 --> 00:00:03,500\nLine 1");
 		expect(srt).toContain("00:00:06,000 --> 00:00:07,000\nLine 1");
@@ -253,8 +263,8 @@ describe("cleanOcrText", () => {
 		expect(english.status).toBe("done");
 		// The picture track stays and keeps the default, so the text does not take it too.
 		expect((await subtitleTracks(english.inputPath)).map((t) => [t[0], t[2]])).toEqual([
-			["HDMV PGS", true],
 			["SubRip/SRT", false],
+			["HDMV PGS", true],
 		]);
 		const german = await ocrTool("tool-ger", { languages: ["deu"] });
 		expect(german.status).toBe("done");

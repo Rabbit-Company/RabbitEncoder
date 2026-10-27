@@ -117,9 +117,8 @@ describe("most used languages", () => {
 		expect(POPULAR_SUBTITLE_LANGUAGES).toHaveLength(30);
 	});
 
-	it("never makes an extra language the default track", () => {
-		expect(computeDownloadedFlagArgs(false).slice(0, 2)).toEqual(["--default-track-flag", "0:1"]);
-		expect(computeDownloadedFlagArgs(false, false).slice(0, 2)).toEqual(["--default-track-flag", "0:0"]);
-		expect(computeDownloadedFlagArgs(true).slice(0, 2)).toEqual(["--default-track-flag", "0:0"]);
+	it("sets the default flag as decided", () => {
+		expect(computeDownloadedFlagArgs(false, true).slice(0, 2)).toEqual(["--default-track-flag", "0:1"]);
+		expect(computeDownloadedFlagArgs(true, false).slice(0, 4)).toEqual(["--default-track-flag", "0:0", "--forced-display-flag", "0:0"]);
 	});
 });

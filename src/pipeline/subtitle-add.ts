@@ -4,7 +4,7 @@ import type { AppConfig, Job, JobStep, SubtitleAddPlan, SubtitleAddTrack, Subtit
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
 import { buildSubtitleTrackName, detectSubtitleTrackType, sanitizeLanguageTag } from "../tracks/tracks";
-import { ocrDefaults, ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
+import { ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { probeFile } from "./probe";
 import { fitTimingToVideo } from "../ocr/fit-timing";
@@ -12,10 +12,10 @@ import { IDENTITY_MAP, retimeDocument, type TimeMap } from "../subsearch/cues";
 import { finalizeOutput } from "./output";
 import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
-import { computeDownloadedFlagArgs, styleSource } from "../translate/translate-step";
+import { addedDefaults, computeDownloadedFlagArgs, styleSource } from "../translate/translate-step";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { prepareRemuxAddition, type AddedTrack } from "../subtitles/added-tracks";
-import { orderTranslatedByPriority, planTrackOrder, type ExistingTrack } from "./translate-only";
+import { existingSubtitleKind, orderTranslatedByPriority, planTrackOrder, type ExistingTrack } from "./translate-only";
 
 export function describeSubtitleAddPlan(plan: SubtitleAddPlan): string {
 	if (plan.ocr) {
@@ -82,13 +82,6 @@ async function readPictureTracks(
 		note = fit.note;
 	}
 
-	// The video keeps its own tracks, without the picture tracks this job removes.
-	const removing = source === plan.targetPath && request.removePictures ? new Set(texts.map((t) => t.stream.index)) : new Set<number>();
-	const kept = (targetProbe.subtitleStreams ?? []).filter((s) => !removing.has(s.index));
-	const defaults = ocrDefaults(
-		kept,
-		texts.map((t) => t.stream),
-	);
 	const tracks: SubtitleAddTrack[] = [];
 	for (const { stream, srt } of texts) {
 		const type = detectSubtitleTrackType(stream);
@@ -105,7 +98,6 @@ async function readPictureTracks(
 			fromPicture: true,
 			forced: !!stream.isForced,
 			original: !!stream.isOriginal,
-			isDefault: defaults.has(stream.index),
 		});
 	}
 	// Only the video's own picture tracks can be removed from it.
@@ -166,6 +158,13 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 			if (plan.ocr.removePictures) removed = result.read;
 		}
 
+		// One default per language: the video keeps its own tracks, without the picture tracks this job removes.
+		const removedIndexes = new Set(removed.map((s) => s.index));
+		const kept = ((await probeFile(plan.targetPath)).subtitleStreams ?? []).filter((s) => !removedIndexes.has(s.index));
+		const kinds = tracks.map((t) => ({ language: t.language, trackType: t.trackType ?? (t.hearingImpaired ? "sdh" : "full"), extra: t.extra }));
+		const defaults = addedDefaults(kept, kinds);
+		tracks = tracks.map((t, i) => ({ ...t, isDefault: defaults.has(i) }));
+
 		setStep(S_MUX, { status: "active", progress: 0, detail: "Styling subtitles" });
 		updateJob({ status: "muxing" });
 		// The same styling native tracks get: SRT to ASS and the dialogue font, per the settings.
@@ -195,6 +194,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 				id: t.id,
 				type: t.type,
 				language: t.properties.language_ietf || t.properties.language,
+				...existingSubtitleKind(t.properties),
 			}));
 		const finalOutput = join(tempDir, "final.mkv");
 		const args = ["mkvmerge", "--gui-mode", "-o", finalOutput, ...(dropIds.size ? ["--subtitle-tracks", `!${[...dropIds].join(",")}`] : []), plan.targetPath];
@@ -207,7 +207,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 						track.trackType ?? "full",
 						track.isDefault,
 					)
-				: computeDownloadedFlagArgs(track.hearingImpaired, !track.extra);
+				: computeDownloadedFlagArgs(track.hearingImpaired, !!track.isDefault);
 			args.push(...flags, ...(addition.compressionArgs.get(track.file) ?? []), track.file);
 		}
 		args.push(...addition.fontArgs);
@@ -215,8 +215,9 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 			"--track-order",
 			planTrackOrder(
 				existing,
-				ordered.map((t) => t.language),
+				ordered.map((t) => ({ language: t.language, kind: t.trackType ?? (t.hearingImpaired ? "sdh" : "full") })),
 				job.settings.subtitleLanguagePriority,
+				job.settings.subtitleFormatPriority,
 			),
 		);
 		Logger.info(`[subsearch] Muxing ${ordered.map((t) => t.language).join(", ")} into ${basename(plan.targetPath)}`);

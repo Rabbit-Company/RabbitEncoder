@@ -7,7 +7,7 @@ import type { JobSettings, SubtitleStreamInfo } from "../core/types";
 import { stripCodeFences } from "../translate/generic";
 import { chatComplete, type LlmChatOptions } from "../translate/llm-client";
 import { resolveTranslateLang } from "../translate/translate-languages";
-import { computeSubtitleDefaultIndexByLang, detectSubtitleTrackType, isTextSubtitleCodec } from "../tracks/tracks";
+import { detectSubtitleTrackType, isTextSubtitleCodec } from "../tracks/tracks";
 import { parsePgs, type PgsImage } from "./pgs";
 import { encodeGrayPng } from "./png";
 
@@ -40,18 +40,6 @@ export function unreadPictureTracks(streams: SubtitleStreamInfo[], textStreams: 
 		covered.add(trackKey(s));
 		return true;
 	});
-}
-
-/**
- * Read tracks that become the default of their language: the best one, full
- * before SDH as for native tracks, of each language no kept track would be
- * the default for. A language never ends up with two defaults.
- */
-export function ocrDefaults(kept: SubtitleStreamInfo[], read: SubtitleStreamInfo[]): Set<number> {
-	const nativeWinners = computeSubtitleDefaultIndexByLang(kept);
-	const out = new Set<number>();
-	for (const [group, index] of computeSubtitleDefaultIndexByLang(read)) if (!nativeWinners.has(group)) out.add(index);
-	return out;
 }
 
 /** Flag args for a text track read from a picture track: its own flags, and the default only when `isDefault`. */

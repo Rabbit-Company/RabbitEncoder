@@ -7,8 +7,15 @@ import { probeFile } from "../pipeline/probe";
 import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
 import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
 import { downloadedTrackName } from "../subsearch/naming";
-import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec, type SubtitleTrackType } from "../tracks/tracks";
-import { ocrDefaults, ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
+import {
+	detectSubtitleTrackType,
+	buildSubtitleTrackName,
+	computeSubtitleDefaultIndexByLang,
+	isTextSubtitleCodec,
+	normalizeLanguageGroup,
+	type SubtitleTrackType,
+} from "../tracks/tracks";
+import { ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import {
@@ -47,6 +54,8 @@ export interface TranslatedTrack {
 	downloaded?: boolean;
 	/** Read from a picture subtitle with OCR. */
 	ocr?: boolean;
+	/** One of the most used languages, added on top of the targets. */
+	extra?: boolean;
 	/** Its dialogue uses the font group, so the final face is applied and attached before muxing. */
 	restyle?: boolean;
 }
@@ -113,15 +122,11 @@ export function computeTranslatedFlagArgs(trackType: "full" | "honorifics"): str
 	];
 }
 
-/**
- * Flag args for a downloaded track. A full track becomes the default of its
- * language, an SDH one does not, and neither do extra languages, as dozens of
- * default tracks would confuse players.
- */
-export function computeDownloadedFlagArgs(hearingImpaired: boolean, isDefault = true): string[] {
+/** Flag args for a downloaded track. Which added track is the default of its language is decided by `addedDefaults`. */
+export function computeDownloadedFlagArgs(hearingImpaired: boolean, isDefault: boolean): string[] {
 	return [
 		"--default-track-flag",
-		`0:${isDefault && !hearingImpaired ? 1 : 0}`,
+		`0:${isDefault ? 1 : 0}`,
 		"--forced-display-flag",
 		"0:0",
 		"--hearing-impaired-flag",
@@ -131,6 +136,48 @@ export function computeDownloadedFlagArgs(hearingImpaired: boolean, isDefault = 
 		"--original-flag",
 		"0:0",
 	];
+}
+
+const DEFAULT_RANK: Record<string, number> = { full: 0, honorifics: 1, sdh: 2 };
+
+/** What decides whether an added track can be the default of its language. */
+export interface AddedTrackKind {
+	language: string;
+	trackType: string;
+	/** One of the most used languages added on top. These are never the default, as dozens of defaults would confuse players. */
+	extra?: boolean;
+}
+
+/**
+ * Added tracks that become the default of their language: the best one, full
+ * before honorifics before SDH as for native tracks, of each language no kept
+ * track would be the default for. Forced and commentary tracks never are, so a
+ * language never ends up with two defaults or, when it can have one, none.
+ */
+export function addedDefaults(kept: SubtitleStreamInfo[], added: AddedTrackKind[]): Set<number> {
+	// "slv", "sl" and "sl-SI" are one language, which the native grouping alone would not see.
+	const group = (language: string | undefined) => resolveTranslateLang(language)?.code.toLowerCase() ?? normalizeLanguageGroup(language);
+	const winners = new Set(computeSubtitleDefaultIndexByLang(kept).values());
+	const taken = new Set(kept.filter((s) => winners.has(s.index)).map((s) => group(s.language)));
+	const best = new Map<string, number>();
+	added.forEach((track, i) => {
+		const rank = DEFAULT_RANK[track.trackType];
+		const language = group(track.language);
+		if (rank === undefined || track.extra || taken.has(language)) return;
+		const current = best.get(language);
+		if (current === undefined || rank < DEFAULT_RANK[added[current]!.trackType]!) best.set(language, i);
+	});
+	return new Set(best.values());
+}
+
+/** Sets the default flag of added tracks, against the tracks the output keeps. */
+function applyAddedDefaults(kept: SubtitleStreamInfo[], tracks: TranslatedTrack[]): TranslatedTrack[] {
+	const defaults = addedDefaults(kept, tracks);
+	tracks.forEach((track, i) => {
+		const at = track.flagArgs.indexOf("--default-track-flag");
+		if (at >= 0) track.flagArgs[at + 1] = `0:${defaults.has(i) ? 1 : 0}`;
+	});
+	return tracks;
 }
 
 /** Target languages that have no full or honorifics track yet, each once. */
@@ -180,10 +227,11 @@ async function downloadedTracks(
 			language: normalizeTag(d.language),
 			trackName: downloadedTrackName(trackType, d.release, d.uploader, d.fileName),
 			trackType,
-			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, !d.extra),
+			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, false),
 			format: styled.format,
 			sourceIndex: -1,
 			downloaded: true,
+			...(d.extra ? { extra: true } : {}),
 			restyle: styled.styled,
 		});
 	}
@@ -451,6 +499,8 @@ export async function prepareSeriesNotesForFile(p: PrepareNotesForFileParams): P
  */
 export async function runTranslateStep(params: RunTranslateStepParams): Promise<TranslatedTrack[]> {
 	const { inputPath, tempDir, settings, subtitleStyle, signal } = params;
+	const natives = params.subtitleStreams;
+	const finish = (tracks: TranslatedTrack[]) => applyAddedDefaults(natives, tracks);
 
 	const targets = settings.translateTargetLanguages ?? [];
 	const extraCount = settings.subtitleDownloadExtraLanguages ?? 0;
@@ -460,7 +510,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 
 	// Text read from picture subtitles counts as a track the file has, and can be translated from.
 	const read = ocr ? await ocrPictureTracks(params) : { tracks: [], streams: [], byPictureIndex: new Map<number, number>() };
-	if (!translating) return read.tracks;
+	if (!translating) return finish(read.tracks);
 	const subtitleStreams = [...params.subtitleStreams, ...read.streams];
 	const forced = params.forceSourceIndex;
 	params = { ...params, subtitleStreams, forceSourceIndex: forced !== undefined ? (read.byPictureIndex.get(forced) ?? forced) : undefined };
@@ -499,18 +549,18 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	const aiTargets = missingTargetLanguages(descriptors, targets).filter((t) => !covered.has(resolveTranslateLang(t)?.code));
 	if (params.skipAi || (download && settings.subtitleDownloadAiFallback === false) || aiTargets.length === 0) {
 		if (aiTargets.length) Logger.info(`[translate] Not translating ${aiTargets.join(", ")} with AI`);
-		return kept;
+		return finish(kept);
 	}
 
 	try {
-		return [...kept, ...(await translateWithAi(params, descriptors, aiTargets, downloaded))];
+		return finish([...kept, ...(await translateWithAi(params, descriptors, aiTargets, downloaded))]);
 	} catch (error) {
 		// Subtitles already made are kept when the AI provider fails, so an encode is not lost for one language.
 		if (!kept.length || error instanceof CancelledError || signal?.aborted) throw error;
 		const warning = `AI translation failed, ${aiTargets.join(", ")} not translated: ${error instanceof Error ? error.message : String(error)}`;
 		Logger.warn(`[translate] ${warning}`);
 		params.onWarning?.(warning);
-		return kept;
+		return finish(kept);
 	}
 }
 
@@ -577,15 +627,9 @@ async function ocrPictureTracks(params: RunTranslateStepParams): Promise<OcrRead
 			params.onWarning?.(warning);
 		}
 	}
-	// The output keeps every track the step was given, except the picture tracks being dropped.
-	const defaults = ocrDefaults(subtitleStreams, readFrom);
 	readFrom.forEach((stream, i) => {
 		const track = read.tracks[i]!;
-		track.flagArgs = pictureTrackFlagArgs(
-			{ forced: stream.isForced, hearingImpaired: stream.isHearingImpaired, original: stream.isOriginal },
-			track.trackType,
-			defaults.has(stream.index),
-		);
+		track.flagArgs = pictureTrackFlagArgs({ forced: stream.isForced, hearingImpaired: stream.isHearingImpaired, original: stream.isOriginal }, track.trackType);
 	});
 	return read;
 }

@@ -80,28 +80,80 @@ export interface ExistingTrack {
 	id: number;
 	type: string;
 	language?: string;
+	/** Kind of subtitle track (full, sdh, forced...), when known. */
+	kind?: string;
+	/** A text subtitle track, as opposed to pictures. */
+	text?: boolean;
+}
+
+/** A track being added: its language, and its kind when not a full text track. */
+export type AddedTrackOrder = string | { language: string; kind?: string; text?: boolean };
+
+/** Same order of kinds as native tracks. */
+const KIND_ORDER = ["full", "honorifics", "sdh", "forced", "commentary", "storyboard"];
+
+interface OrderKey extends PriorityKey {
+	kind: number;
+	format: number;
+}
+
+function compareOrderKeys(a: OrderKey, b: OrderKey): number {
+	return compareKeys(a, b) || a.kind - b.kind || a.format - b.format;
+}
+
+/** Kind and format of an existing MKV subtitle track, from its flags and name. */
+export function existingSubtitleKind(properties: {
+	track_name?: string;
+	codec_id?: string;
+	forced_track?: boolean;
+	flag_hearing_impaired?: boolean;
+	flag_commentary?: boolean;
+}): { kind: string; text: boolean } {
+	const name = (properties.track_name ?? "").toLowerCase();
+	const kind =
+		properties.flag_commentary || /comment/.test(name)
+			? "commentary"
+			: properties.forced_track || /\bforced\b|signs?\b|songs?\b/.test(name)
+				? "forced"
+				: properties.flag_hearing_impaired || /\bsdh\b|hearing|\bcc\b/.test(name)
+					? "sdh"
+					: /honorific/.test(name)
+						? "honorifics"
+						: "full";
+	return { kind, text: /^S_TEXT\//i.test(properties.codec_id ?? "") };
 }
 
 /**
- * mkvmerge --track-order for appending translated subtitles. Existing tracks
- * keep their order. Each new track (file i + 1, track 0) goes right after the
- * last subtitle track that sorts before or with it, or before the first
- * subtitle track when none does.
+ * mkvmerge --track-order for appending subtitles. Existing tracks keep their
+ * order. Each new track (file i + 1, track 0) goes right after the last
+ * subtitle track that sorts before or with it, by language priority, then kind
+ * as for native tracks, then text before pictures unless pictures come first,
+ * or before the first subtitle track when none does.
  */
-export function planTrackOrder(existing: ExistingTrack[], addedLanguages: string[], priority: string[]): string {
-	const key = priorityKey(priority);
-	const entries: Array<{ ref: string; key?: PriorityKey }> = existing.map((t) => ({
+export function planTrackOrder(
+	existing: ExistingTrack[],
+	added: AddedTrackOrder[],
+	priority: string[],
+	formatPriority: "text-first" | "picture-first" = "text-first",
+): string {
+	const languageKey = priorityKey(priority);
+	const key = (language: string | undefined, kind = "full", text = true): OrderKey => ({
+		...languageKey(language),
+		kind: KIND_ORDER.includes(kind) ? KIND_ORDER.indexOf(kind) : KIND_ORDER.length,
+		format: text === (formatPriority === "text-first") ? 0 : 1,
+	});
+	const entries: Array<{ ref: string; key?: OrderKey }> = existing.map((t) => ({
 		ref: `0:${t.id}`,
-		key: t.type === "subtitles" ? key(t.language) : undefined,
+		key: t.type === "subtitles" ? key(t.language, t.kind, t.text ?? true) : undefined,
 	}));
-	addedLanguages.forEach((lang, i) => {
-		const k = key(lang);
+	added.forEach((track, i) => {
+		const k = typeof track === "string" ? key(track) : key(track.language, track.kind, track.text ?? true);
 		let at = -1;
 		let firstSub = -1;
 		entries.forEach((e, idx) => {
 			if (!e.key) return;
 			if (firstSub < 0) firstSub = idx;
-			if (compareKeys(e.key, k) <= 0) at = idx + 1;
+			if (compareOrderKeys(e.key, k) <= 0) at = idx + 1;
 		});
 		if (at < 0) at = firstSub >= 0 ? firstSub : entries.length;
 		entries.splice(at, 0, { ref: `${i + 1}:0`, key: k });
@@ -327,11 +379,13 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 				id: t.id,
 				type: t.type,
 				language: t.properties.language_ietf || t.properties.language,
+				...existingSubtitleKind(t.properties),
 			}));
 			const trackOrder = planTrackOrder(
 				existing,
-				ordered.map((t) => t.language),
+				ordered.map((t) => ({ language: t.language, kind: t.trackType })),
 				job.settings.subtitleLanguagePriority,
+				job.settings.subtitleFormatPriority,
 			);
 
 			setStep(T_MUX, { progress: 2, detail: "Preparing fonts" });
