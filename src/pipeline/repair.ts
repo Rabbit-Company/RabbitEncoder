@@ -44,6 +44,8 @@ interface MkvTrackProperties {
 	flag_original?: boolean;
 	flag_commentary?: boolean;
 	content_encoding_algorithms?: string;
+	/** Track length from mkvmerge's statistics tags, such as "00:23:40.123000000". */
+	tag_duration?: string;
 }
 
 interface MkvTrack {
@@ -53,7 +55,7 @@ interface MkvTrack {
 	properties: MkvTrackProperties;
 }
 
-interface MkvIdentification {
+export interface MkvIdentification {
 	tracks?: MkvTrack[];
 	attachments?: { id: number; file_name: string }[];
 	errors?: string[];
@@ -388,8 +390,22 @@ export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" |
 	});
 }
 
-function durationSeconds(identified: MkvIdentification): number {
-	return (identified.container?.properties?.duration || 0) / 1_000_000_000;
+function tagSeconds(value: string | undefined): number {
+	const m = value?.match(/^(\d+):(\d{2}):(\d{2}(?:\.\d+)?)$/);
+	return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
+}
+
+/**
+ * How long the video and audio last. A subtitle track can run past them and
+ * stretch the file, so removing it would look like lost video if the
+ * container duration were compared. That is only the fallback.
+ */
+export function durationSeconds(identified: MkvIdentification): number {
+	const media = (identified.tracks ?? [])
+		.filter((track) => track.type === "video" || track.type === "audio")
+		.map((track) => tagSeconds(track.properties.tag_duration))
+		.filter((seconds) => seconds > 0);
+	return media.length ? Math.max(...media) : (identified.container?.properties?.duration || 0) / 1_000_000_000;
 }
 
 function durationsAreCompatible(a: MkvIdentification, b: MkvIdentification): boolean {

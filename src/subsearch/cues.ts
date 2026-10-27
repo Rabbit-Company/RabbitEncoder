@@ -111,13 +111,17 @@ function parseAssTime(tc: string): number | null {
 /**
  * Rewrites every timestamp of a document with the time map. SRT is rebuilt
  * from its cues, ASS keeps every line and only its Start and End fields change.
- * Cues that would start before zero are dropped.
+ * Cues that would end before zero are dropped. With `endMs`, the video's
+ * length, cues after it are dropped and cues running past it are cut, so the
+ * track never makes the file longer than its video.
  */
-export function retimeDocument(doc: SubDocument, map: TimeMap): SubDocument {
+export function retimeDocument(doc: SubDocument, map: TimeMap, endMs?: number): SubDocument {
+	const limit = endMs && endMs > 0 ? endMs : Infinity;
+	const clip = <T extends Interval>(cue: T): T => ({ ...cue, endMs: Math.min(cue.endMs, limit) });
 	if (doc.format === "srt") {
 		const cues = parseSrt(doc.content)
-			.map((cue) => mapCue(cue, map))
-			.filter((cue) => cue.endMs > 0)
+			.map((cue) => clip(mapCue(cue, map)))
+			.filter((cue) => cue.endMs > 0 && cue.startMs < limit)
 			.sort((a, b) => a.startMs - b.startMs);
 		const out = cues.map((cue, i) => `${i + 1}\n${srtTime(cue.startMs)} --> ${srtTime(cue.endMs)}\n${cue.text}\n`);
 		return { format: "srt", content: out.join("\n") };
@@ -132,8 +136,8 @@ export function retimeDocument(doc: SubDocument, map: TimeMap): SubDocument {
 			out.push(line);
 			continue;
 		}
-		const mapped = mapCue({ startMs: start, endMs: end }, map);
-		if (mapped.endMs <= 0) continue;
+		const mapped = clip(mapCue({ startMs: start, endMs: end }, map));
+		if (mapped.endMs <= 0 || mapped.startMs >= limit) continue;
 		out.push(`${m[1]}${assTime(mapped.startMs)},${assTime(mapped.endMs)},${line.slice(m[0].length)}`);
 	}
 	return { format: "ass", content: out.join("\n") };

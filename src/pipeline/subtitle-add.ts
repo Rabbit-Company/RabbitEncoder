@@ -8,7 +8,7 @@ import { ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } fro
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { probeFile } from "./probe";
 import { fitTimingToVideo } from "../ocr/fit-timing";
-import { retimeDocument, type TimeMap } from "../subsearch/cues";
+import { IDENTITY_MAP, retimeDocument, type TimeMap } from "../subsearch/cues";
 import { finalizeOutput } from "./output";
 import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
@@ -86,7 +86,9 @@ async function readPictureTracks(
 	for (const { stream, srt } of texts) {
 		const type = detectSubtitleTrackType(stream);
 		const file = join(plan.workDir, `ocr_${stream.index}.srt`);
-		writeFileSync(file, map ? retimeDocument({ format: "srt", content: srt }, map).content : srt, "utf-8");
+		const content =
+			source === plan.targetPath ? srt : retimeDocument({ format: "srt", content: srt }, map ?? IDENTITY_MAP, (targetProbe.duration || 0) * 1000).content;
+		writeFileSync(file, content, "utf-8");
 		tracks.push({
 			file,
 			language: stream.language || "und",

@@ -204,7 +204,7 @@ export function evaluateDownload(
 	const synced = cues.map((c) => mapCue(c, aligned.map));
 	const quality = measureSync(synced, reference.intervals, durationMs, reference.kind);
 	const path = outPath(doc.format);
-	writeFileSync(path, retimeDocument(doc, aligned.map).content, "utf-8");
+	writeFileSync(path, retimeDocument(doc, aligned.map, durationMs).content, "utf-8");
 	Object.assign(candidate, {
 		status: "rated",
 		rating: rateCandidate(quality, traits, hi),
