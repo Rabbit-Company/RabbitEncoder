@@ -6,6 +6,7 @@ import type { JobSettings, ProbeResult, SubtitleStreamInfo, SubtitleStyle } from
 import { probeFile } from "../pipeline/probe";
 import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
 import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
+import { downloadedTrackName } from "../subsearch/naming";
 import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec, type SubtitleTrackType } from "../tracks/tracks";
 import { ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
@@ -18,7 +19,6 @@ import {
 	type KeptSubDescriptor,
 	type ReferenceTrack,
 	type TimedLine,
-	type TranslateContentOptions,
 } from "./subtitle-translate";
 import { createSemaphore } from "../core/concurrency";
 import { checkProvider, type LlmChatOptions } from "./llm-client";
@@ -176,7 +176,7 @@ async function downloadedTracks(
 		out.push({
 			file,
 			language: normalizeTag(d.language),
-			trackName: buildSubtitleTrackName(trackType, undefined, "OpenSubtitles"),
+			trackName: downloadedTrackName(trackType, d.release, d.uploader, d.fileName),
 			trackType,
 			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, !d.extra),
 			format: styled.format,

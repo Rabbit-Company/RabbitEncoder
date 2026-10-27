@@ -13,6 +13,8 @@ export interface DownloadedSubtitle {
 	hearingImpaired: boolean;
 	rating: number;
 	release: string;
+	uploader: string;
+	fileName: string;
 	/** One of the most used languages added on top of the target languages. */
 	extra?: boolean;
 }
@@ -76,6 +78,8 @@ export async function downloadMissingSubtitles(p: DownloadMissingParams): Promis
 				hearingImpaired: best.hearingImpaired,
 				rating: best.rating!,
 				release: best.release,
+				uploader: best.uploader,
+				fileName: best.fileName,
 				...(lang.extra ? { extra: true } : {}),
 			});
 		}

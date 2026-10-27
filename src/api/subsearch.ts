@@ -7,7 +7,7 @@ import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
-import { buildSubtitleTrackName } from "../tracks/tracks";
+import { downloadedTrackName } from "../subsearch/naming";
 import type { MediaIdentity } from "../subsearch/identify";
 import { checkOpenSubtitles } from "../subsearch/opensubtitles";
 import { accountFrom, LOGIN_NEEDED, searchSubtitles, type SubtitleSearchResult } from "../subsearch/search";
@@ -203,7 +203,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 				return {
 					file,
 					language: lang.language,
-					trackName: buildSubtitleTrackName(candidate.hearingImpaired ? "sdh" : "full", undefined, "OpenSubtitles"),
+					trackName: downloadedTrackName(candidate.hearingImpaired ? "sdh" : "full", candidate.release, candidate.uploader, candidate.fileName),
 					hearingImpaired: candidate.hearingImpaired,
 					...(lang.extra ? { extra: true } : {}),
 				};
