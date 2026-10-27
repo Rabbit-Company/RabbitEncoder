@@ -695,6 +695,10 @@ a.btn {
 	width: min(700px, calc(100vw - 32px));
 }
 
+.modal.modal-subsearch {
+	width: min(1040px, calc(100vw - 32px));
+}
+
 .modal.modal-sub-style {
 	width: min(960px, calc(100vw - 32px));
 }
