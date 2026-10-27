@@ -484,7 +484,7 @@ export async function detectCrop(inputPath: string, limit: number, signal?: Abor
 }
 
 /** Display aspect ratios that masters are actually framed for. */
-const STANDARD_ASPECT_RATIOS = [4 / 3, 1.66, 16 / 9, 1.85, 2.0, 2.2, 2.35, 2.39, 2.4];
+const STANDARD_ASPECT_RATIOS = [1.19, 1.2, 4 / 3, 1.37, 1.43, 1.5, 1.66, 1.75, 16 / 9, 1.85, 1.9, 2.0, 2.2, 2.35, 2.39, 2.4, 2.55, 2.76];
 
 /** Max px (both edges combined) a detected crop may be trimmed to land on a standard ratio. */
 const ASPECT_SNAP_TOLERANCE_PX = 6;
