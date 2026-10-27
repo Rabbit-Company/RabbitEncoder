@@ -7,6 +7,8 @@ import { buildSubtitleTrackName, detectSubtitleTrackType, sanitizeLanguageTag } 
 import { ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { probeFile } from "./probe";
+import { fitTimingToVideo } from "../ocr/fit-timing";
+import { retimeDocument, type TimeMap } from "../subsearch/cues";
 import { finalizeOutput } from "./output";
 import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
@@ -25,28 +27,34 @@ export function describeSubtitleAddPlan(plan: SubtitleAddPlan): string {
 	return `Adding ${plan.tracks.map((t) => t.language).join(", ")} subtitles`;
 }
 
-/** Reads the requested picture tracks into SRT files, as tracks to add. A track that fails is skipped with a warning. */
+/**
+ * Reads the requested picture tracks into SRT files, as tracks to add. They
+ * come from the video itself, or from its original, whose timing is then
+ * checked against the video and corrected. A track that fails is skipped
+ * with a warning.
+ */
 async function readPictureTracks(
 	plan: SubtitleAddPlan,
 	job: Job,
 	tempDir: string,
 	signal: AbortSignal | undefined,
 	onProgress: (progress: number, detail: string) => void,
-): Promise<{ tracks: SubtitleAddTrack[]; read: SubtitleStreamInfo[]; warnings: string[] }> {
+): Promise<{ tracks: SubtitleAddTrack[]; read: SubtitleStreamInfo[]; warnings: string[]; note?: string }> {
 	const request = plan.ocr!;
-	const streams = (await probeFile(plan.targetPath)).subtitleStreams ?? [];
+	const source = request.sourcePath ?? plan.targetPath;
+	const targetProbe = await probeFile(plan.targetPath);
+	const streams = source === plan.targetPath ? (targetProbe.subtitleStreams ?? []) : ((await probeFile(source)).subtitleStreams ?? []);
 	const languages = new Set((request.languages ?? []).map((l) => resolveTranslateLang(l)?.code).filter(Boolean));
 	const chosen = request.streams
 		? streams.filter((s) => request.streams!.includes(s.index) && s.codec.toLowerCase() === PGS_CODEC)
-		: unreadPictureTracks(streams).filter((s) => !languages.size || languages.has(resolveTranslateLang(s.language)?.code));
-	const tracks: SubtitleAddTrack[] = [];
-	const read: SubtitleStreamInfo[] = [];
+		: unreadPictureTracks(streams, targetProbe.subtitleStreams ?? []).filter((s) => !languages.size || languages.has(resolveTranslateLang(s.language)?.code));
+	const texts: Array<{ stream: SubtitleStreamInfo; srt: string }> = [];
 	const warnings: string[] = [];
 	for (const [n, stream] of chosen.entries()) {
 		const label = `track ${stream.index} (${stream.language || "und"})`;
 		try {
 			const srt = await ocrPgsTrack({
-				inputPath: plan.targetPath,
+				inputPath: source,
 				stream,
 				tempDir,
 				settings: job.settings,
@@ -54,30 +62,44 @@ async function readPictureTracks(
 				onProgress: (done, total) =>
 					onProgress(Math.round(((n + done / Math.max(1, total)) / chosen.length) * 100), `Reading ${label}, ${done}/${total} pictures`),
 			});
-			if (!srt.trim()) {
-				warnings.push(`No text was read from ${label}`);
-				continue;
-			}
-			const type = detectSubtitleTrackType(stream);
-			const file = join(plan.workDir, `ocr_${stream.index}.srt`);
-			writeFileSync(file, srt, "utf-8");
-			read.push(stream);
-			tracks.push({
-				file,
-				language: stream.language || "und",
-				trackName: buildSubtitleTrackName(type, stream.title, "OCR"),
-				hearingImpaired: !!stream.isHearingImpaired || type === "sdh",
-				trackType: type,
-				fromPicture: true,
-				forced: !!stream.isForced,
-				original: !!stream.isOriginal,
-			});
+			if (srt.trim()) texts.push({ stream, srt });
+			else warnings.push(`No text was read from ${label}`);
 		} catch (error) {
 			if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 			warnings.push(`OCR of ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	return { tracks, read, warnings };
+
+	// Tracks of one original share its timeline, so the longest one decides the time map for all.
+	let map: TimeMap | null = null;
+	let note: string | undefined;
+	if (source !== plan.targetPath && texts.length) {
+		onProgress(100, "Checking the timing against the video");
+		const longest = [...texts].sort((a, b) => b.srt.length - a.srt.length)[0]!;
+		const fit = await fitTimingToVideo(longest.srt, plan.targetPath, targetProbe, tempDir, signal);
+		if (!fit.ok) return { tracks: [], read: [], warnings: [...warnings, `Not added: ${fit.error}`] };
+		map = fit.map;
+		note = fit.note;
+	}
+
+	const tracks: SubtitleAddTrack[] = [];
+	for (const { stream, srt } of texts) {
+		const type = detectSubtitleTrackType(stream);
+		const file = join(plan.workDir, `ocr_${stream.index}.srt`);
+		writeFileSync(file, map ? retimeDocument({ format: "srt", content: srt }, map).content : srt, "utf-8");
+		tracks.push({
+			file,
+			language: stream.language || "und",
+			trackName: buildSubtitleTrackName(type, stream.title, "OCR"),
+			hearingImpaired: !!stream.isHearingImpaired || type === "sdh",
+			trackType: type,
+			fromPicture: true,
+			forced: !!stream.isForced,
+			original: !!stream.isOriginal,
+		});
+	}
+	// Only the video's own picture tracks can be removed from it.
+	return { tracks, read: source === plan.targetPath ? texts.map((t) => t.stream) : [], warnings, note };
 }
 
 /**
@@ -129,7 +151,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 				updateJob({ status: "done", currentStage: "Complete", progress: 100, outputFilename: basename(plan.targetPath), finishedAt: Date.now() });
 				return;
 			}
-			setStep(S_READ, { status: "done", progress: 100, detail: `Read ${result.tracks.length} track(s)` });
+			setStep(S_READ, { status: "done", progress: 100, detail: `Read ${result.tracks.length} track(s)${result.note ? `, ${result.note}` : ""}` });
 			tracks = [...tracks, ...result.tracks];
 			if (plan.ocr.removePictures) removed = result.read;
 		}

@@ -250,3 +250,116 @@ describe("cleanOcrText", () => {
 		expect(done.steps[1]!.detail).toBe("Read 1 with OCR track(s)");
 	}, 60_000);
 });
+
+(hasTools ? describe : describe.skip)("OCR from an original into its encode", () => {
+	const root = mkdtempSync(join(tmpdir(), "rabbit-ocr-original-"));
+	const realFetch = globalThis.fetch;
+	let state = 5;
+	const rand = () => (state = (state * 16807) % 2147483647) / 2147483647;
+	const timeline = (count: number) => {
+		const out: Array<{ startMs: number; endMs: number }> = [];
+		let t = 3000;
+		for (let i = 0; i < count; i++) {
+			const length = 900 + Math.round(rand() * 1500);
+			out.push({ startMs: t, endMs: t + length });
+			t += length + 300 + Math.round(rand() * 2500);
+		}
+		return out;
+	};
+	const cues = timeline(100);
+	const duration = Math.ceil(cues[cues.length - 1]!.endMs / 1000) + 5;
+	const srt = (list: Array<{ startMs: number; endMs: number }>, shift = 0) => {
+		const tc = (ms: number) => {
+			const p = (n: number, w = 2) => String(Math.floor(n)).padStart(w, "0");
+			return `${p(ms / 3_600_000)}:${p((ms / 60_000) % 60)}:${p((ms / 1000) % 60)},${p(ms % 1000, 3)}`;
+		};
+		return list.map((c, i) => `${i + 1}\n${tc(c.startMs + shift)} --> ${tc(c.endMs + shift)}\nLine ${i}\n`).join("\n");
+	};
+
+	beforeAll(async () => {
+		writeFileSync(join(root, "slv.sup"), buildPgs(cues.map((c, i) => ({ ...c, bitmap: bars(1 + (i % 5)) }))));
+		writeFileSync(join(root, "shifted.srt"), srt(cues, -1200));
+		writeFileSync(join(root, "other.srt"), srt(timeline(100)));
+		const plain = join(root, "plain.mkv");
+		const a = await run([
+			"ffmpeg",
+			"-v",
+			"error",
+			"-f",
+			"lavfi",
+			"-i",
+			`color=c=gray:s=32x32:r=1:d=${duration}`,
+			"-f",
+			"lavfi",
+			"-i",
+			`anullsrc=r=8000:cl=mono:d=${duration}`,
+			"-c:v",
+			"ffv1",
+			"-c:a",
+			"flac",
+			"-t",
+			String(duration),
+			plain,
+		]);
+		if (a.code !== 0) throw new Error(a.stderr);
+		await run(["mkvmerge", "-q", "-o", join(root, "original.mkv"), plain, "--language", "0:slv", join(root, "slv.sup")]);
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			const url = new URL(String(input));
+			if (url.pathname === "/v1/chat/completions") return Response.json({ choices: [{ message: { content: "Vrstica" }, finish_reason: "stop" }] });
+			return new Response("not found", { status: 404 });
+		}) as typeof fetch;
+	}, 60_000);
+
+	afterAll(() => {
+		globalThis.fetch = realFetch;
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	async function readInto(name: string, englishSrt: string): Promise<Job> {
+		const folder = join(root, name);
+		mkdirSync(join(folder, "work"), { recursive: true });
+		const encode = join(folder, "Encode.mkv");
+		await run(["mkvmerge", "-q", "-o", encode, join(root, "plain.mkv"), "--language", "0:eng", join(root, englishSrt)]);
+		const job = {
+			id: name,
+			kind: "subtitles",
+			filename: "OCR: Encode.mkv",
+			inputPath: encode,
+			relativePath: "",
+			status: "queued",
+			progress: 0,
+			queueOrder: 1,
+			currentStage: "",
+			steps: [],
+			replaceSource: true,
+			settings: { ...getDefaultJobSettings(), ocrBaseUrl: "http://ocr.example/v1", ocrModel: "surya" },
+			subtitleAddPlan: { targetPath: encode, workDir: join(folder, "work"), tracks: [], ocr: { sourcePath: join(root, "original.mkv") } },
+		} as Job;
+		const config = { tempDir: join(root, `tmp-${name}`), outputDir: join(root, "out"), recycleBinDir: "", organization: "RabbitCompany" } as AppConfig;
+		await runSubtitleAddJob(job, config, (partial) => Object.assign(job, partial));
+		return job;
+	}
+
+	it("reads the original's pictures into the encode and shifts them to its timing", async () => {
+		const done = await readInto("shifted", "shifted.srt");
+		expect(done.error).toBeUndefined();
+		expect(done.status).toBe("done");
+		expect(done.steps[0]!.detail).toBe("Read 1 track(s), shifted to fit the video (-1.20 s)");
+		const info = JSON.parse((await run(["mkvmerge", "-J", done.inputPath])).stdout);
+		const added = (info.tracks as any[]).find((t) => t.type === "subtitles" && t.properties.language === "slv");
+		expect(added.properties.track_name).toBe("Full Subtitles [OCR]");
+		const out = join(root, "shifted-out.srt");
+		await run(["mkvextract", done.inputPath, "tracks", `${added.id}:${out}`]);
+		const first = readFileSync(out, "utf-8").match(/(\d{2}):(\d{2}):(\d{2}),(\d{3}) -->/)!;
+		const ms = Number(first[1]) * 3_600_000 + Number(first[2]) * 60_000 + Number(first[3]) * 1000 + Number(first[4]);
+		expect(Math.abs(ms - (cues[0]!.startMs - 1200))).toBeLessThanOrEqual(20);
+	}, 60_000);
+
+	it("adds nothing when the original belongs to another video", async () => {
+		const done = await readInto("other", "other.srt");
+		expect(done.status).toBe("error");
+		expect(done.error).toContain("do not match the video's timing");
+		const info = JSON.parse((await run(["mkvmerge", "-J", done.inputPath])).stdout);
+		expect((info.tracks as any[]).filter((t) => t.type === "subtitles")).toHaveLength(1);
+	}, 60_000);
+});

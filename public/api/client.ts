@@ -868,21 +868,40 @@ export interface OcrTrackInfo {
 	hasText: boolean;
 }
 
-export async function fetchOcrTracks(path: string): Promise<{ configured: boolean; tracks: OcrTrackInfo[] }> {
-	const response = await authFetch(`${API}/api/ocr/inspect?${new URLSearchParams({ path })}`);
+export async function fetchOcrTracks(path: string, source?: string): Promise<{ configured: boolean; tracks: OcrTrackInfo[] }> {
+	const response = await authFetch(`${API}/api/ocr/inspect?${new URLSearchParams(source ? { path, source } : { path })}`);
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not read the video");
 	return data;
 }
 
-export async function queueOcrJob(path: string, streams: number[], removePictures: boolean): Promise<{ jobId: string }> {
+export async function queueOcrJob(path: string, streams: number[], removePictures: boolean, source?: string): Promise<{ jobId: string }> {
 	const response = await authFetch(`${API}/api/ocr/jobs`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path, streams, removePictures }),
+		body: JSON.stringify({ path, streams, removePictures, source }),
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue OCR");
+	return data;
+}
+
+export interface OcrPair {
+	targetPath: string;
+	targetName: string;
+	sourcePath: string;
+	sourceName: string;
+	method: "episode" | "order" | "none";
+}
+
+export async function fetchOcrPairs(folder: string, sourceFolder: string, recursive: boolean): Promise<{ pairs: OcrPair[]; unmatchedSources: string[] }> {
+	const response = await authFetch(`${API}/api/ocr/pairs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ folder, sourceFolder, recursive }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not match the files");
 	return data;
 }
 
@@ -891,6 +910,7 @@ export async function queueOcrBatch(opts: {
 	recursive: boolean;
 	languages: string[];
 	removePictures: boolean;
+	pairs?: Array<{ targetPath: string; sourcePath: string }>;
 }): Promise<{ jobIds: string[]; skipped: string[] }> {
 	const response = await authFetch(`${API}/api/ocr/batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts) });
 	const data = await response.json();

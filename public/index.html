@@ -1853,12 +1853,30 @@
 							<div id="subocr-target-selection" class="repair-file-selection"></div>
 							<button class="btn btn-ghost" type="button" id="subocr-choose-target">Choose MKV...</button>
 						</div>
+						<div class="repair-file-choice" id="subocr-source-choice">
+							<span class="repair-file-label">Original <small>optional, when the video no longer has its picture subtitles</small></span>
+							<div id="subocr-source-selection" class="repair-file-selection"></div>
+							<div class="repair-file-buttons">
+								<button class="btn btn-ghost" type="button" id="subocr-choose-source">Choose original...</button>
+								<button class="btn btn-ghost" type="button" id="subocr-clear-source" style="display: none">Clear</button>
+							</div>
+						</div>
 						<div class="repair-file-choice" id="subocr-folder-choice" style="display: none">
 							<span class="repair-file-label">Folder</span>
 							<div id="subocr-folder-selection" class="repair-file-selection"></div>
 							<button class="btn btn-ghost" type="button" id="subocr-choose-folder">Choose folder...</button>
 							<label class="toggle-label repair-file-option"><input type="checkbox" id="subocr-recursive" />&nbsp;Include subfolders</label>
 						</div>
+						<div class="repair-file-choice" id="subocr-source-folder-choice" style="display: none">
+							<span class="repair-file-label">Originals folder <small>optional, when the encodes no longer have their picture subtitles</small></span>
+							<div id="subocr-source-folder-selection" class="repair-file-selection"></div>
+							<div class="repair-file-buttons">
+								<button class="btn btn-ghost" type="button" id="subocr-choose-source-folder">Choose folder...</button>
+								<button class="btn btn-ghost" type="button" id="subocr-clear-source-folder" style="display: none">Clear</button>
+								<button class="btn btn-ghost" type="button" id="subocr-match" style="display: none">Match files</button>
+							</div>
+						</div>
+						<div id="subocr-pairs"></div>
 						<div class="setting-group" id="subocr-folder-options" style="display: none">
 							<label for="subocr-languages">Languages</label>
 							<input type="text" class="lang-filter-input" id="subocr-languages" placeholder="All languages" />

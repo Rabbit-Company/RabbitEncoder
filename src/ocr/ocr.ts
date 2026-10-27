@@ -28,9 +28,13 @@ export function ocrEnabled(settings: JobSettings): boolean {
 
 const trackKey = (s: SubtitleStreamInfo) => `${resolveTranslateLang(s.language)?.code ?? s.language ?? "und"}:${detectSubtitleTrackType(s)}`;
 
-/** Picture tracks with no text track in their language and kind, one per language and kind. Storyboards are left out. */
-export function unreadPictureTracks(streams: SubtitleStreamInfo[]): SubtitleStreamInfo[] {
-	const covered = new Set(streams.filter((s) => isTextSubtitleCodec(s.codec)).map(trackKey));
+/**
+ * Picture tracks with no text track in their language and kind, one per
+ * language and kind. Storyboards are left out. `textStreams` are the tracks
+ * the text goes to, when that is another file than the pictures.
+ */
+export function unreadPictureTracks(streams: SubtitleStreamInfo[], textStreams: SubtitleStreamInfo[] = streams): SubtitleStreamInfo[] {
+	const covered = new Set(textStreams.filter((s) => isTextSubtitleCodec(s.codec)).map(trackKey));
 	return streams.filter((s) => {
 		if (s.codec.toLowerCase() !== PGS_CODEC || detectSubtitleTrackType(s) === "storyboard" || covered.has(trackKey(s))) return false;
 		covered.add(trackKey(s));

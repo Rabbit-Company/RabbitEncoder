@@ -140,6 +140,13 @@ import {
 	handleSubtitleOcrTracksChange,
 	openSubtitleOcr,
 	queueSubtitleOcr,
+	chooseSubtitleOcrSource,
+	clearSubtitleOcrSource,
+	chooseSubtitleOcrSourceFolder,
+	clearSubtitleOcrSourceFolder,
+	matchSubtitleOcrFiles,
+	handleSubtitleOcrPairsChange,
+	resetSubtitleOcrPairs,
 } from "../features/subtitle-ocr";
 import {
 	chooseGrainFolder,
@@ -299,6 +306,13 @@ export function initEventListeners() {
 	byId("subocr-choose-folder").addEventListener("click", chooseSubtitleOcrFolder);
 	byId("subocr-tracks").addEventListener("change", handleSubtitleOcrTracksChange);
 	byId("subocr-queue").addEventListener("click", () => void queueSubtitleOcr());
+	byId("subocr-choose-source").addEventListener("click", chooseSubtitleOcrSource);
+	byId("subocr-clear-source").addEventListener("click", clearSubtitleOcrSource);
+	byId("subocr-choose-source-folder").addEventListener("click", chooseSubtitleOcrSourceFolder);
+	byId("subocr-clear-source-folder").addEventListener("click", clearSubtitleOcrSourceFolder);
+	byId("subocr-match").addEventListener("click", () => void matchSubtitleOcrFiles());
+	byId("subocr-pairs").addEventListener("change", handleSubtitleOcrPairsChange);
+	byId("subocr-recursive").addEventListener("change", resetSubtitleOcrPairs);
 
 	byId("open-subsearch-btn").addEventListener("click", openSubtitleSearch);
 	byId("subsearch-close").addEventListener("click", closeSubtitleSearch);

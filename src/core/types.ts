@@ -520,11 +520,13 @@ export interface SubtitleAddTrack {
 
 /** Picture subtitle tracks to read with OCR before muxing. */
 export interface SubtitleOcrRequest {
+	/** Original to read the picture tracks from, when the video itself no longer has them. Its timing is checked against the video. */
+	sourcePath?: string;
 	/** Stream indexes to read. Without them, every picture track with no text track in its language and kind. */
 	streams?: number[];
 	/** With `streams` absent, only these languages. Empty means all. */
 	languages?: string[];
-	/** Remove the picture tracks that were read. */
+	/** Remove the picture tracks that were read. Only for tracks of the video itself. */
 	removePictures?: boolean;
 }
 
