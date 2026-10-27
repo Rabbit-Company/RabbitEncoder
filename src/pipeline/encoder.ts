@@ -1102,6 +1102,8 @@ export async function encodeJob(
 		let audioStreams: AudioStreamInfo[] = [];
 		const encodedAudioFiles: string[] = [];
 		let subtitleStreams: SubtitleStreamInfo[] = [];
+		/** Picture tracks dropped from the output, which OCR can still turn into text tracks. */
+		let droppedPictureStreams: SubtitleStreamInfo[] = [];
 		let translatedTracks: TranslatedTrack[] = [];
 
 		interface PlannedSubtitle {
@@ -1860,14 +1862,16 @@ export async function encodeJob(
 						Logger.info(`[subtitle] Filtered ${skippedSubLang} track(s) not in [${allowedSubLangs.join(", ")}]`);
 					}
 
-					const typeFilteredSubs = filterSubtitleTypes(langFilteredSubs, {
+					const typeFilters = {
 						removeSDH: job.settings.removeSDHSubtitles,
 						removeCommentary: job.settings.removeCommentarySubtitles,
 						removeForcedSignsSongs: job.settings.removeForcedSignsSongs,
 						removeStoryboard: job.settings.removeStoryboardSubtitles,
 						removeHonorifics: job.settings.removeHonorificsSubtitles,
-						dropPicture: job.settings.dropPictureSubtitles,
-					});
+					};
+					const typeFilteredSubs = filterSubtitleTypes(langFilteredSubs, { ...typeFilters, dropPicture: job.settings.dropPictureSubtitles });
+					if (job.settings.dropPictureSubtitles && ocrEnabled(job.settings))
+						droppedPictureStreams = filterSubtitleTypes(langFilteredSubs, { ...typeFilters, dropPicture: false }).filter((s) => !isTextSubtitleCodec(s.codec));
 					const droppedByTypeSubs = langFilteredSubs.length - typeFilteredSubs.length;
 					if (droppedByTypeSubs > 0) {
 						Logger.info(`[subtitle] Dropped ${droppedByTypeSubs} track(s) by type/format filters`);
@@ -1896,7 +1900,7 @@ export async function encodeJob(
 			checkCancelled();
 			setStep(S_TRANSLATE, { status: "active", progress: 0 });
 			// Without subtitle tracks there is nothing to translate from, but subtitles can still be downloaded.
-			const canAddSubtitles = subtitleStreams.length > 0 || subtitleDownloadEnabled(job.settings);
+			const canAddSubtitles = subtitleStreams.length > 0 || droppedPictureStreams.length > 0 || subtitleDownloadEnabled(job.settings);
 			const addsSubtitles = job.settings.translateSubtitles || ocrEnabled(job.settings);
 			if (!skipSubtitleProcessing && addsSubtitles && !previewMode && canAddSubtitles) {
 				try {
@@ -1911,6 +1915,7 @@ export async function encodeJob(
 						downloadCacheDir: config.tempDir,
 						identityPath: job.inputPath,
 						probe,
+						droppedPictureStreams,
 						signal: stageSignal,
 						onStatus: (message) => setStep(S_TRANSLATE, { detail: message }),
 						onWarning: (warning) => updateJob({ warning }),
@@ -2374,7 +2379,8 @@ export async function encodeJob(
 							file: track.file,
 						},
 					})),
-					subtitleStreams,
+					// A text track read from a dropped picture track is ordered like that picture track.
+					[...subtitleStreams, ...droppedPictureStreams],
 					(streams) =>
 						sortSubtitleStreams(streams, {
 							sourcePriority: job.settings.subtitleSourcePriority,

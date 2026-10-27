@@ -8,7 +8,7 @@ import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubti
 import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
 import { downloadedTrackName } from "../subsearch/naming";
 import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec, type SubtitleTrackType } from "../tracks/tracks";
-import { ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
+import { ocrDefaults, ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import {
@@ -86,6 +86,8 @@ export interface RunTranslateStepParams {
 	probe?: ProbeResult;
 	/** Download only, for example when the requested source track is missing. */
 	skipAi?: boolean;
+	/** Picture tracks left out of the output, which OCR may still read into text tracks. */
+	droppedPictureStreams?: SubtitleStreamInfo[];
 	signal?: AbortSignal;
 	onProgress?: (p: TranslateProgress) => void;
 	/** What the step is doing before translation starts, such as downloading subtitles. */
@@ -531,7 +533,8 @@ interface OcrRead {
  */
 async function ocrPictureTracks(params: RunTranslateStepParams): Promise<OcrRead> {
 	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, signal } = params;
-	const pictures = unreadPictureTracks(subtitleStreams);
+	const pictures = unreadPictureTracks([...subtitleStreams, ...(params.droppedPictureStreams ?? [])]);
+	const readFrom: SubtitleStreamInfo[] = [];
 	const read: OcrRead = { tracks: [], streams: [], byPictureIndex: new Map() };
 	for (const [n, stream] of pictures.entries()) {
 		const label = `track ${stream.index} (${stream.language || "und"})`;
@@ -560,12 +563,13 @@ async function ocrPictureTracks(params: RunTranslateStepParams): Promise<OcrRead
 				language: stream.language || "und",
 				trackName: buildSubtitleTrackName(type, stream.title, "OCR"),
 				trackType: type,
-				flagArgs: pictureTrackFlagArgs({ forced: stream.isForced, hearingImpaired: stream.isHearingImpaired, original: stream.isOriginal }, type),
+				flagArgs: [],
 				format: styled.format,
 				sourceIndex: stream.index,
 				ocr: true,
 				restyle: styled.styled,
 			});
+			readFrom.push(stream);
 		} catch (error) {
 			if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 			const warning = `OCR of picture subtitle ${label} failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -573,6 +577,16 @@ async function ocrPictureTracks(params: RunTranslateStepParams): Promise<OcrRead
 			params.onWarning?.(warning);
 		}
 	}
+	// The output keeps every track the step was given, except the picture tracks being dropped.
+	const defaults = ocrDefaults(subtitleStreams, readFrom);
+	readFrom.forEach((stream, i) => {
+		const track = read.tracks[i]!;
+		track.flagArgs = pictureTrackFlagArgs(
+			{ forced: stream.isForced, hearingImpaired: stream.isHearingImpaired, original: stream.isOriginal },
+			track.trackType,
+			defaults.has(stream.index),
+		);
+	});
 	return read;
 }
 

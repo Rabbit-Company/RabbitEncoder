@@ -6,7 +6,7 @@ import { inflateSync } from "zlib";
 import { getDefaultJobSettings } from "../../src/core/config";
 import { run } from "../../src/core/process";
 import type { AppConfig, Job, JobSettings } from "../../src/core/types";
-import { cleanOcrText } from "../../src/ocr/ocr";
+import { cleanOcrText, ocrDefaults } from "../../src/ocr/ocr";
 import { decodeRle, parsePgs } from "../../src/ocr/pgs";
 import { encodeGrayPng } from "../../src/ocr/png";
 import { runTranslateOnlyJob } from "../../src/pipeline/translate-only";
@@ -70,6 +70,21 @@ describe("PGS decoding", () => {
 		const idatLength = png.readUInt32BE(33);
 		const raw = inflateSync(png.subarray(41, 41 + idatLength));
 		expect([...raw]).toEqual([0, 0, 128, 255, 0, 64, 32, 16]);
+	});
+});
+
+describe("ocrDefaults", () => {
+	const pgs = (index: number, language: string, extra: Record<string, unknown> = {}) => ({ index, codec: "hdmv_pgs_subtitle", language, ...extra });
+	it("makes a read track the default only when nothing kept of its language is", () => {
+		expect([...ocrDefaults([pgs(2, "eng")], [pgs(2, "eng")])]).toEqual([]);
+		expect([...ocrDefaults([], [pgs(2, "eng")])]).toEqual([2]);
+		// A forced track is never the default, so it leaves the language without one.
+		expect([...ocrDefaults([pgs(3, "eng", { isForced: true })], [pgs(2, "eng")])]).toEqual([2]);
+	});
+
+	it("prefers the full track to SDH and never picks a forced one", () => {
+		const read = [pgs(4, "slv", { title: "SDH", isHearingImpaired: true }), pgs(5, "slv"), pgs(6, "ger", { isForced: true })];
+		expect([...ocrDefaults([], read)]).toEqual([5]);
 	});
 });
 
@@ -229,13 +244,18 @@ describe("cleanOcrText", () => {
 		const done = await ocrTool("tool", { streams: [2], removePictures: true });
 		expect(done.error).toBeUndefined();
 		expect(done.steps.map((s) => s.label)).toEqual(["Read Subtitles", "Mux", "Write Output"]);
-		expect(await subtitleTracks(done.inputPath)).toEqual([["SubRip/SRT", "Full Subtitles [OCR]", false]]);
+		// With the picture track gone, the text is the only English subtitle, so it is the default.
+		expect(await subtitleTracks(done.inputPath)).toEqual([["SubRip/SRT", "Full Subtitles [OCR]", true]]);
 	}, 60_000);
 
 	it("reads picture tracks by language for folder jobs, and leaves files without them alone", async () => {
 		const english = await ocrTool("tool-eng", { languages: ["en"] });
 		expect(english.status).toBe("done");
-		expect((await subtitleTracks(english.inputPath)).map((t) => t[0])).toEqual(["HDMV PGS", "SubRip/SRT"]);
+		// The picture track stays and keeps the default, so the text does not take it too.
+		expect((await subtitleTracks(english.inputPath)).map((t) => [t[0], t[2]])).toEqual([
+			["HDMV PGS", true],
+			["SubRip/SRT", false],
+		]);
 		const german = await ocrTool("tool-ger", { languages: ["deu"] });
 		expect(german.status).toBe("done");
 		expect(german.steps[0]!.detail).toBe("No picture subtitles to read");
@@ -348,6 +368,7 @@ describe("cleanOcrText", () => {
 		const info = JSON.parse((await run(["mkvmerge", "-J", done.inputPath])).stdout);
 		const added = (info.tracks as any[]).find((t) => t.type === "subtitles" && t.properties.language === "slv");
 		expect(added.properties.track_name).toBe("Full Subtitles [OCR]");
+		expect(added.properties.default_track).toBe(true);
 		const out = join(root, "shifted-out.srt");
 		await run(["mkvextract", done.inputPath, "tracks", `${added.id}:${out}`]);
 		const first = readFileSync(out, "utf-8").match(/(\d{2}):(\d{2}):(\d{2}),(\d{3}) -->/)!;

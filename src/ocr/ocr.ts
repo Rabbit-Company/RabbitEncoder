@@ -7,7 +7,7 @@ import type { JobSettings, SubtitleStreamInfo } from "../core/types";
 import { stripCodeFences } from "../translate/generic";
 import { chatComplete, type LlmChatOptions } from "../translate/llm-client";
 import { resolveTranslateLang } from "../translate/translate-languages";
-import { detectSubtitleTrackType, isTextSubtitleCodec } from "../tracks/tracks";
+import { computeSubtitleDefaultIndexByLang, detectSubtitleTrackType, isTextSubtitleCodec } from "../tracks/tracks";
 import { parsePgs, type PgsImage } from "./pgs";
 import { encodeGrayPng } from "./png";
 
@@ -42,11 +42,23 @@ export function unreadPictureTracks(streams: SubtitleStreamInfo[], textStreams: 
 	});
 }
 
-/** Flag args for a text track read from a picture track: its flags, but never the default. */
-export function pictureTrackFlagArgs(flags: { forced?: boolean; hearingImpaired?: boolean; original?: boolean }, type: string): string[] {
+/**
+ * Read tracks that become the default of their language: the best one, full
+ * before SDH as for native tracks, of each language no kept track would be
+ * the default for. A language never ends up with two defaults.
+ */
+export function ocrDefaults(kept: SubtitleStreamInfo[], read: SubtitleStreamInfo[]): Set<number> {
+	const nativeWinners = computeSubtitleDefaultIndexByLang(kept);
+	const out = new Set<number>();
+	for (const [group, index] of computeSubtitleDefaultIndexByLang(read)) if (!nativeWinners.has(group)) out.add(index);
+	return out;
+}
+
+/** Flag args for a text track read from a picture track: its own flags, and the default only when `isDefault`. */
+export function pictureTrackFlagArgs(flags: { forced?: boolean; hearingImpaired?: boolean; original?: boolean }, type: string, isDefault = false): string[] {
 	return [
 		"--default-track-flag",
-		"0:0",
+		`0:${isDefault ? 1 : 0}`,
 		"--forced-display-flag",
 		`0:${flags.forced || type === "forced" ? 1 : 0}`,
 		"--hearing-impaired-flag",

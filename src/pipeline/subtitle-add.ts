@@ -4,7 +4,7 @@ import type { AppConfig, Job, JobStep, SubtitleAddPlan, SubtitleAddTrack, Subtit
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
 import { buildSubtitleTrackName, detectSubtitleTrackType, sanitizeLanguageTag } from "../tracks/tracks";
-import { ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
+import { ocrDefaults, ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { probeFile } from "./probe";
 import { fitTimingToVideo } from "../ocr/fit-timing";
@@ -82,6 +82,13 @@ async function readPictureTracks(
 		note = fit.note;
 	}
 
+	// The video keeps its own tracks, without the picture tracks this job removes.
+	const removing = source === plan.targetPath && request.removePictures ? new Set(texts.map((t) => t.stream.index)) : new Set<number>();
+	const kept = (targetProbe.subtitleStreams ?? []).filter((s) => !removing.has(s.index));
+	const defaults = ocrDefaults(
+		kept,
+		texts.map((t) => t.stream),
+	);
 	const tracks: SubtitleAddTrack[] = [];
 	for (const { stream, srt } of texts) {
 		const type = detectSubtitleTrackType(stream);
@@ -98,6 +105,7 @@ async function readPictureTracks(
 			fromPicture: true,
 			forced: !!stream.isForced,
 			original: !!stream.isOriginal,
+			isDefault: defaults.has(stream.index),
 		});
 	}
 	// Only the video's own picture tracks can be removed from it.
@@ -194,7 +202,11 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 			args.push("--language", `0:${sanitizeLanguageTag(track.language, `added ${track.language}`)}`);
 			args.push("--track-name", `0:${track.trackName}`, "--sub-charset", "0:UTF-8");
 			const flags = track.fromPicture
-				? pictureTrackFlagArgs({ forced: track.forced, hearingImpaired: track.hearingImpaired, original: track.original }, track.trackType ?? "full")
+				? pictureTrackFlagArgs(
+						{ forced: track.forced, hearingImpaired: track.hearingImpaired, original: track.original },
+						track.trackType ?? "full",
+						track.isDefault,
+					)
 				: computeDownloadedFlagArgs(track.hearingImpaired, !track.extra);
 			args.push(...flags, ...(addition.compressionArgs.get(track.file) ?? []), track.file);
 		}
