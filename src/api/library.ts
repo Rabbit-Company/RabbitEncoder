@@ -21,6 +21,7 @@ import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } f
 import { prepareSeriesNotesForFile } from "../translate/translate-step";
 import { analyzeForTranslate, findTranslateSource } from "../pipeline/translate-only";
 import { accountFrom, LOGIN_NEEDED } from "../subsearch/search";
+import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { probeFile } from "../pipeline/probe";
 
 function selectedTargets(rawPaths: unknown, config: AppConfig): { paths: string[]; files: string[] } {
@@ -128,6 +129,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			referenceLanguages?: unknown;
 			download?: unknown;
 			aiFallback?: unknown;
+			extraLanguages?: unknown;
 		};
 		try {
 			body = await c.req.json();
@@ -171,6 +173,8 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 				translateSubtitles: true,
 				subtitleDownloadBeforeTranslate: downloading,
 				subtitleDownloadAiFallback: aiFallback,
+				subtitleDownloadExtraLanguages:
+					downloading && (EXTRA_LANGUAGE_CHOICES as readonly unknown[]).includes(body.extraLanguages) ? (body.extraLanguages as number) : 0,
 				translateTargetLanguages: targets,
 				translateReferenceLanguages: references,
 				translateSourceTrack: "auto",

@@ -75,7 +75,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 		for (const track of ordered) {
 			args.push("--language", `0:${sanitizeLanguageTag(track.language, `downloaded ${track.language}`)}`);
 			args.push("--track-name", `0:${track.trackName}`, "--sub-charset", "0:UTF-8");
-			args.push(...computeDownloadedFlagArgs(track.hearingImpaired), ...(addition.compressionArgs.get(track.file) ?? []), track.file);
+			args.push(...computeDownloadedFlagArgs(track.hearingImpaired, !track.extra), ...(addition.compressionArgs.get(track.file) ?? []), track.file);
 		}
 		args.push(...addition.fontArgs);
 		args.push(

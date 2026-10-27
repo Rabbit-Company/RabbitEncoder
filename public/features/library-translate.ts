@@ -20,6 +20,7 @@ interface LastChoice {
 	references?: string;
 	download?: boolean;
 	aiFallback?: boolean;
+	extraLanguages?: number;
 }
 
 function loadLastChoice(): Partial<LastChoice> {
@@ -66,6 +67,7 @@ function renderSources(): void {
 	const downloadHint = byId("library-translate-download-hint");
 	download.disabled = !hasOpenSubtitles();
 	if (download.disabled) download.checked = false;
+	byId<HTMLSelectElement>("library-translate-extra").disabled = !download.checked;
 	downloadHint.textContent = hasOpenSubtitles()
 		? "Missing languages are downloaded, synced to each video and rated. A subtitle below the minimum rating is not used."
 		: "Log in with your OpenSubtitles.com account under Settings, Subtitle handling, Subtitle download to download subtitles first.";
@@ -160,6 +162,7 @@ export function openTranslateSetup(paths: string[], fileCount: number | null): v
 		fileCount === null ? "Selected videos will be counted when queued" : `${fileCount} video${fileCount === 1 ? "" : "s"} selected`;
 	inputById("library-translate-download").checked = last.download ?? appState.defaults?.subtitleDownloadBeforeTranslate !== false;
 	inputById("library-translate-ai-fallback").checked = last.aiFallback ?? appState.defaults?.subtitleDownloadAiFallback !== false;
+	byId<HTMLSelectElement>("library-translate-extra").value = String(last.extraLanguages ?? appState.defaults?.subtitleDownloadExtraLanguages ?? 0);
 	showError("");
 	renderSources();
 	byId("library-translate-notes").style.display = "none";
@@ -185,6 +188,7 @@ export async function submitTranslateSetup(): Promise<void> {
 		references: inputById("library-translate-references").value.trim(),
 		download: inputById("library-translate-download").checked,
 		aiFallback: inputById("library-translate-ai-fallback").checked,
+		extraLanguages: Number(byId<HTMLSelectElement>("library-translate-extra").value),
 	};
 	const targetLanguages = parseLanguages(choice.targets);
 	if (!choice.source) return showError("Enter the language to translate from");
@@ -204,6 +208,7 @@ export async function submitTranslateSetup(): Promise<void> {
 				referenceLanguages: parseLanguages(choice.references ?? ""),
 				download: choice.download,
 				aiFallback: choice.aiFallback,
+				extraLanguages: choice.download ? choice.extraLanguages : 0,
 			}),
 		});
 		const data = await res.json();

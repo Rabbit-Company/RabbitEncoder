@@ -328,6 +328,8 @@ export interface JobSettings {
 	subtitleDownloadBeforeTranslate?: boolean;
 	/** Translate the languages no good subtitle was found for with AI. Default true. */
 	subtitleDownloadAiFallback?: boolean;
+	/** Also download this many of the most used languages (0, 10, 20 or 30). Default 0. */
+	subtitleDownloadExtraLanguages?: number;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by
@@ -701,6 +703,7 @@ export interface SubtitleSearchCandidate {
 export interface SubtitleSearchLanguage {
 	language: string;
 	name: string;
+	extra?: boolean;
 	candidates: SubtitleSearchCandidate[];
 	bestKey?: string;
 	note?: string;

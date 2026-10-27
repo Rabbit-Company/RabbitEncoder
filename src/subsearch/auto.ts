@@ -13,6 +13,8 @@ export interface DownloadedSubtitle {
 	hearingImpaired: boolean;
 	rating: number;
 	release: string;
+	/** One of the most used languages added on top of the target languages. */
+	extra?: boolean;
 }
 
 /** Downloading before translating is on and OpenSubtitles is set up. */
@@ -33,6 +35,8 @@ export interface DownloadMissingParams {
 	workDir: string;
 	signal?: AbortSignal;
 	onStatus?: (message: string) => void;
+	/** Most used languages to add on top, one try each while enough quota is left. */
+	extraLanguages?: string[];
 }
 
 /**
@@ -41,7 +45,7 @@ export interface DownloadMissingParams {
  * rather than failing the job.
  */
 export async function downloadMissingSubtitles(p: DownloadMissingParams): Promise<DownloadedSubtitle[]> {
-	if (!p.languages.length) return [];
+	if (!p.languages.length && !p.extraLanguages?.length) return [];
 	mkdirSync(p.workDir, { recursive: true });
 	try {
 		const result = await searchSubtitles({
@@ -54,6 +58,7 @@ export async function downloadMissingSubtitles(p: DownloadMissingParams): Promis
 			workDir: p.workDir,
 			signal: p.signal,
 			onProgress: p.onStatus,
+			extraLanguages: p.extraLanguages,
 		});
 		for (const note of result.notes) Logger.warn(`[subsearch] ${note}`);
 		const found: DownloadedSubtitle[] = [];
@@ -71,6 +76,7 @@ export async function downloadMissingSubtitles(p: DownloadMissingParams): Promis
 				hearingImpaired: best.hearingImpaired,
 				rating: best.rating!,
 				release: best.release,
+				...(lang.extra ? { extra: true } : {}),
 			});
 		}
 		return found;

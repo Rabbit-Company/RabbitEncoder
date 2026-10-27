@@ -4801,3 +4801,9 @@ a.btn {
 		grid-template-columns: 1fr 1fr;
 	}
 }
+
+.subsearch-extra {
+	display: flex;
+	align-items: center;
+	margin-top: 8px;
+}

@@ -812,11 +812,16 @@ export async function deleteSeriesNotes(key: string): Promise<{ ok: boolean; err
 export type SubtitleSearchState = Partial<SubtitleSearchResult> & { searchId: string; state: "running" | "done" | "error"; message: string; error?: string };
 
 /** Starts searching, downloading, syncing and rating subtitles for one video. It runs on the server, poll it for the result. */
-export async function startSubtitleSearch(path: string, languages: string[], identity: Partial<SubtitleSearchIdentity>): Promise<SubtitleSearchState> {
+export async function startSubtitleSearch(
+	path: string,
+	languages: string[],
+	identity: Partial<SubtitleSearchIdentity>,
+	extraLanguages: number,
+): Promise<SubtitleSearchState> {
 	const response = await authFetch(`${API}/api/subsearch/search`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path, languages, identity }),
+		body: JSON.stringify({ path, languages, identity, extraLanguages }),
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Subtitle search failed");

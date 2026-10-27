@@ -133,6 +133,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	subtitleDownloadAllowMachine: false,
 	subtitleDownloadBeforeTranslate: true,
 	subtitleDownloadAiFallback: true,
+	subtitleDownloadExtraLanguages: 0,
 	vsFilters: [],
 };
 

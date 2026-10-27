@@ -62,6 +62,9 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 	const calls: string[] = [];
 	let quotaUsedUp = false;
 	let offerFrench = false;
+	let offerExtras = false;
+	let remainingToday = 100;
+	const searchedLanguages: string[] = [];
 
 	beforeAll(async () => {
 		fontRegistry.configure(join(import.meta.dir, "../../fonts"), join(root, "fonts"));
@@ -96,11 +99,20 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 			calls.push(`${init?.method ?? "GET"} ${url.hostname}${url.pathname}`);
 			if (url.hostname === "127.0.0.1") throw new TypeError("Unable to connect");
 			if (url.pathname === "/api/v1/login") return Response.json({ token: "tok", base_url: "api.opensubtitles.com" });
+			if (url.pathname === "/api/v1/infos/user")
+				return Response.json({ data: { username: "rabbit", remaining_downloads: remainingToday, allowed_downloads: 1000 } });
 			if (url.pathname === "/api/v1/subtitles") {
+				searchedLanguages.push(url.searchParams.get("languages") ?? "");
 				return Response.json({
 					total_pages: 1,
 					data: [
 						{ id: "1", attributes: { language: "sl", release: "Show.S01E01.1080p.WEB", download_count: 500, files: [{ file_id: 7001, file_name: "a.srt" }] } },
+						...(offerExtras
+							? ["es", "fr"].map((language, i) => ({
+									id: `x${i}`,
+									attributes: { language, release: "Show.S01E01.1080p.WEB", download_count: 50, files: [{ file_id: 7100 + i, file_name: `${language}.srt` }] },
+								}))
+							: []),
 						...(offerFrench
 							? [
 									{
@@ -191,7 +203,38 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 			.map((t) => ({ language: t.properties.language, name: t.properties.track_name, codec: t.codec }));
 	}
 
+	async function defaults(path: string): Promise<Record<string, boolean>> {
+		const info = await run(["mkvmerge", "-J", path]);
+		return Object.fromEntries(
+			(JSON.parse(info.stdout).tracks as any[]).filter((t) => t.type === "subtitles").map((t) => [t.properties.language, t.properties.default_track]),
+		);
+	}
+
+	it("adds the most used languages it can sync, after the targets and never as default", async () => {
+		offerExtras = true;
+		searchedLanguages.length = 0;
+		const job = await translateJob("extras", { translateTargetLanguages: ["slv"], subtitleDownloadExtraLanguages: 10 }, join(root, "tmp-x"));
+		offerExtras = false;
+		expect(job.status).toBe("done");
+		// The file already has English, so it is not among the extras.
+		// One search lists the target and the extra languages together.
+		expect(searchedLanguages).toEqual(["ar,de,es,fr,id,it,pt-br,ru,sl,zh-cn"]);
+		expect((await tracks(job.inputPath)).map((t) => t.language).sort()).toEqual(["eng", "fre", "slv", "spa"]);
+		expect(await defaults(job.inputPath)).toMatchObject({ slv: true, spa: false, fre: false });
+	}, 60_000);
+
+	it("leaves the extra languages out when the quota is nearly used up", async () => {
+		offerExtras = true;
+		remainingToday = 20;
+		const job = await translateJob("extras-low", { translateTargetLanguages: ["slv"], subtitleDownloadExtraLanguages: 10 }, join(root, "tmp-y"));
+		offerExtras = false;
+		remainingToday = 100;
+		expect(job.status).toBe("done");
+		expect((await tracks(job.inputPath)).map((t) => t.language)).toEqual(["eng", "slv"]);
+	}, 60_000);
+
 	it("adds the downloaded language as a styled track and leaves the rest when AI is off", async () => {
+		calls.length = 0;
 		const job = await translateJob("found", {}, join(root, "tmp-a"));
 		expect(job.error).toBeUndefined();
 		expect(job.status).toBe("done");

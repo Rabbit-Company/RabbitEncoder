@@ -4,6 +4,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { identifyMedia, movieHash, parseMediaName, parseNfo } from "../../src/subsearch/identify";
 import { openSubtitlesLanguage, searchParams } from "../../src/subsearch/opensubtitles";
+import { POPULAR_SUBTITLE_LANGUAGES } from "../../src/subsearch/languages";
+import { computeDownloadedFlagArgs } from "../../src/translate/translate-step";
 
 describe("parseMediaName", () => {
 	it("reads scene movie names", () => {
@@ -90,6 +92,9 @@ describe("openSubtitlesLanguage", () => {
 		expect(openSubtitlesLanguage("por")).toBe("pt-pt");
 		expect(openSubtitlesLanguage("zh-Hant")).toBe("zh-tw");
 		expect(openSubtitlesLanguage("chi")).toBe("zh-cn");
+		expect(openSubtitlesLanguage("fil")).toBe("tl");
+		expect(openSubtitlesLanguage("tgl")).toBe("tl");
+		expect(openSubtitlesLanguage("hin")).toBe("hi");
 		expect(openSubtitlesLanguage("xyz")).toBeNull();
 	});
 
@@ -101,5 +106,20 @@ describe("openSubtitlesLanguage", () => {
 			year: "1999",
 			type: "movie",
 		});
+	});
+});
+
+describe("most used languages", () => {
+	it("each maps to its own OpenSubtitles language", () => {
+		const codes = POPULAR_SUBTITLE_LANGUAGES.map((tag) => openSubtitlesLanguage(tag));
+		expect(codes.every(Boolean)).toBe(true);
+		expect(new Set(codes).size).toBe(POPULAR_SUBTITLE_LANGUAGES.length);
+		expect(POPULAR_SUBTITLE_LANGUAGES).toHaveLength(30);
+	});
+
+	it("never makes an extra language the default track", () => {
+		expect(computeDownloadedFlagArgs(false).slice(0, 2)).toEqual(["--default-track-flag", "0:1"]);
+		expect(computeDownloadedFlagArgs(false, false).slice(0, 2)).toEqual(["--default-track-flag", "0:0"]);
+		expect(computeDownloadedFlagArgs(true).slice(0, 2)).toEqual(["--default-track-flag", "0:0"]);
 	});
 });

@@ -64,6 +64,8 @@ export function openSubtitlesLanguage(tag: string): string | null {
 	const base = code.split("-")[0]!;
 	if (base === "pt") return /-br\b/.test(code) ? "pt-br" : "pt-pt";
 	if (base === "zh") return /hant|-tw\b|-hk\b|-mo\b/.test(code) ? "zh-tw" : "zh-cn";
+	// OpenSubtitles lists Filipino subtitles as Tagalog.
+	if (base === "fil") return "tl";
 	return base;
 }
 
@@ -266,6 +268,12 @@ function cacheDir(tempDir: string): string {
  * Downloads a subtitle file. Every download counts against the daily quota,
  * so files are kept and reused. Their content never changes.
  */
+/** The file was downloaded before, so using it costs no quota. */
+export function isCachedListing(l: SubtitleListing, tempDir: string): boolean {
+	const dir = join(tempDir, "subtitle-cache", "opensubtitles");
+	return existsSync(join(dir, `${l.fileId}.bin`)) && existsSync(join(dir, `${l.fileId}.json`));
+}
+
 export async function downloadOpenSubtitles(account: OpenSubtitlesAccount, l: SubtitleListing, tempDir: string, signal?: AbortSignal): Promise<DownloadedFile> {
 	const dir = cacheDir(tempDir);
 	const dataPath = join(dir, `${l.fileId}.bin`);

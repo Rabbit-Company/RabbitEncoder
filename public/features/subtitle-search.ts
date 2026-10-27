@@ -7,6 +7,7 @@ import { update } from "./polling";
 import { openSubtitleSearchPicker } from "./repair";
 
 const STORAGE_KEY = "rabbit-subtitle-search-languages";
+const EXTRA_STORAGE_KEY = "rabbit-subtitle-search-extra";
 const POLL_MS = 1000;
 
 let videoPath = "";
@@ -160,14 +161,18 @@ function renderResults(): void {
 	if (search.reference) summary.push(`<div><strong>Synced to</strong> ${escapeHtml(search.reference.label)}</div>`);
 	if (search.remainingDownloads !== undefined) summary.push(`<div><strong>Downloads left today</strong> ${search.remainingDownloads}</div>`);
 	for (const note of search.notes ?? []) summary.push(`<div class="hdr-note">${escapeHtml(note)}</div>`);
+	// Extra languages without a usable subtitle are listed together, so 30 of them do not bury the rest.
+	const unmatched = search.languages.filter((lang) => lang.extra && !lang.candidates.some((c) => c.status === "rated"));
+	if (unmatched.length) summary.push(`<div><strong>No good subtitle for</strong> ${escapeHtml(unmatched.map((lang) => lang.name).join(", "))}</div>`);
 	const sections = search.languages
+		.filter((lang) => !unmatched.includes(lang))
 		.map((lang) => {
 			const rows = lang.candidates.map((c) => candidateRow(lang, c)).join("");
 			const table = lang.candidates.length
 				? `<table class="subsearch-table"><thead><tr><th></th><th>Rating</th><th>Release</th><th>Downloads</th><th>Sync</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
 				: "";
 			return `<div class="subsearch-language">
-				<h3>${escapeHtml(lang.name)} <span class="hdr-note">${escapeHtml(lang.language)}</span></h3>
+				<h3>${escapeHtml(lang.name)} <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}</h3>
 				${lang.note ? `<div class="lang-filter-hint">${escapeHtml(lang.note)}</div>` : ""}
 				${table}
 			</div>`;
@@ -238,6 +243,11 @@ export function openSubtitleSearch(): void {
 	byId("subsearch-modal").style.display = "";
 	const input = inputById("subsearch-languages");
 	if (!input.value) input.value = defaultLanguages();
+	const extra = byId<HTMLSelectElement>("subsearch-extra");
+	if (!extra.dataset.ready) {
+		extra.value = localStorage.getItem(EXTRA_STORAGE_KEY) ?? String(appState.defaults?.subtitleDownloadExtraLanguages ?? 0);
+		extra.dataset.ready = "1";
+	}
 	renderVideo();
 	renderResults();
 }
@@ -267,16 +277,18 @@ export async function runSubtitleSearch(): Promise<void> {
 	}
 	const languages = parseLanguages(inputById("subsearch-languages").value);
 	if (!videoPath) return setError("Choose a video first");
-	if (!languages.length) return setError("Enter at least one language, such as slv, eng");
+	const extraLanguages = Number(byId<HTMLSelectElement>("subsearch-extra").value) || 0;
+	if (!languages.length && !extraLanguages) return setError("Enter at least one language, such as slv, eng");
 	resetResults();
 	const current = run;
 	try {
 		localStorage.setItem(STORAGE_KEY, languages.join(", "));
+		localStorage.setItem(EXTRA_STORAGE_KEY, String(extraLanguages));
 	} catch {}
 	startedAt = Date.now();
 	setStatus("Starting...");
 	try {
-		search = await startSubtitleSearch(videoPath, languages, readIdentity());
+		search = await startSubtitleSearch(videoPath, languages, readIdentity(), extraLanguages);
 	} catch (error) {
 		setStatus("");
 		setError(errorMessage(error));

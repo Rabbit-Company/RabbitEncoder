@@ -616,6 +616,20 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 		placeholder: "slv, eng",
 		hint: "Languages the Subtitle search window starts with. Empty uses the translation target languages.",
 	});
+	const extraLabels: Record<number, string> = { 0: "Off", 10: "Top 10", 20: "Top 20", 30: "Top 30" };
+	renderSelectControl(
+		el("extra"),
+		"Also add the most used languages",
+		Object.values(extraLabels),
+		extraLabels[settings.subtitleDownloadExtraLanguages ?? 0] ?? "Off",
+		(v) => (settings.subtitleDownloadExtraLanguages = Number(Object.keys(extraLabels).find((k) => extraLabels[Number(k)] === v) ?? 0)),
+	);
+	const extraHint = document.createElement("div");
+	extraHint.className = "lang-filter-hint";
+	extraHint.textContent =
+		"With Subtitle translation on, also downloads up to this many of the languages with the most subtitles on OpenSubtitles, one try each, without AI. " +
+		"A language is kept only if it syncs well. They run only while more than 20 downloads are left today, so in practice they need VIP.";
+	el("extra").appendChild(extraHint);
 	renderNumberControl(
 		el("tries"),
 		"Downloads per language",

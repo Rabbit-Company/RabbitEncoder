@@ -495,6 +495,7 @@
 											<div id="default-subdl-before" class="toggle-group"></div>
 											<div id="default-subdl-ai-fallback" class="toggle-group"></div>
 											<div id="default-subdl-languages" class="toggle-group"></div>
+											<div id="default-subdl-extra" class="toggle-group"></div>
 											<div id="default-subdl-tries" class="toggle-group"></div>
 											<div id="default-subdl-min-score" class="toggle-group"></div>
 											<div id="default-subdl-hi" class="toggle-group"></div>
@@ -821,6 +822,7 @@
 											<div id="job-subdl-before" class="toggle-group"></div>
 											<div id="job-subdl-ai-fallback" class="toggle-group"></div>
 											<div id="job-subdl-languages" class="toggle-group"></div>
+											<div id="job-subdl-extra" class="toggle-group"></div>
 											<div id="job-subdl-tries" class="toggle-group"></div>
 											<div id="job-subdl-min-score" class="toggle-group"></div>
 											<div id="job-subdl-hi" class="toggle-group"></div>
@@ -1252,6 +1254,15 @@
 							<label class="toggle-label"
 								><input type="checkbox" id="library-translate-ai-fallback" />&nbsp;Translate languages no good subtitle was found for with AI</label
 							>
+							<label class="toggle-label">
+								Also add the most used languages&nbsp;
+								<select class="select-input" id="library-translate-extra">
+									<option value="0">Off</option>
+									<option value="10">Top 10</option>
+									<option value="20">Top 20</option>
+									<option value="30">Top 30</option>
+								</select>
+							</label>
 							<div class="lang-filter-hint" id="library-translate-download-hint"></div>
 						</div>
 						<div class="setting-group library-translate-notes" id="library-translate-notes" style="display: none">
@@ -1703,9 +1714,19 @@
 						<div class="setting-group">
 							<label for="subsearch-languages">Languages</label>
 							<input type="text" class="lang-filter-input" id="subsearch-languages" placeholder="slv, eng" />
+							<label class="toggle-label subsearch-extra">
+								Also add the most used languages&nbsp;
+								<select class="select-input" id="subsearch-extra">
+									<option value="0">Off</option>
+									<option value="10">Top 10</option>
+									<option value="20">Top 20</option>
+									<option value="30">Top 30</option>
+								</select>
+							</label>
 							<div class="lang-filter-hint">
 								The most promising subtitles of each language are downloaded and synced to the video's own subtitles, or to the speech in its audio when it has
-								none. Downloads count against your OpenSubtitles quota. Files downloaded before are reused for free.
+								none. Downloads count against your OpenSubtitles quota. Files downloaded before are reused for free. The most used languages get one download
+								each, and only while more than 20 downloads are left today.
 							</div>
 						</div>
 						<details class="settings-subsection">

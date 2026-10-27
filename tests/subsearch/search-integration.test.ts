@@ -74,6 +74,7 @@ function srt(cues: Interval[], shiftMs = 0): string {
 	const cues = timeline(100, 11);
 	const realFetch = globalThis.fetch;
 	const downloads: number[] = [];
+	let userChecks = 0;
 
 	beforeAll(async () => {
 		const duration = Math.ceil(cues[cues.length - 1]!.endMs / 1000) + 5;
@@ -123,6 +124,10 @@ function srt(cues: Interval[], shiftMs = 0): string {
 		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
 			const url = new URL(String(input));
 			if (url.pathname === "/api/v1/login") return Response.json({ token: "tok", base_url: "api.opensubtitles.com" });
+			if (url.pathname === "/api/v1/infos/user") {
+				userChecks++;
+				return Response.json({ data: { username: "rabbit", remaining_downloads: 50, allowed_downloads: 1000 } });
+			}
 			if (url.pathname === "/api/v1/subtitles") {
 				expect(url.searchParams.get("query")).toBe("the matrix");
 				expect(url.searchParams.get("year")).toBe("1999");
@@ -203,5 +208,25 @@ function srt(cues: Interval[], shiftMs = 0): string {
 			workDir,
 		});
 		expect(downloads.length).toBe(before);
+	}, 60_000);
+
+	it("adds extra languages after the chosen ones once the quota allows it", async () => {
+		const workDir = join(root, "search-extra");
+		mkdirSync(workDir, { recursive: true });
+		const result = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			extraLanguages: ["eng"],
+			settings: { ...getDefaultJobSettings(), openSubtitlesUsername: "rabbit", openSubtitlesPassword: "secret" },
+			cacheDir: root,
+			workDir,
+		});
+		expect(userChecks).toBe(1);
+		expect(result.languages.map((l) => [l.language, !!l.extra])).toEqual([
+			["slv", false],
+			["eng", true],
+		]);
+		expect(result.languages[1]!.bestKey).toBe("os-201");
 	}, 60_000);
 });

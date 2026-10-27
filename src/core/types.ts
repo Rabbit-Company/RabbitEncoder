@@ -398,6 +398,8 @@ export interface JobSettings {
 	subtitleDownloadBeforeTranslate?: boolean;
 	/** Translate the languages no good subtitle was found for with the AI provider. Default true. */
 	subtitleDownloadAiFallback?: boolean;
+	/** Also download this many of the most used languages (0, 10, 20 or 30), one try each and only while enough quota is left. Default 0. */
+	subtitleDownloadExtraLanguages?: number;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by
@@ -494,6 +496,8 @@ export interface SubtitleAddTrack {
 	language: string;
 	trackName: string;
 	hearingImpaired: boolean;
+	/** One of the most used languages, which is never made the default track. */
+	extra?: boolean;
 }
 
 /** Adds downloaded subtitles to a video without touching its other tracks. */

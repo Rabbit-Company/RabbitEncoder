@@ -5,6 +5,7 @@ import { CancelledError, run } from "../core/process";
 import type { JobSettings, ProbeResult, SubtitleStreamInfo, SubtitleStyle } from "../core/types";
 import { probeFile } from "../pipeline/probe";
 import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
+import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
 import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec } from "../tracks/tracks";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
@@ -107,11 +108,15 @@ export function computeTranslatedFlagArgs(trackType: "full" | "honorifics"): str
 	];
 }
 
-/** Flag args for a downloaded track. A full track becomes the default of its language, an SDH one does not. */
-export function computeDownloadedFlagArgs(hearingImpaired: boolean): string[] {
+/**
+ * Flag args for a downloaded track. A full track becomes the default of its
+ * language, an SDH one does not, and neither do extra languages, as dozens of
+ * default tracks would confuse players.
+ */
+export function computeDownloadedFlagArgs(hearingImpaired: boolean, isDefault = true): string[] {
 	return [
 		"--default-track-flag",
-		`0:${hearingImpaired ? 0 : 1}`,
+		`0:${isDefault && !hearingImpaired ? 1 : 0}`,
 		"--forced-display-flag",
 		"0:0",
 		"--hearing-impaired-flag",
@@ -170,7 +175,7 @@ async function downloadedTracks(
 			language: normalizeTag(d.language),
 			trackName: buildSubtitleTrackName(trackType, undefined, "OpenSubtitles"),
 			trackType,
-			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired),
+			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, !d.extra),
 			format: styled.format,
 			sourceIndex: -1,
 			downloaded: true,
@@ -437,7 +442,8 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, signal } = params;
 
 	const targets = settings.translateTargetLanguages ?? [];
-	if (!settings.translateSubtitles || targets.length === 0) return [];
+	const extraCount = settings.subtitleDownloadExtraLanguages ?? 0;
+	if (!settings.translateSubtitles || (targets.length === 0 && extraCount === 0)) return [];
 
 	const descriptors = buildKeptDescriptors(subtitleStreams);
 
@@ -445,20 +451,26 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	const download = subtitleDownloadEnabled(settings) && !!params.downloadCacheDir;
 	let downloaded: TranslatedTrack[] = [];
 	if (download) {
+		const probe = params.probe ?? (await probeFile(inputPath));
+		const base = {
+			inputPath,
+			identityPath: params.identityPath ?? inputPath,
+			probe,
+			settings,
+			cacheDir: params.downloadCacheDir!,
+			workDir: join(tempDir, "subtitle-download"),
+			signal,
+			onStatus: params.onStatus,
+		};
 		const missing = missingTargetLanguages(descriptors, targets);
-		if (missing.length) {
-			params.onStatus?.(`Searching OpenSubtitles for ${missing.join(", ")}`);
-			const found = await downloadMissingSubtitles({
-				inputPath,
-				identityPath: params.identityPath ?? inputPath,
-				probe: params.probe ?? (await probeFile(inputPath)),
-				languages: missing,
-				settings,
-				cacheDir: params.downloadCacheDir!,
-				workDir: join(tempDir, "subtitle-download"),
-				signal,
-				onStatus: params.onStatus,
-			});
+		// The most used languages come after the targets, so they never take the targets' quota.
+		const targetCodes = new Set(targets.map((t) => resolveTranslateLang(t)?.code));
+		const extras = missingTargetLanguages(descriptors, POPULAR_SUBTITLE_LANGUAGES.slice(0, extraCount)).filter(
+			(t) => !targetCodes.has(resolveTranslateLang(t)?.code),
+		);
+		if (missing.length || extras.length) {
+			params.onStatus?.(`Searching OpenSubtitles for ${[...missing, ...(extras.length ? [`${extras.length} more languages`] : [])].join(", ")}`);
+			const found = await downloadMissingSubtitles({ ...base, languages: missing, extraLanguages: extras });
 			downloaded = await downloadedTracks(found, settings, subtitleStyle, tempDir, signal);
 		}
 	}

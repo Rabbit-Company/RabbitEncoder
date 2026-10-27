@@ -2,7 +2,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { randomUUID } from "crypto";
 import { basename, dirname, join, parse as parsePath } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, SubtitleAddTrack } from "../core/types";
+import type { AppConfig, ProbeResult, SubtitleAddTrack } from "../core/types";
+import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
@@ -52,6 +53,13 @@ function pruneSearches(config: AppConfig): void {
 	}
 }
 
+/** The most used languages, without the ones asked for and the ones the file has a dialogue track in. */
+function extraLanguagesFor(count: number, chosen: string[], probe: ProbeResult): string[] {
+	const code = (tag: string | undefined) => resolveTranslateLang(tag)?.code;
+	const taken = new Set([...chosen.map(code), ...(probe.subtitleStreams ?? []).filter((s) => !s.isForced).map((s) => code(s.language))]);
+	return POPULAR_SUBTITLE_LANGUAGES.slice(0, count).filter((tag) => !taken.has(code(tag)));
+}
+
 /** The state of a search, and its result without server paths. */
 function publicSearch(id: string, s: StoredSearch) {
 	const base = { searchId: id, path: s.path, state: s.state, message: s.message, error: s.error };
@@ -94,7 +102,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 
 	/** Starts a search in the background. It reads the whole video and downloads files, which can take minutes. */
 	app.post("/api/subsearch/search", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as { path?: unknown; languages?: unknown; identity?: unknown };
+		const body = (await c.req.json().catch(() => ({}))) as { path?: unknown; languages?: unknown; identity?: unknown; extraLanguages?: unknown };
 		pruneSearches(config);
 		try {
 			const path = resolveAllowedMediaFile(body.path, config, "Video");
@@ -102,7 +110,8 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 			const languages = [...new Set((body.languages as string[]).map((l) => l.trim()).filter(Boolean))].slice(0, 10);
 			const unknown = languages.filter((l) => !resolveTranslateLang(l));
 			if (unknown.length) throw new Error(`Unknown language: ${unknown.join(", ")}`);
-			if (!languages.length) throw new Error("Choose at least one language");
+			const extraCount = (EXTRA_LANGUAGE_CHOICES as readonly unknown[]).includes(body.extraLanguages) ? (body.extraLanguages as number) : 0;
+			if (!languages.length && !extraCount) throw new Error("Choose at least one language");
 			const settings = getAppConfig().defaults;
 			if (!accountFrom(settings)) throw new Error(LOGIN_NEEDED);
 
@@ -118,6 +127,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 						inputPath: path,
 						probe,
 						languages,
+						extraLanguages: extraLanguagesFor(extraCount, languages, probe),
 						settings,
 						cacheDir: config.tempDir,
 						workDir,
@@ -195,6 +205,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 					language: lang.language,
 					trackName: buildSubtitleTrackName(candidate.hearingImpaired ? "sdh" : "full", undefined, "OpenSubtitles"),
 					hearingImpaired: candidate.hearingImpaired,
+					...(lang.extra ? { extra: true } : {}),
 				};
 			});
 			try {

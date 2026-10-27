@@ -46,6 +46,7 @@ import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-tool";
 import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/grain-tool";
 import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
+import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { compareQueuedJobs, queuePriority } from "./priority";
 import { ensureFilmGrainTable, generateFilmGrainTable, type FilmGrainRun } from "../video/film-grain-generator";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
@@ -371,6 +372,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	subtitleDownloadAllowMachine: bool,
 	subtitleDownloadBeforeTranslate: bool,
 	subtitleDownloadAiFallback: bool,
+	subtitleDownloadExtraLanguages: (v) => ((EXTRA_LANGUAGE_CHOICES as readonly unknown[]).includes(v) ? v : undefined),
 };
 
 function sanitizeSettingsInto(target: JobSettings, partial: Partial<JobSettings>): void {
