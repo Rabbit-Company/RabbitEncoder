@@ -385,6 +385,7 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "repair") meta += `<span>Subtitle repair, video and audio stream copy</span>`;
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
+	if (job.kind === "subtitles") meta += `<span>Downloaded subtitles added, video and audio copied</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
 		const manual = !ENCODERS[job.settings.encoder]?.usesAutoBoost || job.settings.manualQuality;
 		const rate = manual ? `CRF ${job.settings.manualCrf}, preset ${job.settings.manualPreset}` : `${job.settings.quality}, ${job.settings.finalSpeed}`;
@@ -424,6 +425,8 @@ export function renderJobCard(job: Job): string {
 	let error = "";
 	if (err && job.error) {
 		error = `<div class="job-error">${escapeHtml(job.error)}</div>`;
+	} else if (job.warning) {
+		error = `<div class="job-warning">${escapeHtml(job.warning)}</div>`;
 	}
 
 	const infoBtn = `<button class="btn-icon" title="Media info" data-id="${job.id}" data-action="mediainfo">
@@ -529,7 +532,7 @@ export function renderJobCard(job: Job): string {
 	} else if (done) {
 		actions = `
 			${isToolJob(job) ? "" : bitrateBtn}
-			${job.kind === "hdr" || job.kind === "grain" ? "" : repairBtn}
+			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;
@@ -543,7 +546,11 @@ export function renderJobCard(job: Job): string {
           <div class="job-meta">${meta}</div>
         </div>
         <div class="job-actions">
-          <span class="status-badge status-${job.status}">${statusLabel(job.status)}</span>
+          ${
+						job.status === "done" && job.warning
+							? `<span class="status-badge status-warning" title="${escapeHtml(job.warning)}">Done, warning</span>`
+							: `<span class="status-badge status-${job.status}">${statusLabel(job.status)}</span>`
+					}
           ${actions}
         </div>
       </div>
@@ -829,9 +836,9 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	return html;
 }
 
-/** Repairs and HDR metadata and film grain changes copy the video instead of encoding it, so they have no encode settings or previews. */
+/** Repairs, HDR metadata and film grain changes, and added subtitles copy the video instead of encoding it, so they have no encode settings or previews. */
 function isToolJob(job: Job): boolean {
-	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain";
+	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles";
 }
 
 export function renderJobsList(jobs: Job[]): string {

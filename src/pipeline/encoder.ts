@@ -68,7 +68,9 @@ import { cpus } from "os";
 import { getEncoder } from "../core/encoders";
 import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
-import { runTranslateStep, orderOutputSubtitles, type TranslatedTrack } from "../translate/translate-step";
+import { runTranslateStep, orderOutputSubtitles, describeAddedSubtitles, type TranslatedTrack } from "../translate/translate-step";
+import { subtitleDownloadEnabled } from "../subsearch/auto";
+import { finishAddedTracks } from "../subtitles/added-tracks";
 import { seriesNotesDir } from "../translate/series-notes";
 import { finalizeOutput, formatTransferDetail, moveFileWithProgress, stageFileWithProgress } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
@@ -1892,7 +1894,9 @@ export async function encodeJob(
 		const doTranslate = async (): Promise<void> => {
 			checkCancelled();
 			setStep(S_TRANSLATE, { status: "active", progress: 0 });
-			if (!skipSubtitleProcessing && job.settings.translateSubtitles && !previewMode && subtitleStreams.length > 0) {
+			// Without subtitle tracks there is nothing to translate from, but subtitles can still be downloaded.
+			const canAddSubtitles = subtitleStreams.length > 0 || subtitleDownloadEnabled(job.settings);
+			if (!skipSubtitleProcessing && job.settings.translateSubtitles && !previewMode && canAddSubtitles) {
 				try {
 					translatedTracks = await runTranslateStep({
 						subtitleStreams,
@@ -1902,7 +1906,12 @@ export async function encodeJob(
 						subtitleStyle: { ...DEFAULT_STYLE_APPEARANCE, fontName: job.settings.fontGroup },
 						organization: config.organization,
 						seriesNotesDir: seriesNotesDir(config),
+						downloadCacheDir: config.tempDir,
+						identityPath: job.inputPath,
+						probe,
 						signal: stageSignal,
+						onStatus: (message) => setStep(S_TRANSLATE, { detail: message }),
+						onWarning: (warning) => updateJob({ warning }),
 						onProgress: ({ done, total }) => {
 							const overall = total > 0 ? Math.round((done / total) * 100) : 0;
 							setStep(S_TRANSLATE, { progress: overall, detail: `Translating ${done}/${total} lines` });
@@ -1911,7 +1920,7 @@ export async function encodeJob(
 					setStep(S_TRANSLATE, {
 						status: "done",
 						progress: 100,
-						detail: translatedTracks.length ? `Added ${translatedTracks.length} track(s)` : "Nothing to translate",
+						detail: describeAddedSubtitles(translatedTracks),
 					});
 				} catch (err) {
 					setStep(S_TRANSLATE, { status: "error", progress: 100 });
@@ -2162,10 +2171,15 @@ export async function encodeJob(
 			}
 		};
 
-		// Translated files do not exist until doTranslate completes, so their
-		// compression probes form a tiny trailing step after both parallel jobs.
-		const probeTranslatedCompression = async (): Promise<void> => {
+		// Translated and downloaded files do not exist until doTranslate completes,
+		// so their final font and compression probes form a tiny trailing step after
+		// both parallel jobs. The font pass shares the native tracks' face choices,
+		// which subtitle preparation has made by then.
+		const finishTranslatedTracks = async (): Promise<void> => {
 			if (skipSubtitleProcessing) return;
+
+			for (const face of await finishAddedTracks(translatedTracks, job.settings, tempDir, applyAxes)) resolvedFaces.set(face.path, face);
+			checkCancelled();
 
 			if (job.settings.compressSubtitles && translatedTracks.length > 0) {
 				const minSavings = job.settings.compressSubtitlesMinSavings ?? 10;
@@ -2185,7 +2199,7 @@ export async function encodeJob(
 				// on analysis, so they can run together alongside video/audio.
 				const subsPipeline = doSubtitleAnalysis().then(async () => {
 					await Promise.all([doTranslate(), doSubtitlePrep()]);
-					await probeTranslatedCompression();
+					await finishTranslatedTracks();
 				});
 				await Promise.all([encodeVideo(), doAudio(), subsPipeline]);
 			} else {
@@ -2193,7 +2207,7 @@ export async function encodeJob(
 				// source-only subtitle preparation with video and audio.
 				await Promise.all([encodeVideo(), doAudio(), doSubtitleAnalysis().then(doSubtitlePrep)]);
 				await doTranslate();
-				await probeTranslatedCompression();
+				await finishTranslatedTracks();
 			}
 		} catch (err) {
 			stageAbort.abort(err);
@@ -2338,7 +2352,7 @@ export async function encodeJob(
 		}
 
 		if (!skipSubtitleProcessing) {
-			if (subtitleStreams.length > 0) {
+			if (subtitleStreams.length > 0 || translatedTracks.length > 0) {
 				const orderedSubs = orderOutputSubtitles(
 					plannedSubs.map((planned) => ({
 						stream: planned.stream,

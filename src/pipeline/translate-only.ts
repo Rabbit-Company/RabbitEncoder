@@ -6,7 +6,9 @@ import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
 import { analyzeSubtitleStreams, detectSubtitleTrackType, isTextSubtitleCodec, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
 import { resolveTranslateLang } from "../translate/translate-languages";
-import { runTranslateStep, type TranslatedTrack } from "../translate/translate-step";
+import { buildKeptDescriptors, describeAddedSubtitles, missingTargetLanguages, runTranslateStep, type TranslatedTrack } from "../translate/translate-step";
+import { subtitleDownloadEnabled } from "../subsearch/auto";
+import { prepareRemuxAddition } from "../subtitles/added-tracks";
 import { seriesNotesDir } from "../translate/series-notes";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style"; // NOTE: match the import path encoder.ts uses for DEFAULT_STYLE_APPEARANCE
 import { finalizeOutput } from "./output";
@@ -68,7 +70,7 @@ function compareKeys(a: PriorityKey, b: PriorityKey): number {
 }
 
 /** Order freshly translated tracks among themselves by the subtitle language priority. */
-export function orderTranslatedByPriority(tracks: TranslatedTrack[], priority: string[]): TranslatedTrack[] {
+export function orderTranslatedByPriority<T extends Pick<TranslatedTrack, "language">>(tracks: T[], priority: string[]): T[] {
 	const key = priorityKey(priority);
 	return [...tracks].sort((a, b) => compareKeys(key(a.language), key(b.language)) || a.language.localeCompare(b.language));
 }
@@ -198,9 +200,12 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 		updateJob({ probe });
 
 		const subtitleStreams: SubtitleStreamInfo[] = probe.subtitleStreams ?? [];
-		if (subtitleStreams.length === 0) {
+		const canDownload = subtitleDownloadEnabled(job.settings);
+		if (subtitleStreams.length === 0 && !canDownload) {
 			throw new Error("No subtitle streams found. Nothing to translate from.");
 		}
+		// Without a source track the job can still download subtitles, it only skips AI translation.
+		let noSource = subtitleStreams.length === 0 ? "the file has no subtitle track to translate from" : "";
 
 		setStep(T_ANALYZE, { progress: 30, detail: `Analyzing ${subtitleStreams.length} subtitle track(s)` });
 
@@ -220,11 +225,12 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 		} else if (job.settings.translateSourceMatch) {
 			const match = job.settings.translateSourceMatch;
 			const stream = findTranslateSource(subtitleStreams, match);
-			if (!stream) {
-				const kind = match.type === "any" ? "text" : match.type;
-				throw new Error(`No ${kind} text subtitle track in "${match.language}" found to translate from.`);
-			}
-			forceSourceIndex = stream.index;
+			const kind = match.type === "any" ? "text" : match.type;
+			if (stream) forceSourceIndex = stream.index;
+			else if (canDownload) {
+				noSource = `there is no ${kind} text subtitle track in "${match.language}" to translate from`;
+				Logger.warn(`[translate-only] Only downloading, ${noSource}`);
+			} else throw new Error(`No ${kind} text subtitle track in "${match.language}" found to translate from.`);
 		}
 
 		setStep(T_ANALYZE, { status: "done", progress: 100, detail: `${subtitleStreams.length} track(s) analyzed` });
@@ -248,17 +254,28 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			organization: config.organization,
 			forceSourceIndex,
 			seriesNotesDir: seriesNotesDir(config),
+			downloadCacheDir: config.tempDir,
+			probe,
+			skipAi: !!noSource,
 			signal,
+			onStatus: (message) => setStep(T_TRANSLATE, { detail: message }),
+			onWarning: (warning) => updateJob({ warning }),
 			onProgress: ({ done, total }) => {
 				const overall = total > 0 ? Math.round((done / total) * 100) : 0;
 				setStep(T_TRANSLATE, { progress: overall, detail: `Translating ${done}/${total} lines` });
 			},
 		});
 
+		if (noSource && job.settings.subtitleDownloadAiFallback !== false) {
+			const added = new Set(translated.map((t) => resolveTranslateLang(t.language)?.code));
+			const left = missingTargetLanguages(buildKeptDescriptors(subtitleStreams), targets).filter((t) => !added.has(resolveTranslateLang(t)?.code));
+			if (left.length) updateJob({ warning: `${left.join(", ")} not added: no good subtitle to download, and ${noSource}` });
+		}
+
 		setStep(T_TRANSLATE, {
 			status: "done",
 			progress: 100,
-			detail: translated.length ? `Added ${translated.length} track(s)` : "Nothing to translate",
+			detail: describeAddedSubtitles(translated),
 		});
 
 		// Mux
@@ -310,16 +327,22 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 				job.settings.subtitleLanguagePriority,
 			);
 
+			setStep(T_MUX, { progress: 2, detail: "Preparing fonts" });
+			const addition = await prepareRemuxAddition(job.inputPath, ordered, job.settings, tempDir, signal);
+			checkCancelled();
+
 			const mkvArgs = ["mkvmerge", "-o", finalOutput, job.inputPath];
 			for (const track of ordered) {
 				mkvArgs.push("--language", `0:${sanitizeLanguageTag(track.language, `translated ${track.language}`)}`);
 				mkvArgs.push("--track-name", `0:${track.trackName}`);
 				mkvArgs.push(...track.flagArgs);
+				mkvArgs.push(...(addition.compressionArgs.get(track.file) ?? []));
 				mkvArgs.push(track.file);
 			}
+			mkvArgs.push(...addition.fontArgs);
 			mkvArgs.push("--track-order", trackOrder);
 
-			setStep(T_MUX, { progress: 5, detail: `Adding ${ordered.length} translated track(s)` });
+			setStep(T_MUX, { progress: 5, detail: `Adding ${ordered.length} track(s)` });
 			Logger.info(`[translate-only] Muxing: ${ordered.map((t) => t.language).join(", ")} → ${basename(job.inputPath)}`);
 
 			const res = await run([mkvArgs[0]!, "--gui-mode", ...mkvArgs.slice(1)], {

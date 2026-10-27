@@ -1,8 +1,10 @@
 import { basename, join } from "path";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { Logger } from "../core/logger";
-import { run } from "../core/process";
-import type { JobSettings, SubtitleStreamInfo, SubtitleStyle } from "../core/types";
+import { CancelledError, run } from "../core/process";
+import type { JobSettings, ProbeResult, SubtitleStreamInfo, SubtitleStyle } from "../core/types";
+import { probeFile } from "../pipeline/probe";
+import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
 import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec } from "../tracks/tracks";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
@@ -19,7 +21,7 @@ import {
 import { createSemaphore } from "../core/concurrency";
 import { checkProvider, type LlmChatOptions } from "./llm-client";
 import { prepareSeriesNotes } from "./series-notes";
-import { resolveTranslateLang, type TranslateLang } from "./translate-languages";
+import { normalizeTag, resolveTranslateLang, type TranslateLang } from "./translate-languages";
 
 /**
  * A finished, on-disk translated subtitle ready to hand to mkvmerge. Shaped to
@@ -32,13 +34,17 @@ export interface TranslatedTrack {
 	language: string;
 	/** --track-name value (carries the organization as release group). */
 	trackName: string;
-	trackType: "full" | "honorifics";
+	trackType: "full" | "honorifics" | "sdh";
 	/** mkvmerge flag args (default/forced/etc.) for this track. */
 	flagArgs: string[];
 	/** "ass" | "srt" - for logging/inspection. */
 	format: "ass" | "srt";
-	/** Source subtitle stream index this was translated from (for output ordering). */
+	/** Source subtitle stream index this was translated from (for output ordering). -1 for a download. */
 	sourceIndex: number;
+	/** Downloaded from OpenSubtitles instead of translated. */
+	downloaded?: boolean;
+	/** Its dialogue uses the font group, so the final face is applied and attached before muxing. */
+	restyle?: boolean;
 }
 
 export interface TranslateProgress {
@@ -68,8 +74,20 @@ export interface RunTranslateStepParams {
 	forceSourceIndex?: number;
 	/** Where per-series notes are kept. Without it, no notes are used. */
 	seriesNotesDir?: string;
+	/** App temp folder, where subtitle downloads are cached. Without it, nothing is downloaded. */
+	downloadCacheDir?: string;
+	/** The video's place in the library, for its name and .nfo files, when `inputPath` is a staged copy. */
+	identityPath?: string;
+	/** Probe of the input, used to sync downloads. Probed when missing. */
+	probe?: ProbeResult;
+	/** Download only, for example when the requested source track is missing. */
+	skipAi?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (p: TranslateProgress) => void;
+	/** What the step is doing before translation starts, such as downloading subtitles. */
+	onStatus?: (message: string) => void;
+	/** Something the user should see although the step finished, such as languages left untranslated. */
+	onWarning?: (message: string) => void;
 }
 
 /** Flag args for a freshly-created translated track (always the only track in its language). */
@@ -87,6 +105,89 @@ export function computeTranslatedFlagArgs(trackType: "full" | "honorifics"): str
 		"--original-flag",
 		"0:0",
 	];
+}
+
+/** Flag args for a downloaded track. A full track becomes the default of its language, an SDH one does not. */
+export function computeDownloadedFlagArgs(hearingImpaired: boolean): string[] {
+	return [
+		"--default-track-flag",
+		`0:${hearingImpaired ? 0 : 1}`,
+		"--forced-display-flag",
+		"0:0",
+		"--hearing-impaired-flag",
+		`0:${hearingImpaired ? 1 : 0}`,
+		"--commentary-flag",
+		"0:0",
+		"--original-flag",
+		"0:0",
+	];
+}
+
+/** Target languages that have no full or honorifics track yet, each once. */
+export function missingTargetLanguages(descriptors: KeptSubDescriptor[], targets: string[]): string[] {
+	const have = new Set(
+		descriptors.filter((d) => d.trackType === "full" || d.trackType === "honorifics").map((d) => resolveTranslateLang(d.language)?.code ?? d.language),
+	);
+	const out: string[] = [];
+	for (const raw of targets) {
+		const tag = raw.trim();
+		const code = resolveTranslateLang(tag)?.code;
+		if (!code || have.has(code)) continue;
+		have.add(code);
+		out.push(tag);
+	}
+	return out;
+}
+
+/** Synthetic stream numbers for styling downloads, clear of real stream indexes. */
+const DOWNLOAD_INDEX_BASE = 900_000;
+
+/** Downloads styled the way native tracks are, as tracks ready to mux. */
+async function downloadedTracks(
+	found: DownloadedSubtitle[],
+	settings: JobSettings,
+	subtitleStyle: SubtitleStyle,
+	tempDir: string,
+	signal?: AbortSignal,
+): Promise<TranslatedTrack[]> {
+	const out: TranslatedTrack[] = [];
+	for (const [i, d] of found.entries()) {
+		const trackType = d.hearingImpaired ? "sdh" : "full";
+		const styled = await styleSource(
+			d.file,
+			d.format === "ass" ? "ass" : "subrip",
+			trackType,
+			settings,
+			subtitleStyle,
+			tempDir,
+			DOWNLOAD_INDEX_BASE + i,
+			signal,
+		);
+		const file = join(tempDir, `downloaded_${d.language}.${styled.format}`);
+		writeFileSync(file, styled.content, "utf-8");
+		out.push({
+			file,
+			language: normalizeTag(d.language),
+			trackName: buildSubtitleTrackName(trackType, undefined, "OpenSubtitles"),
+			trackType,
+			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired),
+			format: styled.format,
+			sourceIndex: -1,
+			downloaded: true,
+			restyle: styled.styled,
+		});
+	}
+	return out;
+}
+
+/** Step detail for the tracks the Translate step added. */
+export function describeAddedSubtitles(tracks: TranslatedTrack[]): string {
+	const downloaded = tracks.filter((t) => t.downloaded).length;
+	const translated = tracks.length - downloaded;
+	const parts: string[] = [];
+	if (downloaded) parts.push(`Downloaded ${downloaded}`);
+	if (translated) parts.push(`${downloaded ? "translated" : "Translated"} ${translated}`);
+	return parts.length ? `${parts.join(", ")} track(s)` : "Nothing to add";
 }
 
 /** Resolve the on-disk format the translated file will have. */
@@ -138,11 +239,11 @@ async function extractSource(
  * track matches the source's final design. SRT→ASS conversion and ASS dialogue
  * restyle mirror the Mux settings. Returns the styled content + final format.
  *
- * Font-family note: restyle injects `restyleFamily` (the family Mux attaches).
- * In the rare case Mux picks a numbered alias due to a same-named source font,
- * the family can differ - logged, and libass falls back gracefully.
+ * `styled` tells whether the dialogue font was set here. The final face, its
+ * family name and the group's appearance are applied later by
+ * `finishAddedTracks`, once the fonts kept in the output are known.
  */
-async function styleSource(
+export async function styleSource(
 	srcPath: string,
 	sourceCodec: string,
 	trackType: string,
@@ -151,7 +252,7 @@ async function styleSource(
 	tempDir: string,
 	streamIndex: number,
 	signal?: AbortSignal,
-): Promise<{ content: string; format: "ass" | "srt" }> {
+): Promise<{ content: string; format: "ass" | "srt"; styled: boolean }> {
 	const c = sourceCodec.toLowerCase();
 	const isAss = c === "ass" || c === "ssa";
 	const isSrt = c === "subrip" || c === "srt";
@@ -161,22 +262,21 @@ async function styleSource(
 		const r = await run(["ffmpeg", "-y", "-i", srcPath, "-map", "0:s:0", "-c:s", "ass", assPath], { signal });
 		if (r.code === 0 && existsSync(assPath)) {
 			const styled = styleSrtAss(readFileSync(assPath, "utf-8"), subtitleStyle);
-			return { content: styled, format: "ass" };
+			return { content: styled, format: "ass", styled: true };
 		}
 		Logger.warn(`[translate] SRT→ASS conversion failed for source ${streamIndex}; translating as SRT`);
-		return { content: readFileSync(srcPath, "utf-8"), format: "srt" };
+		return { content: readFileSync(srcPath, "utf-8"), format: "srt", styled: false };
 	}
 
 	if (isAss) {
-		let content = readFileSync(srcPath, "utf-8");
+		const content = readFileSync(srcPath, "utf-8");
 		const targets = new Set(settings.assRestyleTargets ?? []);
-		if (settings.restyleAssFont && targets.has(trackType)) {
-			content = restyleAssDialogueFont(content, subtitleStyle, true);
-		}
-		return { content, format: "ass" };
+		if (settings.restyleAssFont && targets.has(trackType))
+			return { content: restyleAssDialogueFont(content, subtitleStyle, true), format: "ass", styled: true };
+		return { content, format: "ass", styled: false };
 	}
 
-	return { content: readFileSync(srcPath, "utf-8"), format: "srt" };
+	return { content: readFileSync(srcPath, "utf-8"), format: "srt", styled: false };
 }
 
 function llmOptions(settings: JobSettings, signal?: AbortSignal): LlmChatOptions {
@@ -325,21 +425,74 @@ export async function prepareSeriesNotesForFile(p: PrepareNotesForFileParams): P
  * translated track per missing target language. Returns finished tracks for the
  * caller to append at mux time.
  *
+ * Missing languages are downloaded from OpenSubtitles first when that is set
+ * up, and only the rest are translated.
+ *
  * Throws if translation is enabled but llm is unreachable or the model is
  * missing (the user explicitly asked to translate; shipping without it silently
- * would be worse).
+ * would be worse). When some languages were downloaded, the job keeps them
+ * instead and reports the failure through `onWarning`.
  */
 export async function runTranslateStep(params: RunTranslateStepParams): Promise<TranslatedTrack[]> {
-	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, organization, forceSourceIndex, seriesNotesDir, signal, onProgress } = params;
+	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, signal } = params;
 
 	const targets = settings.translateTargetLanguages ?? [];
 	if (!settings.translateSubtitles || targets.length === 0) return [];
 
+	const descriptors = buildKeptDescriptors(subtitleStreams);
+
+	// Subtitles people made beat machine translation, so missing languages are downloaded first.
+	const download = subtitleDownloadEnabled(settings) && !!params.downloadCacheDir;
+	let downloaded: TranslatedTrack[] = [];
+	if (download) {
+		const missing = missingTargetLanguages(descriptors, targets);
+		if (missing.length) {
+			params.onStatus?.(`Searching OpenSubtitles for ${missing.join(", ")}`);
+			const found = await downloadMissingSubtitles({
+				inputPath,
+				identityPath: params.identityPath ?? inputPath,
+				probe: params.probe ?? (await probeFile(inputPath)),
+				languages: missing,
+				settings,
+				cacheDir: params.downloadCacheDir!,
+				workDir: join(tempDir, "subtitle-download"),
+				signal,
+				onStatus: params.onStatus,
+			});
+			downloaded = await downloadedTracks(found, settings, subtitleStyle, tempDir, signal);
+		}
+	}
+	const covered = new Set(downloaded.map((t) => resolveTranslateLang(t.language)?.code));
+	const aiTargets = targets.filter((t) => !covered.has(resolveTranslateLang(t)?.code));
+	if (params.skipAi || (download && settings.subtitleDownloadAiFallback === false) || aiTargets.length === 0) {
+		if (aiTargets.length) Logger.info(`[translate] Not translating ${aiTargets.join(", ")} with AI`);
+		return downloaded;
+	}
+
+	try {
+		return [...downloaded, ...(await translateWithAi(params, descriptors, aiTargets, downloaded))];
+	} catch (error) {
+		// Downloaded subtitles are kept when the AI provider fails, so an encode is not lost for one language.
+		if (!downloaded.length || error instanceof CancelledError || signal?.aborted) throw error;
+		const warning = `AI translation failed, ${aiTargets.join(", ")} not translated: ${error instanceof Error ? error.message : String(error)}`;
+		Logger.warn(`[translate] ${warning}`);
+		params.onWarning?.(warning);
+		return downloaded;
+	}
+}
+
+/** Translates the target languages no download covered. */
+async function translateWithAi(
+	params: RunTranslateStepParams,
+	descriptors: KeptSubDescriptor[],
+	aiTargets: string[],
+	downloaded: TranslatedTrack[],
+): Promise<TranslatedTrack[]> {
+	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, organization, forceSourceIndex, seriesNotesDir, signal, onProgress } = params;
 	const provider = settings.translateProvider ?? "openai";
 	const model = settings.translateModel;
 
-	const descriptors = buildKeptDescriptors(subtitleStreams);
-	const plan = planTargetLanguages(descriptors, targets, { forceSourceIndex });
+	const plan = planTargetLanguages(descriptors, aiTargets, { forceSourceIndex });
 	for (const note of plan.skipped) Logger.info(`[translate] Skipped ${note}`);
 	if (plan.productions.length === 0) {
 		Logger.info("[translate] Nothing to translate (all target languages already present or unsupported)");
@@ -364,16 +517,11 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	if (!extracted) return [];
 
 	const sourceTrackType = detectSubtitleTrackType(sourceStream);
-	const { content: styledSource, format } = await styleSource(
-		extracted.path,
-		extracted.codec,
-		sourceTrackType,
-		settings,
-		subtitleStyle,
-		tempDir,
-		sourceStream.index,
-		signal,
-	);
+	const {
+		content: styledSource,
+		format,
+		styled: sourceStyled,
+	} = await styleSource(extracted.path, extracted.codec, sourceTrackType, settings, subtitleStyle, tempDir, sourceStream.index, signal);
 
 	const dialogueStyles = format === "ass" ? dialogueStyleNames(styledSource) : new Set<string>();
 	const isDialogueStyle = (style: string) => dialogueStyles.has(style);
@@ -387,6 +535,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 		settings.translateReferenceLanguages ?? [],
 		trackReader(inputPath, tempDir, signal),
 	);
+	addDownloadedReferences(references, downloaded, plan.productions[0]!.source, settings.translateReferenceLanguages ?? []);
 
 	let notes: string | undefined;
 	if (seriesNotesDir && settings.translateSeriesNotes !== false) {
@@ -447,6 +596,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 				flagArgs: computeTranslatedFlagArgs(prod.trackType),
 				format,
 				sourceIndex: sourceStream.index,
+				restyle: sourceStyled,
 			};
 
 			Logger.info(`[translate] Produced ${prod.target.name} (${prod.trackType}) from track ${sourceStream.index}`);
@@ -454,6 +604,21 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 	);
 
 	return out;
+}
+
+/** Downloads in a reference language the file lacked serve as references too. */
+function addDownloadedReferences(references: ReferenceTrack[], downloaded: TranslatedTrack[], source: TranslateLang, referenceLanguages: string[]): void {
+	const wanted = new Set(referenceLanguages.map((l) => resolveTranslateLang(l)?.code).filter(Boolean));
+	for (const track of downloaded) {
+		const lang = resolveTranslateLang(track.language);
+		if (!lang || !wanted.has(lang.code) || lang.code === source.code || references.some((r) => r.lang.code === lang.code)) continue;
+		const content = readFileSync(track.file, "utf-8");
+		const styles = track.format === "ass" ? dialogueStyleNames(content) : new Set<string>();
+		const lines = dialogueLines(content, track.format, (style) => styles.size === 0 || styles.has(style));
+		if (!lines.length) continue;
+		Logger.info(`[translate] Using the downloaded ${lang.name} subtitle as a reference (${lines.length} lines)`);
+		references.push({ lang, lines });
+	}
 }
 
 // Output ordering

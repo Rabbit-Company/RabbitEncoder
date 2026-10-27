@@ -124,6 +124,15 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	translateSeriesNotes: true,
 	translateReferenceLanguages: [],
 	translateSourceTrack: "auto",
+	subtitleDownloadLanguages: [],
+	openSubtitlesUsername: "",
+	openSubtitlesPassword: "",
+	subtitleDownloadMaxTries: 2,
+	subtitleDownloadMinScore: 60,
+	subtitleDownloadHearingImpaired: "avoid",
+	subtitleDownloadAllowMachine: false,
+	subtitleDownloadBeforeTranslate: true,
+	subtitleDownloadAiFallback: true,
 	vsFilters: [],
 };
 

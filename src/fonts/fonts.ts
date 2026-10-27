@@ -7,7 +7,7 @@ import { detectScript, extractDialogueText, faceCandidateKeys } from "./script-d
 import { readFontAxes, type FontAxis } from "./font-instance";
 import { resolveStyleAppearance, type GroupStyleConfig, type StyleAppearance } from "../subtitles/subtitle-style";
 
-const FONT_EXTS = new Set([".ttf", ".otf", ".ttc", ".otc"]);
+export const FONT_EXTS = new Set([".ttf", ".otf", ".ttc", ".otc"]);
 
 export interface MkvAttachment {
 	id: number;
@@ -44,7 +44,7 @@ function mimeForFont(p: string): string {
 	return "font/ttf";
 }
 
-async function scanFontNames(p: string, signal?: AbortSignal): Promise<{ family: string; names: string[] }> {
+export async function scanFontNames(p: string, signal?: AbortSignal): Promise<{ family: string; names: string[] }> {
 	const res = await run(["fc-scan", "--format", "%{family}\n%{fullname}\n%{postscriptname}\n", p], { signal });
 	if (res.code !== 0) return { family: "", names: [] };
 	const names = new Set<string>();

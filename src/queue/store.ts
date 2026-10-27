@@ -22,6 +22,8 @@ import {
 	type SubtitleProcessingMode,
 	type EncoderId,
 	type RepairPlan,
+	type SubtitleAddPlan,
+	SUBTITLE_HEARING_IMPAIRED_PREFERENCES,
 } from "../core/types";
 import { encodeJob, CancelledError } from "../pipeline/encoder";
 import { isAlreadyEncoded } from "./library";
@@ -43,6 +45,7 @@ import { runTranslateOnlyJob } from "../pipeline/translate-only";
 import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-tool";
 import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/grain-tool";
+import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
 import { compareQueuedJobs, queuePriority } from "./priority";
 import { ensureFilmGrainTable, generateFilmGrainTable, type FilmGrainRun } from "../video/film-grain-generator";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
@@ -359,6 +362,15 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 		if (!TRANSLATE_SOURCE_TYPES.includes(m.type as TranslateSourceType)) return undefined;
 		return { language: m.language.trim().slice(0, 32), type: m.type };
 	},
+	subtitleDownloadLanguages: strList,
+	openSubtitlesUsername: str(128),
+	openSubtitlesPassword: str(256),
+	subtitleDownloadMaxTries: intIn(1, 10),
+	subtitleDownloadMinScore: intIn(0, 100),
+	subtitleDownloadHearingImpaired: enumOf(SUBTITLE_HEARING_IMPAIRED_PREFERENCES),
+	subtitleDownloadAllowMachine: bool,
+	subtitleDownloadBeforeTranslate: bool,
+	subtitleDownloadAiFallback: bool,
 };
 
 function sanitizeSettingsInto(target: JobSettings, partial: Partial<JobSettings>): void {
@@ -541,6 +553,35 @@ export function addHdrJob(rawPlan: HdrPlan): Job {
 	return job;
 }
 
+/** Queues downloaded subtitles to be added to a video in place. Paths must already be checked. */
+export function addSubtitleAddJob(plan: SubtitleAddPlan): Job {
+	for (const existing of jobs.values()) {
+		if (existing.inputPath === plan.targetPath && !["done", "error", "cancelled"].includes(existing.status))
+			throw new Error(`${basename(plan.targetPath)} already has an unfinished job. Finish or remove it first.`);
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "subtitles",
+		filename: `Subtitles: ${basename(plan.targetPath)}`,
+		inputPath: plan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: describeSubtitleAddPlan(plan),
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: true,
+		subtitleAddPlan: plan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
 /** Queues a change to the film grain of an AV1 MKV. Paths must already be checked. */
 export function addGrainJob(rawPlan: GrainPlan): Job {
 	const grainPlan = { ...sanitizeGrainPlan(rawPlan), targetPath: rawPlan.targetPath };
@@ -710,6 +751,7 @@ export function retryJob(id: string): Job | null {
 	job.currentStage = "Waiting in queue";
 	job.steps = [];
 	job.error = undefined;
+	job.warning = undefined;
 	job.startedAt = undefined;
 	job.finishedAt = undefined;
 
@@ -802,6 +844,8 @@ async function processQueue() {
 			await runHdrJob(next, appConfig, updateFn, controller.signal);
 		} else if (next.kind === "grain") {
 			await runGrainJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.kind === "subtitles") {
+			await runSubtitleAddJob(next, appConfig, updateFn, controller.signal);
 		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {
@@ -817,6 +861,7 @@ async function processQueue() {
 				next.startedAt = undefined;
 				next.finishedAt = undefined;
 				next.error = undefined;
+				next.warning = undefined;
 				Logger.info(`[store] Job ${next.id} paused and returned to queue`);
 			} else {
 				jobs.delete(next.id);

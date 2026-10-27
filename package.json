@@ -1,6 +1,6 @@
 {
 	"name": "rabbit-encoder",
-	"version": "8.13.1",
+	"version": "8.14.0",
 	"type": "module",
 	"scripts": {
 		"dev": "bun run --watch src/index.ts",

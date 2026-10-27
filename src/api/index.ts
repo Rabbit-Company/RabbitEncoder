@@ -14,6 +14,7 @@ import { registerSubtitleEditorRoutes } from "./subtitle-editor";
 import { registerCompareRoutes } from "./compare";
 import { registerHdrRoutes } from "./hdr";
 import { registerGrainRoutes } from "./grain";
+import { registerSubtitleSearchRoutes } from "./subsearch";
 import type { AppConfig } from "../core/types";
 
 export function registerApiRoutes(app: Web, config: AppConfig): void {
@@ -32,4 +33,5 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerCompareRoutes(app, config);
 	registerHdrRoutes(app, config);
 	registerGrainRoutes(app, config);
+	registerSubtitleSearchRoutes(app, config);
 }

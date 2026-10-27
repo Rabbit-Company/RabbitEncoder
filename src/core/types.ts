@@ -17,6 +17,8 @@ export interface TranslateSourceMatch {
 	language: string;
 	type: TranslateSourceType;
 }
+export const SUBTITLE_HEARING_IMPAIRED_PREFERENCES = ["avoid", "prefer", "any"] as const;
+export type SubtitleHearingImpairedPreference = (typeof SUBTITLE_HEARING_IMPAIRED_PREFERENCES)[number];
 export type FilmGrainRange = (typeof FILM_GRAIN_RANGES)[number];
 /** How large synthetic grain is: single pixels, film grain, or clumps a few pixels wide. */
 export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
@@ -378,6 +380,24 @@ export interface JobSettings {
 	translateSourceTrack: number | "auto";
 	/** Translate-only pipeline: pick the source by language and kind instead of index, so one choice fits a whole season. */
 	translateSourceMatch?: TranslateSourceMatch;
+	// Subtitle download
+	/** Languages to download when the file lacks them (ISO 639-2 or -1). Empty uses the translation targets. */
+	subtitleDownloadLanguages?: string[];
+	/** OpenSubtitles.com account. Downloads count against its daily quota. */
+	openSubtitlesUsername?: string;
+	openSubtitlesPassword?: string;
+	/** Most subtitles downloaded and tested per language. Cached files do not count. Default 2. */
+	subtitleDownloadMaxTries?: number;
+	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */
+	subtitleDownloadMinScore?: number;
+	/** Hearing impaired subtitles: "avoid" (default), "prefer" or "any". */
+	subtitleDownloadHearingImpaired?: SubtitleHearingImpairedPreference;
+	/** Also consider machine and AI translated subtitles. Default false. */
+	subtitleDownloadAllowMachine?: boolean;
+	/** When translating, first download the missing languages from OpenSubtitles. Needs an API key. Default true. */
+	subtitleDownloadBeforeTranslate?: boolean;
+	/** Translate the languages no good subtitle was found for with the AI provider. Default true. */
+	subtitleDownloadAiFallback?: boolean;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by
@@ -458,7 +478,7 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles";
 
 /** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
  * the scenes of a Dolby Vision original, or take it from a file. */
@@ -467,6 +487,23 @@ export type HdrStaticAction = "keep" | "remove" | "set";
 export type HdrMasteringPrimaries = "p3" | "bt2020";
 
 /** Changes to the HDR metadata of an AV1 MKV, made without re-encoding and written over the file. */
+/** A subtitle file, already synced, to add to a video as a new track. */
+export interface SubtitleAddTrack {
+	file: string;
+	/** MKV language tag. */
+	language: string;
+	trackName: string;
+	hearingImpaired: boolean;
+}
+
+/** Adds downloaded subtitles to a video without touching its other tracks. */
+export interface SubtitleAddPlan {
+	targetPath: string;
+	/** Folder holding the files of `tracks`, removed once the job ends. */
+	workDir: string;
+	tracks: SubtitleAddTrack[];
+}
+
 export interface HdrPlan {
 	targetPath: string;
 	hdr10Plus: HdrPlusAction;
@@ -739,6 +776,8 @@ export interface Job {
 	probe?: ProbeResult;
 	outputFilename?: string;
 	error?: string;
+	/** A finished job that left something out, such as languages it could not translate. */
+	warning?: string;
 	startedAt?: number;
 	finishedAt?: number;
 	estimatedVideoSize?: string;
@@ -749,6 +788,7 @@ export interface Job {
 	repairPlan?: RepairPlan;
 	hdrPlan?: HdrPlan;
 	grainPlan?: GrainPlan;
+	subtitleAddPlan?: SubtitleAddPlan;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 

@@ -20,6 +20,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
 - **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio
 - **Subtitle editor** browse MKVs, navigate and edit SRT/ASS/SSA cues, and preview timing changes in an audible video loop (three seconds before and after each cue by default). Adjust track offsets and loop boundaries. Bitmap PGS/VobSub/DVB subtitles use track delays. Save a separate `*.subtitles-edited.mkv` with video and audio copied unchanged.
+- **Subtitle search** finds subtitles for a video on OpenSubtitles.com and downloads the most promising ones per language. Each one is synced by rewriting its timestamps to match the video's own subtitles, the display times of its picture subtitles, or the speech in its audio. Offsets, PAL speedups and cut scenes are handled. Every download is rated on how well it fits and whether parts are missing. The best one can be added as a track or saved next to the video. Downloads use the OpenSubtitles.com account you log in with under Settings and count against its daily quota. Downloads are cached, so a file never uses the daily quota twice. With Subtitle translation on, missing target languages are downloaded this way first, and only the languages without a good subtitle are translated with AI.
 - **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, edit subtitle metadata across an entire group, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
 - **Jellyfin / Sonarr integration** automatically cleans up `.nfo` and thumbnail files when replacing sources so metadata is regenerated
 - **Smart skip** already-encoded files (detected by `-{ORGANIZATION}` suffix) are recognized and skipped
@@ -42,23 +43,24 @@ cp movie.mkv input/
 
 Settings are configurable via environment variables in `docker-compose.yml`:
 
-| Variable               | Default                       | Description                                                      |
-| ---------------------- | ----------------------------- | ---------------------------------------------------------------- |
-| `PORT`                 | `3000`                        | Web dashboard port                                               |
-| `PASSWORD`             | `rabbitencoder`               | Password to access web dashboard                                 |
-| `FILE_COOLDOWN`        | `30`                          | Seconds the file size must stay unchanged before encoding starts |
-| `ORGANIZATION`         | `RabbitCompany`               | Tag appended to encoded filenames (e.g. `-RabbitCompany`)        |
-| `INPUT_DIR`            | `/data/input`                 | Watched input directory                                          |
-| `OUTPUT_DIR`           | `/data/output`                | Encoded output directory                                         |
-| `TEMP_DIR`             | `/data/temp`                  | Temporary encode and preview files                               |
-| `LIBRARY_DIRS`         | empty                         | Comma-separated mounted library roots                            |
-| `RECYCLE_BIN_DIR`      | empty                         | Keep originals of in-place library encodes here (see below)      |
-| `FONTS_STOCK_DIR`      | `/app/fonts`                  | Seed font groups copied into the user dir on first start         |
-| `FONTS_USER_DIR`       | `/config/fonts`               | User font groups (read/write, the only directory scanned)        |
-| `SYSTEM_FONTS_DIRS`    | `/system-fonts`               | Read-only host font dirs, browsable to import fonts into groups  |
-| `VS_PRESETS_STOCK_DIR` | `/app/vapoursynth/presets`    | Built-in VapourSynth preset directory                            |
-| `VS_PRESETS_USER_DIR`  | `/config/vapoursynth/presets` | User VapourSynth preset directory                                |
-| `VS_RABBIT_MODULE_DIR` | `/app/vapoursynth`            | Rabbit Encoder VapourSynth helper-module directory               |
+| Variable                | Default                       | Description                                                      |
+| ----------------------- | ----------------------------- | ---------------------------------------------------------------- |
+| `PORT`                  | `3000`                        | Web dashboard port                                               |
+| `PASSWORD`              | `rabbitencoder`               | Password to access web dashboard                                 |
+| `FILE_COOLDOWN`         | `30`                          | Seconds the file size must stay unchanged before encoding starts |
+| `ORGANIZATION`          | `RabbitCompany`               | Tag appended to encoded filenames (e.g. `-RabbitCompany`)        |
+| `INPUT_DIR`             | `/data/input`                 | Watched input directory                                          |
+| `OUTPUT_DIR`            | `/data/output`                | Encoded output directory                                         |
+| `TEMP_DIR`              | `/data/temp`                  | Temporary encode and preview files                               |
+| `LIBRARY_DIRS`          | empty                         | Comma-separated mounted library roots                            |
+| `RECYCLE_BIN_DIR`       | empty                         | Keep originals of in-place library encodes here (see below)      |
+| `FONTS_STOCK_DIR`       | `/app/fonts`                  | Seed font groups copied into the user dir on first start         |
+| `FONTS_USER_DIR`        | `/config/fonts`               | User font groups (read/write, the only directory scanned)        |
+| `SYSTEM_FONTS_DIRS`     | `/system-fonts`               | Read-only host font dirs, browsable to import fonts into groups  |
+| `VS_PRESETS_STOCK_DIR`  | `/app/vapoursynth/presets`    | Built-in VapourSynth preset directory                            |
+| `VS_PRESETS_USER_DIR`   | `/config/vapoursynth/presets` | User VapourSynth preset directory                                |
+| `VS_RABBIT_MODULE_DIR`  | `/app/vapoursynth`            | Rabbit Encoder VapourSynth helper-module directory               |
+| `OPENSUBTITLES_API_KEY` | built in                      | Your own OpenSubtitles.com consumer key instead of Rabbit's      |
 
 If `ORGANIZATION` is set to `RabbitCompany` (the default), then any file ending with `-RabbitCompany.mkv` is treated as already encoded and will be:
 
@@ -422,6 +424,11 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `POST`   | `/api/fonts/groups/:label/faces`            | Import a host font into the group with writing-system / language keys          |
 | `PATCH`  | `/api/fonts/groups/:label/faces/:file`      | Update a face's keys / family override in the group's `metadata.json`          |
 | `DELETE` | `/api/fonts/groups/:label/faces/:file`      | Remove a font file from the group and its metadata entry                       |
+| `POST`   | `/api/subsearch/search`                     | Start a subtitle search for one video: download, sync and rate per language    |
+| `GET`    | `/api/subsearch/search/:id`                 | Progress and result of a subtitle search                                       |
+| `DELETE` | `/api/subsearch/search/:id`                 | Cancel a subtitle search or drop its result                                    |
+| `POST`   | `/api/subsearch/apply`                      | Queue the chosen subtitles as new tracks, or save them next to the video       |
+| `POST`   | `/api/subsearch/test`                       | Check an OpenSubtitles login and report the download quota                     |
 | `GET`    | `/api/system`                               | Current system resource usage (CPU, RAM, temp-partition disk, network, GPU)    |
 | `GET`    | `/api/opencl-devices`                       | List available OpenCL devices                                                  |
 | `GET`    | `/api/vulkan-devices`                       | List available Vulkan devices                                                  |

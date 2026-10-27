@@ -18,10 +18,10 @@ let sourceTracks: EditableTrack[] = [];
 let selectedTargetPath = "";
 let selectedSourcePath = "";
 
-type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference" | "hdr-target" | "hdr-source";
+type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference" | "hdr-target" | "hdr-source" | "subtitle-search";
 
 /** Purposes that list every video, not only MKV files. */
-const allMediaPurpose = (purpose: PickerPurpose): boolean => purpose === "preview-reference" || purpose === "hdr-source";
+const allMediaPurpose = (purpose: PickerPurpose): boolean => purpose === "preview-reference" || purpose === "hdr-source" || purpose === "subtitle-search";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -436,7 +436,9 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 							? "Choose AV1 MKV to change"
 							: purpose === "hdr-source"
 								? "Choose original video"
-								: "Choose folder to audit";
+								: purpose === "subtitle-search"
+									? "Choose video to find subtitles for"
+									: "Choose folder to audit";
 	inputById("repair-picker-search").placeholder =
 		purpose === "folder"
 			? "Filter loaded folders..."
@@ -492,6 +494,11 @@ export function openHdrSourcePicker(onChoose: (path: string) => void | Promise<v
 	void openRepairPicker("hdr-source");
 }
 
+export function openSubtitleSearchPicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("subtitle-search");
+}
+
 export function closeRepairPicker(): void {
 	byId("repair-picker-modal").style.display = "none";
 	pickerFileCallback = null;
@@ -522,7 +529,13 @@ export function filterRepairPicker(): void {
 
 export function chooseRepairPickerFile(): void {
 	if (!pickerSelectedPath) return;
-	if (pickerPurpose === "subtitle-editor" || pickerPurpose === "preview-reference" || pickerPurpose === "hdr-target" || pickerPurpose === "hdr-source") {
+	if (
+		pickerPurpose === "subtitle-editor" ||
+		pickerPurpose === "preview-reference" ||
+		pickerPurpose === "hdr-target" ||
+		pickerPurpose === "hdr-source" ||
+		pickerPurpose === "subtitle-search"
+	) {
 		const callback = pickerFileCallback;
 		closeRepairPicker();
 		if (callback) void callback(pickerSelectedPath);

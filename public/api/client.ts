@@ -21,6 +21,8 @@ import type {
 	RepairInspection,
 	RepairPlan,
 	StyleAppearance,
+	SubtitleSearchIdentity,
+	SubtitleSearchResult,
 	VsFilterEntry,
 	VsPresetManifest,
 } from "../types";
@@ -805,6 +807,59 @@ export async function deleteSeriesNotes(key: string): Promise<{ ok: boolean; err
 	const res = await authFetch(`${API}/api/translate/notes/${encodeURIComponent(key)}`, { method: "DELETE" });
 	const data = await res.json().catch(() => ({}));
 	return res.ok ? { ok: true } : { ok: false, error: data?.error };
+}
+
+export type SubtitleSearchState = Partial<SubtitleSearchResult> & { searchId: string; state: "running" | "done" | "error"; message: string; error?: string };
+
+/** Starts searching, downloading, syncing and rating subtitles for one video. It runs on the server, poll it for the result. */
+export async function startSubtitleSearch(path: string, languages: string[], identity: Partial<SubtitleSearchIdentity>): Promise<SubtitleSearchState> {
+	const response = await authFetch(`${API}/api/subsearch/search`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, languages, identity }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Subtitle search failed");
+	return data;
+}
+
+export async function fetchSubtitleSearch(searchId: string): Promise<SubtitleSearchState> {
+	const response = await authFetch(`${API}/api/subsearch/search/${encodeURIComponent(searchId)}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Subtitle search failed");
+	return data;
+}
+
+export async function cancelSubtitleSearch(searchId: string): Promise<void> {
+	await authFetch(`${API}/api/subsearch/search/${encodeURIComponent(searchId)}`, { method: "DELETE" }).catch(() => undefined);
+}
+
+/** Adds the chosen subtitles to the video as a queued job, or saves them next to it. */
+export async function applyVideoSubtitles(
+	searchId: string,
+	choices: Array<{ language: string; key: string }>,
+	mode: "mux" | "sidecar",
+): Promise<{ jobId?: string; files?: string[] }> {
+	const response = await authFetch(`${API}/api/subsearch/apply`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ searchId, choices, mode }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not use the subtitles");
+	return data;
+}
+
+export async function testOpenSubtitlesAccount(opts: {
+	username: string;
+	password: string;
+}): Promise<{ ok: boolean; error?: string; user?: string; remaining?: number | null; allowed?: number | null }> {
+	try {
+		const res = await authFetch(`${API}/api/subsearch/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts) });
+		return await res.json();
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
 }
 
 export async function testTranslateConnection(opts: {

@@ -33,7 +33,7 @@ import {
 	toggleNodeCheck,
 	toggleNodeExpand,
 } from "../features/library";
-import { closeTranslateSetup, closeTranslateSetupIfOutside, submitTranslateSetup } from "../features/library-translate";
+import { closeTranslateSetup, closeTranslateSetupIfOutside, handleTranslateSourcesChange, submitTranslateSetup } from "../features/library-translate";
 import {
 	changeQueuePair,
 	clearQueueOriginal,
@@ -114,6 +114,16 @@ import {
 	openHdrTool,
 	queueHdrChanges,
 } from "../features/hdr-tool";
+import {
+	applySubtitleSearch,
+	chooseSubtitleSearchVideo,
+	closeSubtitleSearch,
+	closeSubtitleSearchIfOutside,
+	handleSubtitleSearchResultsChange,
+	handleSubtitleSearchResultsClick,
+	openSubtitleSearch,
+	runSubtitleSearch,
+} from "../features/subtitle-search";
 import {
 	chooseGrainFolder,
 	chooseGrainTarget,
@@ -263,6 +273,17 @@ export function initEventListeners() {
 	byId("hdr-actions").addEventListener("click", handleHdrActionsClick);
 	byId("hdr-upload-input").addEventListener("change", () => void handleHdrUpload());
 	byId("hdr-queue").addEventListener("click", () => void queueHdrChanges());
+
+	byId("open-subsearch-btn").addEventListener("click", openSubtitleSearch);
+	byId("subsearch-close").addEventListener("click", closeSubtitleSearch);
+	byId("subsearch-cancel").addEventListener("click", closeSubtitleSearch);
+	byId("subsearch-modal").addEventListener("click", closeSubtitleSearchIfOutside);
+	byId("subsearch-choose").addEventListener("click", chooseSubtitleSearchVideo);
+	byId("subsearch-search").addEventListener("click", () => void runSubtitleSearch());
+	byId("subsearch-results").addEventListener("click", handleSubtitleSearchResultsClick);
+	byId("subsearch-results").addEventListener("change", handleSubtitleSearchResultsChange);
+	byId("subsearch-apply").addEventListener("click", () => void applySubtitleSearch("mux"));
+	byId("subsearch-sidecar").addEventListener("click", () => void applySubtitleSearch("sidecar"));
 
 	byId("open-grain-btn").addEventListener("click", openGrainTool);
 	byId("grain-close").addEventListener("click", closeGrainTool);
@@ -483,6 +504,8 @@ export function initEventListeners() {
 	byId("library-translate-cancel").addEventListener("click", closeTranslateSetup);
 	byId("library-translate-modal").addEventListener("click", closeTranslateSetupIfOutside);
 	byId("library-translate-submit").addEventListener("click", submitTranslateSetup);
+	byId("library-translate-download").addEventListener("change", handleTranslateSourcesChange);
+	byId("library-translate-ai-fallback").addEventListener("change", handleTranslateSourcesChange);
 	byId("library-queue-close").addEventListener("click", closeQueueSetup);
 	byId("library-queue-cancel").addEventListener("click", closeQueueSetup);
 	byId("library-queue-modal").addEventListener("click", closeQueueSetupIfOutside);

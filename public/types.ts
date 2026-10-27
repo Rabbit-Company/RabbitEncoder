@@ -314,6 +314,20 @@ export interface JobSettings {
 	translateDuringEncode?: "auto" | "always" | "never";
 	/** Translate-only pipeline: source subtitle stream index, or "auto" = first full text track. */
 	translateSourceTrack: number | "auto";
+	/** Languages to download when the file lacks them. Empty uses the translation targets. */
+	subtitleDownloadLanguages?: string[];
+	openSubtitlesUsername?: string;
+	openSubtitlesPassword?: string;
+	/** Most subtitles downloaded and tested per language. Default 2. */
+	subtitleDownloadMaxTries?: number;
+	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */
+	subtitleDownloadMinScore?: number;
+	subtitleDownloadHearingImpaired?: "avoid" | "prefer" | "any";
+	subtitleDownloadAllowMachine?: boolean;
+	/** When translating, first download the missing languages from OpenSubtitles. Default true. */
+	subtitleDownloadBeforeTranslate?: boolean;
+	/** Translate the languages no good subtitle was found for with AI. Default true. */
+	subtitleDownloadAiFallback?: boolean;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by
@@ -393,7 +407,7 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles";
 
 /** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
  * the scenes of a Dolby Vision original, or take it from a file. */
@@ -652,6 +666,70 @@ export interface RepairAuditGroupEdit {
 	replaceTarget: boolean;
 }
 
+export interface SubtitleSearchSample {
+	atMs: number;
+	text: string;
+	reference?: string;
+}
+
+export interface SubtitleSearchCandidate {
+	key: string;
+	provider: "opensubtitles";
+	release: string;
+	fileName: string;
+	uploader: string;
+	url: string;
+	downloads: number;
+	hearingImpaired: boolean;
+	machineTranslated: boolean;
+	trustedUploader: boolean;
+	hashMatch: boolean;
+	fps: number;
+	prior: number;
+	status: "rated" | "untested" | "excluded" | "failed";
+	reason?: string;
+	rating?: number;
+	quality?: { sync: number; agreement: number; missingShare: number; longestGapMs: number; outsideShare: number; densityRatio: number };
+	offsetMs?: number;
+	scale?: number;
+	pieces?: number;
+	cueCount?: number;
+	samples?: SubtitleSearchSample[];
+	format?: "srt" | "ass";
+}
+
+export interface SubtitleSearchLanguage {
+	language: string;
+	name: string;
+	candidates: SubtitleSearchCandidate[];
+	bestKey?: string;
+	note?: string;
+}
+
+export interface SubtitleSearchIdentity {
+	kind: "movie" | "episode";
+	title: string;
+	year?: number;
+	season?: number;
+	episode?: number;
+	imdbId?: string;
+	tmdbId?: number;
+	parentImdbId?: string;
+	parentTmdbId?: number;
+	sources: string[];
+}
+
+export interface SubtitleSearchResult {
+	searchId: string;
+	path: string;
+	identity: SubtitleSearchIdentity;
+	hash: string | null;
+	reference: { kind: "subtitle" | "bitmap" | "audio"; label: string } | null;
+	languages: SubtitleSearchLanguage[];
+	remainingDownloads?: number;
+	notes: string[];
+}
+
 export interface Job {
 	kind?: JobKind;
 	id: string;
@@ -670,6 +748,8 @@ export interface Job {
 	probe?: ProbeResult;
 	outputFilename?: string;
 	error?: string;
+	/** A finished job that left something out, such as languages it could not translate. */
+	warning?: string;
 	startedAt?: number;
 	finishedAt?: number;
 	estimatedVideoSize?: string;

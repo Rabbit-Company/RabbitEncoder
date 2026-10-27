@@ -18,6 +18,8 @@ interface LastChoice {
 	type: string;
 	targets: string;
 	references?: string;
+	download?: boolean;
+	aiFallback?: boolean;
 }
 
 function loadLastChoice(): Partial<LastChoice> {
@@ -47,15 +49,39 @@ function parseLanguages(value: string): string[] {
 		.filter(Boolean);
 }
 
-function renderAiSummary(): boolean {
+function hasAiProvider(): boolean {
 	const d = appState.defaults;
+	return !!d?.translateBaseUrl?.trim() && !!d?.translateModel?.trim();
+}
+
+function hasOpenSubtitles(): boolean {
+	return !!appState.defaults?.openSubtitlesUsername?.trim() && !!appState.defaults?.openSubtitlesPassword;
+}
+
+/** Describes what the batch will use and allows queueing only when it can do something. */
+function renderSources(): void {
+	const d = appState.defaults;
+	const download = inputById("library-translate-download");
+	const ai = inputById("library-translate-ai-fallback");
+	const downloadHint = byId("library-translate-download-hint");
+	download.disabled = !hasOpenSubtitles();
+	if (download.disabled) download.checked = false;
+	downloadHint.textContent = hasOpenSubtitles()
+		? "Missing languages are downloaded, synced to each video and rated. A subtitle below the minimum rating is not used."
+		: "Log in with your OpenSubtitles.com account under Settings, Subtitle handling, Subtitle download to download subtitles first.";
+
 	const el = byId("library-translate-ai");
-	if (!d?.translateBaseUrl?.trim() || !d?.translateModel?.trim()) {
-		el.textContent = "No AI provider is set up yet. Add one under Settings, Subtitle handling, Subtitle translation.";
-		return false;
-	}
-	el.textContent = `Uses ${d.translateModel} at ${d.translateBaseUrl} (${TRANSLATE_PROVIDER_LABELS[d.translateProvider ?? "openai"]}). Change it under Settings, Subtitle translation.`;
-	return true;
+	if (!ai.checked) el.textContent = "Languages without a good subtitle are left out.";
+	else if (!hasAiProvider()) el.textContent = "No AI provider is set up yet. Add one under Settings, Subtitle handling, Subtitle translation.";
+	else
+		el.textContent = `Uses ${d!.translateModel} at ${d!.translateBaseUrl} (${TRANSLATE_PROVIDER_LABELS[d!.translateProvider ?? "openai"]}). Change it under Settings, Subtitle translation.`;
+
+	const ready = (download.checked && hasOpenSubtitles()) || ai.checked;
+	buttonById("library-translate-submit").disabled = !ready || (ai.checked && !hasAiProvider());
+}
+
+export function handleTranslateSourcesChange(): void {
+	renderSources();
 }
 
 function seriesRow(series: SelectionSeries): HTMLElement {
@@ -132,8 +158,10 @@ export function openTranslateSetup(paths: string[], fileCount: number | null): v
 	inputById("library-translate-references").value = last.references ?? appState.defaults?.translateReferenceLanguages?.join(", ") ?? "";
 	byId("library-translate-count").textContent =
 		fileCount === null ? "Selected videos will be counted when queued" : `${fileCount} video${fileCount === 1 ? "" : "s"} selected`;
+	inputById("library-translate-download").checked = last.download ?? appState.defaults?.subtitleDownloadBeforeTranslate !== false;
+	inputById("library-translate-ai-fallback").checked = last.aiFallback ?? appState.defaults?.subtitleDownloadAiFallback !== false;
 	showError("");
-	buttonById("library-translate-submit").disabled = !renderAiSummary();
+	renderSources();
 	byId("library-translate-notes").style.display = "none";
 	byId("library-translate-modal").style.display = "";
 	inputById("library-translate-targets").focus();
@@ -155,6 +183,8 @@ export async function submitTranslateSetup(): Promise<void> {
 		type: byId<HTMLSelectElement>("library-translate-type").value,
 		targets: inputById("library-translate-targets").value.trim(),
 		references: inputById("library-translate-references").value.trim(),
+		download: inputById("library-translate-download").checked,
+		aiFallback: inputById("library-translate-ai-fallback").checked,
 	};
 	const targetLanguages = parseLanguages(choice.targets);
 	if (!choice.source) return showError("Enter the language to translate from");
@@ -172,6 +202,8 @@ export async function submitTranslateSetup(): Promise<void> {
 				sourceType: choice.type,
 				targetLanguages,
 				referenceLanguages: parseLanguages(choice.references ?? ""),
+				download: choice.download,
+				aiFallback: choice.aiFallback,
 			}),
 		});
 		const data = await res.json();

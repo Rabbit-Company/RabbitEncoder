@@ -56,7 +56,7 @@ import {
 	wireEncoderControls,
 } from "./settings-controls";
 import { byId } from "../shared/dom";
-import { fetchJobSubtitleTracks, testTranslateConnection } from "../api/client";
+import { fetchJobSubtitleTracks, testOpenSubtitlesAccount, testTranslateConnection } from "../api/client";
 import { appState } from "../state";
 
 export type SettingsFormPrefix = "default" | "job";
@@ -570,4 +570,102 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 			testResult.classList.add("error");
 		}
 	});
+
+	renderSubtitleDownloadSettings(prefix, settings);
+}
+
+const HEARING_IMPAIRED_LABELS: Record<NonNullable<JobSettings["subtitleDownloadHearingImpaired"]>, string> = {
+	avoid: "Avoid hearing impaired",
+	prefer: "Prefer hearing impaired",
+	any: "Either",
+};
+
+function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: JobSettings): void {
+	const el = (suffix: string): HTMLElement => byId(`${prefix}-subdl-${suffix}`);
+	const account = el("account");
+	account.innerHTML = "";
+	const group = () => {
+		const d = document.createElement("div");
+		d.className = "toggle-group";
+		account.appendChild(d);
+		return d;
+	};
+	renderTextControl(group(), "Username", settings.openSubtitlesUsername ?? "", "", (v) => (settings.openSubtitlesUsername = v.trim()));
+	renderPasswordControl(group(), "Password", settings.openSubtitlesPassword ?? "", "", (v) => (settings.openSubtitlesPassword = v));
+
+	renderLabeledToggle(
+		el("before"),
+		settings.subtitleDownloadBeforeTranslate ?? true,
+		"Download missing languages before translating",
+		(v) => (settings.subtitleDownloadBeforeTranslate = v),
+	);
+	renderLabeledToggle(
+		el("ai-fallback"),
+		settings.subtitleDownloadAiFallback ?? true,
+		"Translate with AI when no good subtitle is found",
+		(v) => (settings.subtitleDownloadAiFallback = v),
+	);
+	const flowHint = document.createElement("div");
+	flowHint.className = "lang-filter-hint";
+	flowHint.textContent =
+		"With Subtitle translation on, each missing target language is first looked up on OpenSubtitles, synced and rated. " +
+		"Only languages without a good subtitle are translated. A used up download quota also falls back to translation.";
+	el("ai-fallback").appendChild(flowHint);
+	renderTranslationLanguagesInput(el("languages"), settings.subtitleDownloadLanguages ?? [], (langs) => (settings.subtitleDownloadLanguages = langs), {
+		label: "Languages",
+		placeholder: "slv, eng",
+		hint: "Languages the Subtitle search window starts with. Empty uses the translation target languages.",
+	});
+	renderNumberControl(
+		el("tries"),
+		"Downloads per language",
+		settings.subtitleDownloadMaxTries ?? 2,
+		{ min: 1, max: 10, step: 1 },
+		(v) => (settings.subtitleDownloadMaxTries = v),
+	);
+	renderNumberControl(
+		el("min-score"),
+		"Minimum rating",
+		settings.subtitleDownloadMinScore ?? 60,
+		{ min: 0, max: 100, step: 5 },
+		(v) => (settings.subtitleDownloadMinScore = v),
+	);
+	renderSelectControl(
+		el("hi"),
+		"Hearing impaired",
+		Object.values(HEARING_IMPAIRED_LABELS),
+		HEARING_IMPAIRED_LABELS[settings.subtitleDownloadHearingImpaired ?? "avoid"],
+		(v) =>
+			(settings.subtitleDownloadHearingImpaired = (Object.keys(HEARING_IMPAIRED_LABELS) as Array<keyof typeof HEARING_IMPAIRED_LABELS>).find(
+				(k) => HEARING_IMPAIRED_LABELS[k] === v,
+			)),
+	);
+	renderLabeledToggle(
+		el("machine"),
+		settings.subtitleDownloadAllowMachine ?? false,
+		"Allow machine and AI translated subtitles",
+		(v) => (settings.subtitleDownloadAllowMachine = v),
+	);
+
+	const testBtn = el("test") as HTMLButtonElement;
+	const testResult = el("test-result");
+	testResult.textContent = "";
+	testBtn.onclick = async () => {
+		testBtn.disabled = true;
+		testResult.textContent = "Testing...";
+		testResult.className = "test-result";
+		const r = await testOpenSubtitlesAccount({
+			username: settings.openSubtitlesUsername ?? "",
+			password: settings.openSubtitlesPassword ?? "",
+		});
+		testBtn.disabled = false;
+		if (r.ok) {
+			const quota = r.remaining != null ? `, ${r.remaining} of ${r.allowed ?? "?"} downloads left today` : "";
+			testResult.textContent = `✓ OK as ${r.user}${quota}`;
+			testResult.classList.add("ok");
+		} else {
+			testResult.textContent = `✗ ${r.error}`;
+			testResult.classList.add("error");
+		}
+	};
 }

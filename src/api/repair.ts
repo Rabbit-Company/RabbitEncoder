@@ -117,7 +117,8 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 		try {
 			const path = resolveAllowedDirectory(c.query().get("path"), config);
 			const allMedia = c.query().get("allMedia") === "1";
-			const entries = browseFolder(path, config.organization, true).filter(
+			// The picker shows no folder counts, so subfolders are not scanned. On network storage that scan is slow.
+			const entries = browseFolder(path, config.organization).filter(
 				(entry) => entry.type === "directory" || allMedia || extname(entry.name).toLowerCase() === ".mkv",
 			);
 			return c.json({ path, entries });

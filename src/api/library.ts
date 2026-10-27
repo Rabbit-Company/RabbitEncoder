@@ -20,6 +20,7 @@ import { pairOriginalSources } from "../video/source-pairing";
 import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } from "../translate/series-notes";
 import { prepareSeriesNotesForFile } from "../translate/translate-step";
 import { analyzeForTranslate, findTranslateSource } from "../pipeline/translate-only";
+import { accountFrom, LOGIN_NEEDED } from "../subsearch/search";
 import { probeFile } from "../pipeline/probe";
 
 function selectedTargets(rawPaths: unknown, config: AppConfig): { paths: string[]; files: string[] } {
@@ -119,7 +120,15 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.post("/api/library/translate", async (c) => {
-		let body: { paths?: unknown; sourceLanguage?: unknown; sourceType?: unknown; targetLanguages?: unknown; referenceLanguages?: unknown };
+		let body: {
+			paths?: unknown;
+			sourceLanguage?: unknown;
+			sourceType?: unknown;
+			targetLanguages?: unknown;
+			referenceLanguages?: unknown;
+			download?: unknown;
+			aiFallback?: unknown;
+		};
 		try {
 			body = await c.req.json();
 		} catch {
@@ -147,18 +156,27 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			if (unknownRefs.length) throw new Error(`Unknown reference language: ${unknownRefs.join(", ")}`);
 
 			const defaults = getAppConfig().defaults;
-			if (!defaults.translateBaseUrl?.trim() || !defaults.translateModel?.trim())
+			const download = body.download !== false;
+			const aiFallback = body.aiFallback !== false;
+			if (download && !accountFrom(defaults)) {
+				if (body.download === true) throw new Error(LOGIN_NEEDED);
+			}
+			const downloading = download && !!accountFrom(defaults);
+			if (!downloading && !aiFallback) throw new Error("Choose to download subtitles, translate them with AI, or both");
+			if (aiFallback && (!defaults.translateBaseUrl?.trim() || !defaults.translateModel?.trim()))
 				throw new Error("Set up the AI provider under Settings, Subtitle translation first");
 
 			const result = queueTranslateJobs(files, {
 				subtitleProcessing: "translate",
 				translateSubtitles: true,
+				subtitleDownloadBeforeTranslate: downloading,
+				subtitleDownloadAiFallback: aiFallback,
 				translateTargetLanguages: targets,
 				translateReferenceLanguages: references,
 				translateSourceTrack: "auto",
 				translateSourceMatch: { language: sourceLanguage, type: body.sourceType as TranslateSourceType },
 			});
-			const refNote = references.length ? `, references ${references.join(", ")}` : "";
+			const refNote = `${references.length ? `, references ${references.join(", ")}` : ""}${downloading ? ", downloading first" : ""}${aiFallback ? "" : ", no AI"}`;
 			Logger.info(`[library] Queued ${result.added} translation jobs ${source.name} -> ${targets.join(", ")}${refNote} (${result.skipped} already queued)`);
 			return c.json({ ok: true, ...result });
 		} catch (error) {
