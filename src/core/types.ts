@@ -400,6 +400,18 @@ export interface JobSettings {
 	subtitleDownloadAiFallback?: boolean;
 	/** Also download this many of the most used languages (0, 10, 20 or 30), one try each and only while enough quota is left. Default 0. */
 	subtitleDownloadExtraLanguages?: number;
+	// Picture subtitle OCR
+	/** Convert picture subtitles (PGS) to text tracks with a vision model. Default false. */
+	ocrPictureSubtitles?: boolean;
+	/** API wire format of the OCR model. Default "openai". */
+	ocrProvider?: "openai" | "anthropic";
+	/** API base URL, e.g. "http://localhost:8000/v1" for vLLM. */
+	ocrBaseUrl?: string;
+	/** Vision model id, e.g. "datalab-to/surya-ocr-2" or "gpt-4o-mini". */
+	ocrModel?: string;
+	ocrApiKey?: string;
+	/** Subtitle images read at the same time. Default 4. */
+	ocrConcurrency?: number;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by
@@ -498,6 +510,22 @@ export interface SubtitleAddTrack {
 	hearingImpaired: boolean;
 	/** One of the most used languages, which is never made the default track. */
 	extra?: boolean;
+	/** Kind of subtitle, for styling and naming. Defaults to full, or SDH when hearing impaired. */
+	trackType?: string;
+	/** Read from a picture track, whose forced and original flags it keeps. It is never the default. */
+	fromPicture?: boolean;
+	forced?: boolean;
+	original?: boolean;
+}
+
+/** Picture subtitle tracks to read with OCR before muxing. */
+export interface SubtitleOcrRequest {
+	/** Stream indexes to read. Without them, every picture track with no text track in its language and kind. */
+	streams?: number[];
+	/** With `streams` absent, only these languages. Empty means all. */
+	languages?: string[];
+	/** Remove the picture tracks that were read. */
+	removePictures?: boolean;
 }
 
 /** Adds downloaded subtitles to a video without touching its other tracks. */
@@ -506,6 +534,7 @@ export interface SubtitleAddPlan {
 	/** Folder holding the files of `tracks`, removed once the job ends. */
 	workDir: string;
 	tracks: SubtitleAddTrack[];
+	ocr?: SubtitleOcrRequest;
 }
 
 export interface HdrPlan {

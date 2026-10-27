@@ -4807,3 +4807,14 @@ a.btn {
 	align-items: center;
 	margin-top: 8px;
 }
+
+.subocr-track {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	padding: 4px 0;
+}
+
+.repair-file-option {
+	margin-top: 4px;
+}

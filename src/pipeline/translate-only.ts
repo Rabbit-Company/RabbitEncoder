@@ -8,6 +8,7 @@ import { analyzeSubtitleStreams, detectSubtitleTrackType, isTextSubtitleCodec, n
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { buildKeptDescriptors, describeAddedSubtitles, missingTargetLanguages, runTranslateStep, type TranslatedTrack } from "../translate/translate-step";
 import { subtitleDownloadEnabled } from "../subsearch/auto";
+import { ocrEnabled, PGS_CODEC } from "../ocr/ocr";
 import { prepareRemuxAddition } from "../subtitles/added-tracks";
 import { seriesNotesDir } from "../translate/series-notes";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style"; // NOTE: match the import path encoder.ts uses for DEFAULT_STYLE_APPEARANCE
@@ -217,14 +218,20 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			const stream = subtitleStreams.find((s) => s.index === pick);
 			if (!stream) {
 				Logger.warn(`[translate-only] Selected source track ${pick} not found. Falling back to auto selection.`);
-			} else if (!isTextSubtitleCodec(stream.codec)) {
-				throw new Error(`Selected source subtitle track ${pick} is image-based (${stream.codec}) and cannot be translated. Pick a text-based track.`);
+			} else if (!isTextSubtitleCodec(stream.codec) && !(ocrEnabled(job.settings) && stream.codec.toLowerCase() === PGS_CODEC)) {
+				throw new Error(
+					`Selected source subtitle track ${pick} is image-based (${stream.codec}) and cannot be translated. Pick a text-based track, or turn on OCR for PGS.`,
+				);
 			} else {
 				forceSourceIndex = pick;
 			}
 		} else if (job.settings.translateSourceMatch) {
 			const match = job.settings.translateSourceMatch;
-			const stream = findTranslateSource(subtitleStreams, match);
+			// A picture track can be the source too, once OCR has read it.
+			const pictures = ocrEnabled(job.settings)
+				? subtitleStreams.filter((s) => s.codec.toLowerCase() === PGS_CODEC).map((s) => ({ ...s, codec: "subrip" }))
+				: [];
+			const stream = findTranslateSource(subtitleStreams, match) ?? findTranslateSource(pictures, match);
 			const kind = match.type === "any" ? "text" : match.type;
 			if (stream) forceSourceIndex = stream.index;
 			else if (canDownload) {

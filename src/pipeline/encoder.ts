@@ -70,6 +70,7 @@ import { createFaceMaterializer } from "../fonts/inject";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, describeAddedSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { subtitleDownloadEnabled } from "../subsearch/auto";
+import { ocrEnabled } from "../ocr/ocr";
 import { finishAddedTracks } from "../subtitles/added-tracks";
 import { seriesNotesDir } from "../translate/series-notes";
 import { finalizeOutput, formatTransferDetail, moveFileWithProgress, stageFileWithProgress } from "./output";
@@ -1896,7 +1897,8 @@ export async function encodeJob(
 			setStep(S_TRANSLATE, { status: "active", progress: 0 });
 			// Without subtitle tracks there is nothing to translate from, but subtitles can still be downloaded.
 			const canAddSubtitles = subtitleStreams.length > 0 || subtitleDownloadEnabled(job.settings);
-			if (!skipSubtitleProcessing && job.settings.translateSubtitles && !previewMode && canAddSubtitles) {
+			const addsSubtitles = job.settings.translateSubtitles || ocrEnabled(job.settings);
+			if (!skipSubtitleProcessing && addsSubtitles && !previewMode && canAddSubtitles) {
 				try {
 					translatedTracks = await runTranslateStep({
 						subtitleStreams,

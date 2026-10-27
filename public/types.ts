@@ -330,6 +330,18 @@ export interface JobSettings {
 	subtitleDownloadAiFallback?: boolean;
 	/** Also download this many of the most used languages (0, 10, 20 or 30). Default 0. */
 	subtitleDownloadExtraLanguages?: number;
+	// Picture subtitle OCR
+	/** Convert picture subtitles (PGS) to text tracks with a vision model. Default false. */
+	ocrPictureSubtitles?: boolean;
+	/** API wire format of the OCR model. Default "openai". */
+	ocrProvider?: "openai" | "anthropic";
+	/** API base URL, e.g. "http://localhost:8000/v1" for vLLM. */
+	ocrBaseUrl?: string;
+	/** Vision model id, e.g. "datalab-to/surya-ocr-2" or "gpt-4o-mini". */
+	ocrModel?: string;
+	ocrApiKey?: string;
+	/** Subtitle images read at the same time. Default 4. */
+	ocrConcurrency?: number;
 	/**
 	 * Ordered list of VapourSynth filter passes to apply during the prepare
 	 * stage, before the FFmpeg -vf chain. Each entry references a preset by

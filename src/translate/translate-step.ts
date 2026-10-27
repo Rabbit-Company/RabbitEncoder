@@ -6,7 +6,8 @@ import type { JobSettings, ProbeResult, SubtitleStreamInfo, SubtitleStyle } from
 import { probeFile } from "../pipeline/probe";
 import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
 import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
-import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec } from "../tracks/tracks";
+import { detectSubtitleTrackType, buildSubtitleTrackName, isTextSubtitleCodec, type SubtitleTrackType } from "../tracks/tracks";
+import { ocrEnabled, ocrPgsTrack, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
 import { dialogueStyleNames } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import {
@@ -35,7 +36,7 @@ export interface TranslatedTrack {
 	language: string;
 	/** --track-name value (carries the organization as release group). */
 	trackName: string;
-	trackType: "full" | "honorifics" | "sdh";
+	trackType: SubtitleTrackType;
 	/** mkvmerge flag args (default/forced/etc.) for this track. */
 	flagArgs: string[];
 	/** "ass" | "srt" - for logging/inspection. */
@@ -44,6 +45,8 @@ export interface TranslatedTrack {
 	sourceIndex: number;
 	/** Downloaded from OpenSubtitles instead of translated. */
 	downloaded?: boolean;
+	/** Read from a picture subtitle with OCR. */
+	ocr?: boolean;
 	/** Its dialogue uses the font group, so the final face is applied and attached before muxing. */
 	restyle?: boolean;
 }
@@ -187,12 +190,16 @@ async function downloadedTracks(
 
 /** Step detail for the tracks the Translate step added. */
 export function describeAddedSubtitles(tracks: TranslatedTrack[]): string {
+	const ocr = tracks.filter((t) => t.ocr).length;
 	const downloaded = tracks.filter((t) => t.downloaded).length;
-	const translated = tracks.length - downloaded;
+	const translated = tracks.length - downloaded - ocr;
 	const parts: string[] = [];
-	if (downloaded) parts.push(`Downloaded ${downloaded}`);
-	if (translated) parts.push(`${downloaded ? "translated" : "Translated"} ${translated}`);
-	return parts.length ? `${parts.join(", ")} track(s)` : "Nothing to add";
+	if (ocr) parts.push(`read ${ocr} with OCR`);
+	if (downloaded) parts.push(`downloaded ${downloaded}`);
+	if (translated) parts.push(`translated ${translated}`);
+	if (!parts.length) return "Nothing to add";
+	const text = `${parts.join(", ")} track(s)`;
+	return text[0]!.toUpperCase() + text.slice(1);
 }
 
 /** Resolve the on-disk format the translated file will have. */
@@ -224,6 +231,8 @@ async function extractSource(
 	tempDir: string,
 	signal?: AbortSignal,
 ): Promise<{ path: string; codec: string } | null> {
+	const ocrFile = ocrFiles.get(stream);
+	if (ocrFile) return { path: ocrFile, codec: "subrip" };
 	const isAss = ["ass", "ssa"].includes(stream.codec.toLowerCase());
 	const ext = isAss ? "ass" : "srt";
 	const out = join(tempDir, `translate_src_${stream.index}.${ext}`);
@@ -439,11 +448,20 @@ export async function prepareSeriesNotesForFile(p: PrepareNotesForFileParams): P
  * instead and reports the failure through `onWarning`.
  */
 export async function runTranslateStep(params: RunTranslateStepParams): Promise<TranslatedTrack[]> {
-	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, signal } = params;
+	const { inputPath, tempDir, settings, subtitleStyle, signal } = params;
 
 	const targets = settings.translateTargetLanguages ?? [];
 	const extraCount = settings.subtitleDownloadExtraLanguages ?? 0;
-	if (!settings.translateSubtitles || (targets.length === 0 && extraCount === 0)) return [];
+	const translating = settings.translateSubtitles && (targets.length > 0 || extraCount > 0);
+	const ocr = ocrEnabled(settings);
+	if (!translating && !ocr) return [];
+
+	// Text read from picture subtitles counts as a track the file has, and can be translated from.
+	const read = ocr ? await ocrPictureTracks(params) : { tracks: [], streams: [], byPictureIndex: new Map<number, number>() };
+	if (!translating) return read.tracks;
+	const subtitleStreams = [...params.subtitleStreams, ...read.streams];
+	const forced = params.forceSourceIndex;
+	params = { ...params, subtitleStreams, forceSourceIndex: forced !== undefined ? (read.byPictureIndex.get(forced) ?? forced) : undefined };
 
 	const descriptors = buildKeptDescriptors(subtitleStreams);
 
@@ -474,23 +492,88 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 			downloaded = await downloadedTracks(found, settings, subtitleStyle, tempDir, signal);
 		}
 	}
+	const kept = [...read.tracks, ...downloaded];
 	const covered = new Set(downloaded.map((t) => resolveTranslateLang(t.language)?.code));
-	const aiTargets = targets.filter((t) => !covered.has(resolveTranslateLang(t)?.code));
+	const aiTargets = missingTargetLanguages(descriptors, targets).filter((t) => !covered.has(resolveTranslateLang(t)?.code));
 	if (params.skipAi || (download && settings.subtitleDownloadAiFallback === false) || aiTargets.length === 0) {
 		if (aiTargets.length) Logger.info(`[translate] Not translating ${aiTargets.join(", ")} with AI`);
-		return downloaded;
+		return kept;
 	}
 
 	try {
-		return [...downloaded, ...(await translateWithAi(params, descriptors, aiTargets, downloaded))];
+		return [...kept, ...(await translateWithAi(params, descriptors, aiTargets, downloaded))];
 	} catch (error) {
-		// Downloaded subtitles are kept when the AI provider fails, so an encode is not lost for one language.
-		if (!downloaded.length || error instanceof CancelledError || signal?.aborted) throw error;
+		// Subtitles already made are kept when the AI provider fails, so an encode is not lost for one language.
+		if (!kept.length || error instanceof CancelledError || signal?.aborted) throw error;
 		const warning = `AI translation failed, ${aiTargets.join(", ")} not translated: ${error instanceof Error ? error.message : String(error)}`;
 		Logger.warn(`[translate] ${warning}`);
 		params.onWarning?.(warning);
-		return downloaded;
+		return kept;
 	}
+}
+
+/** Synthetic stream numbers for text read from picture subtitles, clear of real stream indexes. */
+const OCR_INDEX_BASE = 800_000;
+/** The SRT read from a picture subtitle, by the synthetic stream standing in for it. */
+const ocrFiles = new WeakMap<SubtitleStreamInfo, string>();
+
+interface OcrRead {
+	tracks: TranslatedTrack[];
+	/** Text streams standing in for the picture tracks, for choosing translation sources. */
+	streams: SubtitleStreamInfo[];
+	/** Synthetic stream index by the picture track it was read from. */
+	byPictureIndex: Map<number, number>;
+}
+
+/**
+ * Reads every picture subtitle (PGS) whose language and kind has no text
+ * track yet. A track that cannot be read is reported and left out.
+ */
+async function ocrPictureTracks(params: RunTranslateStepParams): Promise<OcrRead> {
+	const { subtitleStreams, inputPath, tempDir, settings, subtitleStyle, signal } = params;
+	const pictures = unreadPictureTracks(subtitleStreams);
+	const read: OcrRead = { tracks: [], streams: [], byPictureIndex: new Map() };
+	for (const [n, stream] of pictures.entries()) {
+		const label = `track ${stream.index} (${stream.language || "und"})`;
+		try {
+			const srt = await ocrPgsTrack({
+				inputPath,
+				stream,
+				tempDir,
+				settings,
+				signal,
+				onProgress: (done, total) => params.onStatus?.(`Reading picture subtitles ${n + 1}/${pictures.length} with OCR, ${done}/${total}`),
+			});
+			if (!srt.trim()) continue;
+			const type = detectSubtitleTrackType(stream);
+			const raw = join(tempDir, `ocr_${stream.index}.srt`);
+			writeFileSync(raw, srt, "utf-8");
+			const synthetic: SubtitleStreamInfo = { ...stream, index: OCR_INDEX_BASE + stream.index, codec: "subrip" };
+			ocrFiles.set(synthetic, raw);
+			read.streams.push(synthetic);
+			read.byPictureIndex.set(stream.index, synthetic.index);
+			const styled = await styleSource(raw, "subrip", type, settings, subtitleStyle, tempDir, synthetic.index, signal);
+			const file = join(tempDir, `ocr_${stream.index}.final.${styled.format}`);
+			writeFileSync(file, styled.content, "utf-8");
+			read.tracks.push({
+				file,
+				language: stream.language || "und",
+				trackName: buildSubtitleTrackName(type, stream.title, "OCR"),
+				trackType: type,
+				flagArgs: pictureTrackFlagArgs({ forced: stream.isForced, hearingImpaired: stream.isHearingImpaired, original: stream.isOriginal }, type),
+				format: styled.format,
+				sourceIndex: stream.index,
+				ocr: true,
+				restyle: styled.styled,
+			});
+		} catch (error) {
+			if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
+			const warning = `OCR of picture subtitle ${label} failed: ${error instanceof Error ? error.message : String(error)}`;
+			Logger.warn(`[ocr] ${warning}`);
+			params.onWarning?.(warning);
+		}
+	}
+	return read;
 }
 
 /** Translates the target languages no download covered. */

@@ -38,7 +38,7 @@ function isInside(path: string, root: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function allowedRoots(config: AppConfig): string[] {
+export function allowedRoots(config: AppConfig): string[] {
 	return [config.inputDir, config.outputDir, ...config.libraryDirs].filter((root) => existsSync(root)).map((root) => realpathSync(root));
 }
 

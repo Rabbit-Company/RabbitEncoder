@@ -56,7 +56,7 @@ import {
 	wireEncoderControls,
 } from "./settings-controls";
 import { byId } from "../shared/dom";
-import { fetchJobSubtitleTracks, testOpenSubtitlesAccount, testTranslateConnection } from "../api/client";
+import { fetchJobSubtitleTracks, testOcrModel, testOpenSubtitlesAccount, testTranslateConnection } from "../api/client";
 import { appState } from "../state";
 
 export type SettingsFormPrefix = "default" | "job";
@@ -572,6 +572,90 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 	});
 
 	renderSubtitleDownloadSettings(prefix, settings);
+	renderOcrSettings(prefix, settings);
+}
+
+function renderOcrSettings(prefix: SettingsFormPrefix, settings: JobSettings): void {
+	const el = (suffix: string): HTMLElement => byId(`${prefix}-ocr-${suffix}`);
+	renderLabeledToggle(
+		el("enabled"),
+		settings.ocrPictureSubtitles ?? false,
+		"Convert picture subtitles to text with OCR",
+		(v) => (settings.ocrPictureSubtitles = v),
+	);
+
+	const providerSettings = el("provider-settings");
+	const renderProviderSettings = () => {
+		providerSettings.innerHTML = "";
+		const group = () => {
+			const d = document.createElement("div");
+			d.className = "toggle-group";
+			providerSettings.appendChild(d);
+			return d;
+		};
+		const provider = settings.ocrProvider ?? "openai";
+		renderTextControl(
+			group(),
+			"API base URL",
+			settings.ocrBaseUrl ?? "",
+			provider === "openai" ? "http://localhost:8000/v1" : "https://api.anthropic.com",
+			(v) => {
+				settings.ocrBaseUrl = v.trim();
+			},
+		);
+		renderTextControl(group(), "Vision model", settings.ocrModel ?? "", provider === "openai" ? "datalab-to/surya-ocr-2" : "claude-haiku-5-5", (v) => {
+			settings.ocrModel = v.trim();
+		});
+		renderPasswordControl(group(), "API key (optional for local servers)", settings.ocrApiKey ?? "", "", (v) => (settings.ocrApiKey = v.trim()));
+		const hint = document.createElement("div");
+		hint.className = "lang-filter-hint";
+		hint.textContent =
+			provider === "openai"
+				? "Any OpenAI-compatible endpoint with a vision model: Surya OCR 2 or Chandra OCR 2 served with vLLM, a GGUF build in llama.cpp, Ollama, LM Studio, or a cloud model such as gpt-4o-mini."
+				: "Anthropic Messages API (api.anthropic.com) or any proxy speaking the same format.";
+		providerSettings.appendChild(hint);
+	};
+
+	const provEl = el("provider");
+	provEl.innerHTML = "";
+	for (const p of TRANSLATE_PROVIDERS) {
+		const pill = document.createElement("div");
+		pill.className = `radio-pill${p === (settings.ocrProvider ?? "openai") ? " selected" : ""}`;
+		pill.textContent = TRANSLATE_PROVIDER_LABELS[p];
+		pill.onclick = () => {
+			provEl.querySelectorAll(".radio-pill").forEach((x) => x.classList.remove("selected"));
+			pill.classList.add("selected");
+			settings.ocrProvider = p;
+			renderProviderSettings();
+		};
+		provEl.appendChild(pill);
+	}
+	renderProviderSettings();
+
+	renderNumberControl(el("concurrency"), "Parallel requests", settings.ocrConcurrency ?? 4, { min: 1, max: 32, step: 1 }, (v) => (settings.ocrConcurrency = v));
+
+	const testBtn = el("test") as HTMLButtonElement;
+	const testResult = el("test-result");
+	testResult.textContent = "";
+	testBtn.onclick = async () => {
+		testBtn.disabled = true;
+		testResult.textContent = "Reading a sample subtitle...";
+		testResult.className = "test-result";
+		const r = await testOcrModel({
+			provider: settings.ocrProvider ?? "openai",
+			baseUrl: settings.ocrBaseUrl ?? "",
+			model: settings.ocrModel ?? "",
+			apiKey: settings.ocrApiKey ?? "",
+		});
+		testBtn.disabled = false;
+		if (r.ok) {
+			testResult.textContent = `✓ OK. Read: "${r.text}"`;
+			testResult.classList.add("ok");
+		} else {
+			testResult.textContent = `✗ ${r.error}`;
+			testResult.classList.add("error");
+		}
+	};
 }
 
 const HEARING_IMPAIRED_LABELS: Record<NonNullable<JobSettings["subtitleDownloadHearingImpaired"]>, string> = {

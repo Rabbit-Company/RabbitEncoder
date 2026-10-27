@@ -134,6 +134,12 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	subtitleDownloadBeforeTranslate: true,
 	subtitleDownloadAiFallback: true,
 	subtitleDownloadExtraLanguages: 0,
+	ocrPictureSubtitles: false,
+	ocrProvider: "openai",
+	ocrBaseUrl: "http://localhost:8000/v1",
+	ocrModel: "",
+	ocrApiKey: "",
+	ocrConcurrency: 4,
 	vsFilters: [],
 };
 

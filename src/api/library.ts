@@ -15,7 +15,7 @@ import { browseFolder, isAlreadyEncoded, isPathAllowed, listMediaFiles } from ".
 import { Logger } from "../core/logger";
 import { getAllJobs, getAppConfig, queueTranslateJobs, scanLibraryPath } from "../queue/store";
 import { resolveTranslateLang } from "../translate/translate-languages";
-import { resolveAllowedDirectory, resolveAllowedMediaFile } from "./repair";
+import { allowedRoots, resolveAllowedDirectory, resolveAllowedMediaFile } from "./repair";
 import { pairOriginalSources } from "../video/source-pairing";
 import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } from "../translate/series-notes";
 import { prepareSeriesNotesForFile } from "../translate/translate-step";
@@ -24,15 +24,20 @@ import { accountFrom, LOGIN_NEEDED } from "../subsearch/search";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { probeFile } from "../pipeline/probe";
 
-function selectedTargets(rawPaths: unknown, config: AppConfig): { paths: string[]; files: string[] } {
+/**
+ * Files and folders of a request, checked against the library. Subtitle
+ * translation also takes the input and output folders, as the Subtitles menu
+ * offers them.
+ */
+function selectedTargets(rawPaths: unknown, config: AppConfig, mediaRoots = false): { paths: string[]; files: string[] } {
 	if (!Array.isArray(rawPaths) || rawPaths.length === 0 || rawPaths.length > 100 || rawPaths.some((path) => typeof path !== "string"))
 		throw new Error("Choose 1 to 100 library files or folders");
 	const paths = rawPaths.map((path: string) => resolve(path));
+	const roots = mediaRoots ? allowedRoots(config) : config.libraryDirs.filter((root) => existsSync(root)).map((root) => realpathSync(root));
 	for (const path of paths) {
 		if (!existsSync(path)) throw new Error(`Path does not exist: ${path}`);
-		const real = realpathSync(path);
-		const roots = config.libraryDirs.filter((root) => existsSync(root)).map((root) => realpathSync(root));
-		if (!isPathAllowed(real, roots)) throw new Error(`Path is outside configured library directories: ${path}`);
+		if (!isPathAllowed(realpathSync(path), roots))
+			throw new Error(`Path is outside ${mediaRoots ? "the input, output and library directories" : "configured library directories"}: ${path}`);
 	}
 	const files = [...new Set(paths.flatMap(listMediaFiles))];
 	if (files.length > 500) throw new Error("Select at most 500 videos at once");
@@ -137,7 +142,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			return c.json({ error: "Invalid request body" }, 400);
 		}
 		try {
-			const { files } = selectedTargets(body.paths, config);
+			const { files } = selectedTargets(body.paths, config, true);
 			if (!files.length) throw new Error("No video files in the selection");
 			const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage.trim() : "";
 			const source = resolveTranslateLang(sourceLanguage);
@@ -196,7 +201,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			return c.json({ error: "Invalid request body" }, 400);
 		}
 		try {
-			const { files } = selectedTargets(body.paths, config);
+			const { files } = selectedTargets(body.paths, config, true);
 			const dir = seriesNotesDir(config);
 			const groups = new Map<string, { key: string; title: string; files: string[] }>();
 			let unmatched = 0;
@@ -238,7 +243,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 		}
 		const tempDir = join(config.tempDir, `series-notes-${randomUUID()}`);
 		try {
-			const { files } = selectedTargets([body.path], config);
+			const { files } = selectedTargets([body.path], config, true);
 			const file = files[0];
 			if (!file) throw new Error("Choose a video file");
 			const sourceLanguage = typeof body.sourceLanguage === "string" ? body.sourceLanguage.trim() : "";

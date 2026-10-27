@@ -10,6 +10,28 @@ export type TranslateProvider = "openai" | "anthropic";
  */
 export type TranslateThinking = "auto" | "off" | "on";
 
+/** A prompt with images, for vision models. Images are PNG bytes. */
+export interface ChatPrompt {
+	text: string;
+	images: Uint8Array[];
+}
+
+function openAiContent(prompt: string | ChatPrompt): unknown {
+	if (typeof prompt === "string") return prompt;
+	return [
+		...prompt.images.map((png) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${Buffer.from(png).toString("base64")}` } })),
+		{ type: "text", text: prompt.text },
+	];
+}
+
+function anthropicContent(prompt: string | ChatPrompt): unknown {
+	if (typeof prompt === "string") return prompt;
+	return [
+		...prompt.images.map((png) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: Buffer.from(png).toString("base64") } })),
+		{ type: "text", text: prompt.text },
+	];
+}
+
 export interface LlmChatOptions {
 	provider: TranslateProvider;
 	/**
@@ -116,7 +138,7 @@ export function shouldDisableThinking(opts: Pick<LlmChatOptions, "baseUrl" | "th
 	}
 }
 
-function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; headers: Record<string, string>; body: string } {
+function buildRequest(prompt: string | ChatPrompt, opts: LlmChatOptions): { url: string; headers: Record<string, string>; body: string } {
 	const v1 = normalizeV1(opts.baseUrl);
 	const key = opts.apiKey?.trim();
 
@@ -133,7 +155,7 @@ function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; head
 				model: opts.model,
 				max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
 				temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
-				messages: [{ role: "user", content: prompt }],
+				messages: [{ role: "user", content: anthropicContent(prompt) }],
 				...(shouldDisableThinking(opts) ? { thinking: { type: "disabled" } } : {}),
 			}),
 		};
@@ -147,7 +169,7 @@ function buildRequest(prompt: string, opts: LlmChatOptions): { url: string; head
 		body: JSON.stringify({
 			model: opts.model,
 			stream: false,
-			messages: [{ role: "user", content: prompt }],
+			messages: [{ role: "user", content: openAiContent(prompt) }],
 			temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
 			max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
 			...(shouldDisableThinking(opts) ? { thinking: { type: "disabled" } } : {}),
@@ -193,12 +215,12 @@ export function describeChatResult(r: ChatResult): string {
 }
 
 /** One chat round trip returning only the answer text. */
-export async function chatComplete(prompt: string, opts: LlmChatOptions): Promise<string> {
+export async function chatComplete(prompt: string | ChatPrompt, opts: LlmChatOptions): Promise<string> {
 	return (await chatCompleteResult(prompt, opts)).content;
 }
 
 /** One chat round trip with timeout, abort, and transient-error retry. */
-export async function chatCompleteResult(prompt: string, opts: LlmChatOptions): Promise<ChatResult> {
+export async function chatCompleteResult(prompt: string | ChatPrompt, opts: LlmChatOptions): Promise<ChatResult> {
 	const label = PROVIDER_LABEL[opts.provider] ?? "LLM API";
 
 	if (!opts.baseUrl?.trim()) throw new Error(`${label} base URL is not configured. Set it in translation settings.`);

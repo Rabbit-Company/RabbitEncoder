@@ -33,7 +33,15 @@ import {
 	toggleNodeCheck,
 	toggleNodeExpand,
 } from "../features/library";
-import { closeTranslateSetup, closeTranslateSetupIfOutside, handleTranslateSourcesChange, submitTranslateSetup } from "../features/library-translate";
+import {
+	chooseTranslateFolder,
+	chooseTranslateVideo,
+	closeTranslateSetup,
+	closeTranslateSetupIfOutside,
+	handleTranslateSourcesChange,
+	openTranslateTool,
+	submitTranslateSetup,
+} from "../features/library-translate";
 import {
 	changeQueuePair,
 	clearQueueOriginal,
@@ -124,6 +132,15 @@ import {
 	openSubtitleSearch,
 	runSubtitleSearch,
 } from "../features/subtitle-search";
+import {
+	chooseSubtitleOcrFolder,
+	chooseSubtitleOcrTarget,
+	closeSubtitleOcr,
+	closeSubtitleOcrIfOutside,
+	handleSubtitleOcrTracksChange,
+	openSubtitleOcr,
+	queueSubtitleOcr,
+} from "../features/subtitle-ocr";
 import {
 	chooseGrainFolder,
 	chooseGrainTarget,
@@ -273,6 +290,15 @@ export function initEventListeners() {
 	byId("hdr-actions").addEventListener("click", handleHdrActionsClick);
 	byId("hdr-upload-input").addEventListener("change", () => void handleHdrUpload());
 	byId("hdr-queue").addEventListener("click", () => void queueHdrChanges());
+
+	byId("open-subocr-btn").addEventListener("click", openSubtitleOcr);
+	byId("subocr-close").addEventListener("click", closeSubtitleOcr);
+	byId("subocr-cancel").addEventListener("click", closeSubtitleOcr);
+	byId("subocr-modal").addEventListener("click", closeSubtitleOcrIfOutside);
+	byId("subocr-choose-target").addEventListener("click", chooseSubtitleOcrTarget);
+	byId("subocr-choose-folder").addEventListener("click", chooseSubtitleOcrFolder);
+	byId("subocr-tracks").addEventListener("change", handleSubtitleOcrTracksChange);
+	byId("subocr-queue").addEventListener("click", () => void queueSubtitleOcr());
 
 	byId("open-subsearch-btn").addEventListener("click", openSubtitleSearch);
 	byId("subsearch-close").addEventListener("click", closeSubtitleSearch);
@@ -506,6 +532,9 @@ export function initEventListeners() {
 	byId("library-translate-submit").addEventListener("click", submitTranslateSetup);
 	byId("library-translate-download").addEventListener("change", handleTranslateSourcesChange);
 	byId("library-translate-ai-fallback").addEventListener("change", handleTranslateSourcesChange);
+	byId("open-subtranslate-btn").addEventListener("click", openTranslateTool);
+	byId("library-translate-pick-file").addEventListener("click", chooseTranslateVideo);
+	byId("library-translate-pick-folder").addEventListener("click", chooseTranslateFolder);
 	byId("library-queue-close").addEventListener("click", closeQueueSetup);
 	byId("library-queue-cancel").addEventListener("click", closeQueueSetup);
 	byId("library-queue-modal").addEventListener("click", closeQueueSetupIfOutside);

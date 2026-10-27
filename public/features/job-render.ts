@@ -385,7 +385,7 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "repair") meta += `<span>Subtitle repair, video and audio stream copy</span>`;
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
-	if (job.kind === "subtitles") meta += `<span>Downloaded subtitles added, video and audio copied</span>`;
+	if (job.kind === "subtitles") meta += `<span>Subtitles added, video and audio copied</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
 		const manual = !ENCODERS[job.settings.encoder]?.usesAutoBoost || job.settings.manualQuality;
 		const rate = manual ? `CRF ${job.settings.manualCrf}, preset ${job.settings.manualPreset}` : `${job.settings.quality}, ${job.settings.finalSpeed}`;

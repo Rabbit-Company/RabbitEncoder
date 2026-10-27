@@ -18,10 +18,21 @@ let sourceTracks: EditableTrack[] = [];
 let selectedTargetPath = "";
 let selectedSourcePath = "";
 
-type PickerPurpose = "target" | "source" | "folder" | "subtitle-editor" | "preview-reference" | "hdr-target" | "hdr-source" | "subtitle-search";
+type PickerPurpose =
+	| "target"
+	| "source"
+	| "folder"
+	| "subtitle-editor"
+	| "preview-reference"
+	| "hdr-target"
+	| "hdr-source"
+	| "subtitle-search"
+	| "subtitle-ocr"
+	| "translate-target";
 
 /** Purposes that list every video, not only MKV files. */
-const allMediaPurpose = (purpose: PickerPurpose): boolean => purpose === "preview-reference" || purpose === "hdr-source" || purpose === "subtitle-search";
+const allMediaPurpose = (purpose: PickerPurpose): boolean =>
+	purpose === "preview-reference" || purpose === "hdr-source" || purpose === "subtitle-search" || purpose === "translate-target";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -438,7 +449,11 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 								? "Choose original video"
 								: purpose === "subtitle-search"
 									? "Choose video to find subtitles for"
-									: "Choose folder to audit";
+									: purpose === "subtitle-ocr"
+										? "Choose MKV with picture subtitles"
+										: purpose === "translate-target"
+											? "Choose video to add subtitles to"
+											: "Choose folder to audit";
 	inputById("repair-picker-search").placeholder =
 		purpose === "folder"
 			? "Filter loaded folders..."
@@ -499,6 +514,16 @@ export function openSubtitleSearchPicker(onChoose: (path: string) => void | Prom
 	void openRepairPicker("subtitle-search");
 }
 
+export function openSubtitleOcrPicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("subtitle-ocr");
+}
+
+export function openTranslateTargetPicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("translate-target");
+}
+
 export function closeRepairPicker(): void {
 	byId("repair-picker-modal").style.display = "none";
 	pickerFileCallback = null;
@@ -534,7 +559,9 @@ export function chooseRepairPickerFile(): void {
 		pickerPurpose === "preview-reference" ||
 		pickerPurpose === "hdr-target" ||
 		pickerPurpose === "hdr-source" ||
-		pickerPurpose === "subtitle-search"
+		pickerPurpose === "subtitle-search" ||
+		pickerPurpose === "subtitle-ocr" ||
+		pickerPurpose === "translate-target"
 	) {
 		const callback = pickerFileCallback;
 		closeRepairPicker();

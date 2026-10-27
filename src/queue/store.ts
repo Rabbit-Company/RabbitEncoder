@@ -372,6 +372,12 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	subtitleDownloadAllowMachine: bool,
 	subtitleDownloadBeforeTranslate: bool,
 	subtitleDownloadAiFallback: bool,
+	ocrPictureSubtitles: bool,
+	ocrProvider: enumOf(["openai", "anthropic"]),
+	ocrBaseUrl: str(512),
+	ocrModel: str(128),
+	ocrApiKey: str(512),
+	ocrConcurrency: intIn(1, 32),
 	subtitleDownloadExtraLanguages: (v) => ((EXTRA_LANGUAGE_CHOICES as readonly unknown[]).includes(v) ? v : undefined),
 };
 
@@ -566,7 +572,7 @@ export function addSubtitleAddJob(plan: SubtitleAddPlan): Job {
 	const job: Job = {
 		id,
 		kind: "subtitles",
-		filename: `Subtitles: ${basename(plan.targetPath)}`,
+		filename: `${plan.ocr ? "OCR" : "Subtitles"}: ${basename(plan.targetPath)}`,
 		inputPath: plan.targetPath,
 		relativePath: "",
 		status: "queued",

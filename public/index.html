@@ -72,6 +72,24 @@
 								</svg>
 								Subtitle search
 							</button>
+							<button title="Read picture subtitles (PGS) into text tracks with a vision model" class="nav-menu-item" role="menuitem" id="open-subocr-btn">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
+									<path d="M7 12h10M7 16h6" />
+								</svg>
+								Subtitle OCR
+							</button>
+							<button
+								title="Download or translate missing subtitle languages for a video or folder"
+								class="nav-menu-item"
+								role="menuitem"
+								id="open-subtranslate-btn"
+							>
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6" />
+								</svg>
+								Translate subtitles
+							</button>
 							<button title="Repair or remux subtitles without re-encoding video" class="nav-menu-item" role="menuitem" id="open-repair-btn">
 								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 									<path d="M14.7 6.3a4 4 0 0 0-5-5L7.4 3.6l3 3-3.8 3.8-3-3-2.3 2.3a4 4 0 0 0 5 5l7.9 7.9a2.1 2.1 0 0 0 3-3z" />
@@ -508,6 +526,29 @@
 										</div>
 									</div>
 								</details>
+								<details class="settings-subsection">
+									<summary>Picture subtitle OCR</summary>
+									<div class="settings-subsection-body">
+										<div class="setting-group">
+											<div id="default-ocr-enabled" class="toggle-group"></div>
+											<div class="lang-filter-hint">
+												Reads picture subtitles (PGS) with a vision model and adds them as text tracks, for languages and kinds that have no text track yet.
+												They can then be styled and translated. The PGS tracks are kept.
+											</div>
+										</div>
+										<div class="setting-group">
+											<label>Provider</label>
+											<div class="radio-group" id="default-ocr-provider"></div>
+											<div id="default-ocr-provider-settings"></div>
+											<div id="default-ocr-concurrency" class="toggle-group"></div>
+										</div>
+										<div class="setting-group">
+											<button class="btn btn-ghost" type="button" id="default-ocr-test">Test OCR</button>
+											<br /><br />
+											<span id="default-ocr-test-result"></span>
+										</div>
+									</div>
+								</details>
 								<div class="setting-group">
 									<label>Subtitle language priority</label>
 									<div id="default-subtitle-lang-priority"></div>
@@ -832,6 +873,29 @@
 											<button class="btn btn-ghost" type="button" id="job-subdl-test">Test account</button>
 											<br /><br />
 											<span id="job-subdl-test-result"></span>
+										</div>
+									</div>
+								</details>
+								<details class="settings-subsection">
+									<summary>Picture subtitle OCR</summary>
+									<div class="settings-subsection-body">
+										<div class="setting-group">
+											<div id="job-ocr-enabled" class="toggle-group"></div>
+											<div class="lang-filter-hint">
+												Reads picture subtitles (PGS) with a vision model and adds them as text tracks, for languages and kinds that have no text track yet.
+												They can then be styled and translated. The PGS tracks are kept.
+											</div>
+										</div>
+										<div class="setting-group">
+											<label>Provider</label>
+											<div class="radio-group" id="job-ocr-provider"></div>
+											<div id="job-ocr-provider-settings"></div>
+											<div id="job-ocr-concurrency" class="toggle-group"></div>
+										</div>
+										<div class="setting-group">
+											<button class="btn btn-ghost" type="button" id="job-ocr-test">Test OCR</button>
+											<br /><br />
+											<span id="job-ocr-test-result"></span>
 										</div>
 									</div>
 								</details>
@@ -1221,6 +1285,14 @@
 						<button class="btn-close" id="library-translate-close" aria-label="Close">&times;</button>
 					</div>
 					<div class="modal-body repair-audit-body">
+						<div class="repair-file-choice" id="library-translate-pick" style="display: none">
+							<span class="repair-file-label">Video or folder</span>
+							<div id="library-translate-pick-selection" class="repair-file-selection"></div>
+							<div class="repair-file-buttons">
+								<button class="btn btn-ghost" type="button" id="library-translate-pick-file">Choose video...</button>
+								<button class="btn btn-ghost" type="button" id="library-translate-pick-folder">Choose folder...</button>
+							</div>
+						</div>
 						<div class="library-translate-grid">
 							<div class="setting-group">
 								<label for="library-translate-source">Source language</label>
@@ -1756,6 +1828,58 @@
 							Save next to video
 						</button>
 						<button class="btn btn-primary" id="subsearch-apply" disabled title="Queue a job that adds the chosen subtitles as tracks">Add to video</button>
+					</div>
+				</div>
+			</div>
+			<div id="subocr-modal" class="modal-overlay" style="display: none">
+				<div class="modal modal-wide">
+					<div class="modal-header">
+						<div>
+							<h2>Subtitle OCR</h2>
+							<div class="repair-subtitle">Read picture subtitles (PGS) into text tracks with a vision model, without re-encoding</div>
+						</div>
+						<button class="btn-close" id="subocr-close" aria-label="Close subtitle OCR">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div id="subocr-setup" class="sub-preview-error" style="display: none">
+							Set up the OCR model under Settings, Subtitle handling, Picture subtitle OCR first.
+						</div>
+						<div class="setting-group">
+							<label>Read</label>
+							<div class="radio-group" id="subocr-scope"></div>
+						</div>
+						<div class="repair-file-choice" id="subocr-file-choice">
+							<span class="repair-file-label">Video</span>
+							<div id="subocr-target-selection" class="repair-file-selection"></div>
+							<button class="btn btn-ghost" type="button" id="subocr-choose-target">Choose MKV...</button>
+						</div>
+						<div class="repair-file-choice" id="subocr-folder-choice" style="display: none">
+							<span class="repair-file-label">Folder</span>
+							<div id="subocr-folder-selection" class="repair-file-selection"></div>
+							<button class="btn btn-ghost" type="button" id="subocr-choose-folder">Choose folder...</button>
+							<label class="toggle-label repair-file-option"><input type="checkbox" id="subocr-recursive" />&nbsp;Include subfolders</label>
+						</div>
+						<div class="setting-group" id="subocr-folder-options" style="display: none">
+							<label for="subocr-languages">Languages</label>
+							<input type="text" class="lang-filter-input" id="subocr-languages" placeholder="All languages" />
+							<div class="lang-filter-hint">
+								Every MKV becomes a job of its own. Each reads the picture subtitles that have no text track in their language and kind. Leave the languages
+								empty to read all of them.
+							</div>
+						</div>
+						<div id="subocr-error" class="sub-preview-error" role="alert" style="display: none"></div>
+						<div id="subocr-tracks"></div>
+						<div class="setting-group">
+							<label class="toggle-label"><input type="checkbox" id="subocr-remove" />&nbsp;Remove the picture tracks that were read</label>
+							<div class="lang-filter-hint">
+								The text tracks get your subtitle style and font. A track that cannot be read is left as it is and shown as a warning on the job.
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<span id="subocr-result" class="lang-filter-hint" role="status" aria-live="polite"></span>
+						<button class="btn btn-ghost" id="subocr-cancel">Close</button>
+						<button class="btn btn-primary" id="subocr-queue" disabled>Queue OCR</button>
 					</div>
 				</div>
 			</div>

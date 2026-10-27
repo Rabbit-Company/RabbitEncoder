@@ -6,6 +6,7 @@ import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { update } from "./polling";
 import { openSeriesNotesModal } from "./series-notes-modal";
+import { openRepairFolderPicker, openTranslateTargetPicker } from "./repair";
 
 const STORAGE_KEY = "rabbit-library-translate";
 
@@ -79,7 +80,7 @@ function renderSources(): void {
 		el.textContent = `Uses ${d!.translateModel} at ${d!.translateBaseUrl} (${TRANSLATE_PROVIDER_LABELS[d!.translateProvider ?? "openai"]}). Change it under Settings, Subtitle translation.`;
 
 	const ready = (download.checked && hasOpenSubtitles()) || ai.checked;
-	buttonById("library-translate-submit").disabled = !ready || (ai.checked && !hasAiProvider());
+	buttonById("library-translate-submit").disabled = !ready || (ai.checked && !hasAiProvider()) || selectedPaths.length === 0;
 }
 
 export function handleTranslateSourcesChange(): void {
@@ -152,6 +153,7 @@ async function loadSeriesNotes(): Promise<void> {
 
 export function openTranslateSetup(paths: string[], fileCount: number | null): void {
 	selectedPaths = [...paths];
+	byId("library-translate-pick").style.display = "none";
 	const last = loadLastChoice();
 	const defaultTargets = appState.defaults?.translateTargetLanguages?.join(", ") ?? "";
 	inputById("library-translate-source").value = last.source || "eng";
@@ -169,6 +171,45 @@ export function openTranslateSetup(paths: string[], fileCount: number | null): v
 	byId("library-translate-modal").style.display = "";
 	inputById("library-translate-targets").focus();
 	void loadSeriesNotes();
+}
+
+const escapeHtml = (value: string): string => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Shows the chosen video or folder of the Subtitles menu entry. */
+function renderPicked(kind: "video" | "folder" | null): void {
+	const path = selectedPaths[0];
+	byId("library-translate-pick-selection").innerHTML = path
+		? `<span class="repair-file-name" title="${escapeHtml(path)}">${escapeHtml(path.slice(path.lastIndexOf("/") + 1))}</span><span class="repair-file-folder">${escapeHtml(path)}</span>`
+		: '<span class="repair-file-empty">No video or folder selected</span>';
+	byId("library-translate-count").textContent = !path
+		? "Choose a video or a folder"
+		: kind === "video"
+			? "1 video selected"
+			: "Videos in the folder and its subfolders are counted when queued";
+	renderSources();
+	if (path) void loadSeriesNotes();
+	else byId("library-translate-notes").style.display = "none";
+}
+
+/** The same window, opened from the Subtitles menu for any video or folder Rabbit can reach. */
+export function openTranslateTool(): void {
+	openTranslateSetup([], null);
+	byId("library-translate-pick").style.display = "";
+	renderPicked(null);
+}
+
+export function chooseTranslateVideo(): void {
+	openTranslateTargetPicker((path) => {
+		selectedPaths = [path];
+		renderPicked("video");
+	});
+}
+
+export function chooseTranslateFolder(): void {
+	openRepairFolderPicker((path) => {
+		selectedPaths = [path];
+		renderPicked("folder");
+	});
 }
 
 export function closeTranslateSetup(): void {

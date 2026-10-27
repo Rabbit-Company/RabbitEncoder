@@ -855,6 +855,64 @@ export async function applyVideoSubtitles(
 	return data;
 }
 
+export interface OcrTrackInfo {
+	index: number;
+	codec: string;
+	language: string;
+	languageName: string;
+	title: string;
+	type: string;
+	forced: boolean;
+	picture: boolean;
+	/** A picture track whose language and kind already has a text track. */
+	hasText: boolean;
+}
+
+export async function fetchOcrTracks(path: string): Promise<{ configured: boolean; tracks: OcrTrackInfo[] }> {
+	const response = await authFetch(`${API}/api/ocr/inspect?${new URLSearchParams({ path })}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the video");
+	return data;
+}
+
+export async function queueOcrJob(path: string, streams: number[], removePictures: boolean): Promise<{ jobId: string }> {
+	const response = await authFetch(`${API}/api/ocr/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, streams, removePictures }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue OCR");
+	return data;
+}
+
+export async function queueOcrBatch(opts: {
+	folder: string;
+	recursive: boolean;
+	languages: string[];
+	removePictures: boolean;
+}): Promise<{ jobIds: string[]; skipped: string[] }> {
+	const response = await authFetch(`${API}/api/ocr/batch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts) });
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue OCR");
+	return data;
+}
+
+/** Reads a sample subtitle image with the OCR model. */
+export async function testOcrModel(opts: {
+	provider: string;
+	baseUrl: string;
+	model: string;
+	apiKey: string;
+}): Promise<{ ok: boolean; text?: string; error?: string }> {
+	try {
+		const res = await authFetch(`${API}/api/ocr/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts) });
+		return await res.json();
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 export async function testOpenSubtitlesAccount(opts: {
 	username: string;
 	password: string;

@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { basename, extname, join, parse as parsePath } from "path";
-import type { AppConfig, Job, JobStep, SubtitleAddPlan, SubtitleAddTrack } from "../core/types";
+import type { AppConfig, Job, JobStep, SubtitleAddPlan, SubtitleAddTrack, SubtitleStreamInfo } from "../core/types";
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
-import { sanitizeLanguageTag } from "../tracks/tracks";
+import { buildSubtitleTrackName, detectSubtitleTrackType, sanitizeLanguageTag } from "../tracks/tracks";
+import { ocrPgsTrack, PGS_CODEC, pictureTrackFlagArgs, unreadPictureTracks } from "../ocr/ocr";
+import { resolveTranslateLang } from "../translate/translate-languages";
+import { probeFile } from "./probe";
 import { finalizeOutput } from "./output";
 import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
@@ -12,11 +15,69 @@ import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { prepareRemuxAddition, type AddedTrack } from "../subtitles/added-tracks";
 import { orderTranslatedByPriority, planTrackOrder, type ExistingTrack } from "./translate-only";
 
-const S_MUX = 0;
-const S_WRITE = 1;
-
 export function describeSubtitleAddPlan(plan: SubtitleAddPlan): string {
+	if (plan.ocr) {
+		const which = plan.ocr.streams
+			? `${plan.ocr.streams.length} picture subtitle track(s)`
+			: `picture subtitles${plan.ocr.languages?.length ? ` in ${plan.ocr.languages.join(", ")}` : ""}`;
+		return `Reading ${which} with OCR`;
+	}
 	return `Adding ${plan.tracks.map((t) => t.language).join(", ")} subtitles`;
+}
+
+/** Reads the requested picture tracks into SRT files, as tracks to add. A track that fails is skipped with a warning. */
+async function readPictureTracks(
+	plan: SubtitleAddPlan,
+	job: Job,
+	tempDir: string,
+	signal: AbortSignal | undefined,
+	onProgress: (progress: number, detail: string) => void,
+): Promise<{ tracks: SubtitleAddTrack[]; read: SubtitleStreamInfo[]; warnings: string[] }> {
+	const request = plan.ocr!;
+	const streams = (await probeFile(plan.targetPath)).subtitleStreams ?? [];
+	const languages = new Set((request.languages ?? []).map((l) => resolveTranslateLang(l)?.code).filter(Boolean));
+	const chosen = request.streams
+		? streams.filter((s) => request.streams!.includes(s.index) && s.codec.toLowerCase() === PGS_CODEC)
+		: unreadPictureTracks(streams).filter((s) => !languages.size || languages.has(resolveTranslateLang(s.language)?.code));
+	const tracks: SubtitleAddTrack[] = [];
+	const read: SubtitleStreamInfo[] = [];
+	const warnings: string[] = [];
+	for (const [n, stream] of chosen.entries()) {
+		const label = `track ${stream.index} (${stream.language || "und"})`;
+		try {
+			const srt = await ocrPgsTrack({
+				inputPath: plan.targetPath,
+				stream,
+				tempDir,
+				settings: job.settings,
+				signal,
+				onProgress: (done, total) =>
+					onProgress(Math.round(((n + done / Math.max(1, total)) / chosen.length) * 100), `Reading ${label}, ${done}/${total} pictures`),
+			});
+			if (!srt.trim()) {
+				warnings.push(`No text was read from ${label}`);
+				continue;
+			}
+			const type = detectSubtitleTrackType(stream);
+			const file = join(plan.workDir, `ocr_${stream.index}.srt`);
+			writeFileSync(file, srt, "utf-8");
+			read.push(stream);
+			tracks.push({
+				file,
+				language: stream.language || "und",
+				trackName: buildSubtitleTrackName(type, stream.title, "OCR"),
+				hearingImpaired: !!stream.isHearingImpaired || type === "sdh",
+				trackType: type,
+				fromPicture: true,
+				forced: !!stream.isForced,
+				original: !!stream.isOriginal,
+			});
+		} catch (error) {
+			if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
+			warnings.push(`OCR of ${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	return { tracks, read, warnings };
 }
 
 /**
@@ -28,9 +89,13 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 	const tempDir = join(config.tempDir, job.id);
 	mkdirSync(tempDir, { recursive: true });
 	const steps: JobStep[] = [
+		...(plan.ocr ? [{ label: "Read Subtitles", status: "pending" as const, progress: 0 }] : []),
 		{ label: "Mux", status: "pending", progress: 0 },
 		{ label: "Write Output", status: "pending", progress: 0 },
 	];
+	const S_READ = 0;
+	const S_MUX = plan.ocr ? 1 : 0;
+	const S_WRITE = S_MUX + 1;
 	const setStep = (idx: number, partial: Partial<JobStep>) => {
 		const step = steps[idx]!;
 		if (partial.status === "active" && step.status !== "active") step.startedAt = Date.now();
@@ -47,14 +112,37 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 		const missing = plan.tracks.filter((t) => !existsSync(t.file));
 		if (missing.length) throw new Error("The downloaded subtitles are no longer available. Search again.");
 
+		let tracks = plan.tracks;
+		let removed: SubtitleStreamInfo[] = [];
+		if (plan.ocr) {
+			setStep(S_READ, { status: "active", progress: 0, detail: "Finding picture subtitles" });
+			updateJob({ status: "encoding_video" });
+			mkdirSync(plan.workDir, { recursive: true });
+			const result = await readPictureTracks(plan, job, tempDir, signal, (progress, detail) => setStep(S_READ, { progress, detail }));
+			for (const warning of result.warnings) Logger.warn(`[ocr] ${warning}`);
+			if (result.warnings.length) updateJob({ warning: result.warnings.join(". ") });
+			if (!result.tracks.length) {
+				if (result.warnings.length) throw new Error(result.warnings.join(". "));
+				// Nothing to read, so the file stays as it is.
+				for (const idx of [S_READ, S_MUX, S_WRITE])
+					setStep(idx, { status: "done", progress: 100, detail: idx === S_READ ? "No picture subtitles to read" : "Source unchanged" });
+				updateJob({ status: "done", currentStage: "Complete", progress: 100, outputFilename: basename(plan.targetPath), finishedAt: Date.now() });
+				return;
+			}
+			setStep(S_READ, { status: "done", progress: 100, detail: `Read ${result.tracks.length} track(s)` });
+			tracks = [...tracks, ...result.tracks];
+			if (plan.ocr.removePictures) removed = result.read;
+		}
+
 		setStep(S_MUX, { status: "active", progress: 0, detail: "Styling subtitles" });
 		updateJob({ status: "muxing" });
 		// The same styling native tracks get: SRT to ASS and the dialogue font, per the settings.
 		const styled: Array<SubtitleAddTrack & AddedTrack> = [];
-		for (const [i, track] of plan.tracks.entries()) {
+		for (const [i, track] of tracks.entries()) {
 			const ass = extname(track.file).toLowerCase() === ".ass";
 			const style = { ...DEFAULT_STYLE_APPEARANCE, fontName: job.settings.fontGroup };
-			const result = await styleSource(track.file, ass ? "ass" : "subrip", track.hearingImpaired ? "sdh" : "full", job.settings, style, tempDir, i, signal);
+			const type = track.trackType ?? (track.hearingImpaired ? "sdh" : "full");
+			const result = await styleSource(track.file, ass ? "ass" : "subrip", type, job.settings, style, tempDir, i, signal);
 			const file = join(tempDir, `added_${i}.styled.${result.format}`);
 			writeFileSync(file, result.content, "utf-8");
 			styled.push({ ...track, file, format: result.format, restyle: result.styled });
@@ -62,20 +150,29 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 		const addition = await prepareRemuxAddition(plan.targetPath, styled, job.settings, tempDir, signal);
 		if (signal?.aborted) throw new CancelledError();
 
-		setStep(S_MUX, { progress: 5, detail: describeSubtitleAddPlan(plan) });
+		setStep(S_MUX, { progress: 5, detail: `Adding ${styled.map((t) => t.language).join(", ")} subtitles` });
 		const ordered = orderTranslatedByPriority(styled, job.settings.subtitleLanguagePriority);
 		const identified = await identifyMatroska(plan.targetPath, signal);
-		const existing: ExistingTrack[] = (identified.tracks ?? []).map((t) => ({
-			id: t.id,
-			type: t.type,
-			language: t.properties.language_ietf || t.properties.language,
-		}));
+		// The n-th subtitle stream ffprobe lists is the n-th subtitle track mkvmerge lists.
+		const probedSubs = removed.length ? ((await probeFile(plan.targetPath)).subtitleStreams ?? []) : [];
+		const mkvSubs = (identified.tracks ?? []).filter((t) => t.type === "subtitles");
+		const dropIds = new Set(removed.map((s) => mkvSubs[probedSubs.findIndex((p) => p.index === s.index)]?.id).filter((id): id is number => id !== undefined));
+		const existing: ExistingTrack[] = (identified.tracks ?? [])
+			.filter((t) => !dropIds.has(t.id))
+			.map((t) => ({
+				id: t.id,
+				type: t.type,
+				language: t.properties.language_ietf || t.properties.language,
+			}));
 		const finalOutput = join(tempDir, "final.mkv");
-		const args = ["mkvmerge", "--gui-mode", "-o", finalOutput, plan.targetPath];
+		const args = ["mkvmerge", "--gui-mode", "-o", finalOutput, ...(dropIds.size ? ["--subtitle-tracks", `!${[...dropIds].join(",")}`] : []), plan.targetPath];
 		for (const track of ordered) {
-			args.push("--language", `0:${sanitizeLanguageTag(track.language, `downloaded ${track.language}`)}`);
+			args.push("--language", `0:${sanitizeLanguageTag(track.language, `added ${track.language}`)}`);
 			args.push("--track-name", `0:${track.trackName}`, "--sub-charset", "0:UTF-8");
-			args.push(...computeDownloadedFlagArgs(track.hearingImpaired, !track.extra), ...(addition.compressionArgs.get(track.file) ?? []), track.file);
+			const flags = track.fromPicture
+				? pictureTrackFlagArgs({ forced: track.forced, hearingImpaired: track.hearingImpaired, original: track.original }, track.trackType ?? "full")
+				: computeDownloadedFlagArgs(track.hearingImpaired, !track.extra);
+			args.push(...flags, ...(addition.compressionArgs.get(track.file) ?? []), track.file);
 		}
 		args.push(...addition.fontArgs);
 		args.push(
