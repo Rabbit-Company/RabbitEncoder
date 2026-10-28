@@ -4640,7 +4640,7 @@ a.btn {
 
 .subsearch-identity {
 	display: grid;
-	grid-template-columns: 2fr repeat(3, minmax(70px, 1fr)) 1.2fr;
+	grid-template-columns: minmax(100px, 1fr) 2fr repeat(3, minmax(70px, 1fr)) 1.2fr;
 	gap: 8px 12px;
 }
 

@@ -8,7 +8,7 @@ import { normalizeTag, resolveTranslateLang } from "../translate/translate-langu
 import { alignToReference } from "./align";
 import { dialogueCues, mapCue, retimeDocument, type TextCue } from "./cues";
 import { decodeSubtitleBytes, toSubDocument } from "./formats";
-import { identifyMedia, movieHash, type MediaIdentity } from "./identify";
+import { applyIdentityOverride, identifyMedia, movieHash, type MediaIdentity } from "./identify";
 import {
 	downloadOpenSubtitles,
 	isCachedListing,
@@ -237,7 +237,7 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 	const account = accountFrom(settings);
 	if (!account) throw new Error(LOGIN_NEEDED);
 
-	const identity: MediaIdentity = { ...identifyMedia(opts.identityPath ?? opts.inputPath), ...(opts.identity ?? {}) };
+	const identity = applyIdentityOverride(identifyMedia(opts.identityPath ?? opts.inputPath), opts.identity ?? {});
 	if (!identity.title && !identity.imdbId && !identity.tmdbId && !identity.parentImdbId && !identity.parentTmdbId)
 		throw new Error("Could not tell the title from the file name. Enter it in the search.");
 	const hash = movieHash(opts.hashPath ?? opts.inputPath);

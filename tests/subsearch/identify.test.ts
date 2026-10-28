@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { identifyMedia, movieHash, parseMediaName, parseNfo } from "../../src/subsearch/identify";
+import { applyIdentityOverride, identifyMedia, movieHash, parseMediaName, parseNfo } from "../../src/subsearch/identify";
 import { openSubtitlesLanguage, searchParams } from "../../src/subsearch/opensubtitles";
 import { POPULAR_SUBTITLE_LANGUAGES } from "../../src/subsearch/languages";
 import { computeDownloadedFlagArgs } from "../../src/translate/translate-step";
@@ -120,5 +120,33 @@ describe("most used languages", () => {
 	it("sets the default flag as decided", () => {
 		expect(computeDownloadedFlagArgs(false, true).slice(0, 2)).toEqual(["--default-track-flag", "0:1"]);
 		expect(computeDownloadedFlagArgs(true, false).slice(0, 4)).toEqual(["--default-track-flag", "0:0", "--forced-display-flag", "0:0"]);
+	});
+});
+
+describe("applyIdentityOverride", () => {
+	const special = {
+		kind: "episode" as const,
+		title: "Demon Slayer - Kimetsu no Yaiba",
+		year: 2019,
+		season: 0,
+		episode: 2,
+		parentImdbId: "tt9335498",
+		parentTmdbId: 85937,
+		sources: ["file name", "tvshow.nfo"],
+	};
+
+	it("searches an episode as a movie and drops its series details", () => {
+		const id = applyIdentityOverride(special, { kind: "movie", title: "Mugen Train", year: 2020, imdbId: "tt11032374" });
+		expect(id).toMatchObject({ kind: "movie", title: "Mugen Train", year: 2020, imdbId: "tt11032374" });
+		expect(id.season).toBeUndefined();
+		expect(id.episode).toBeUndefined();
+		expect(id.parentImdbId).toBeUndefined();
+		expect(id.parentTmdbId).toBeUndefined();
+		expect(searchParams(id, ["sl"], null)).toEqual({ languages: "sl", imdb_id: "11032374", type: "movie" });
+	});
+
+	it("keeps the detected details when the kind stays the same", () => {
+		const id = applyIdentityOverride(special, { episode: 3, kind: "episode" });
+		expect(id).toMatchObject({ kind: "episode", season: 0, episode: 3, parentImdbId: "tt9335498" });
 	});
 });

@@ -186,6 +186,17 @@ export function identifyMedia(videoPath: string): MediaIdentity {
 	return identity;
 }
 
+/**
+ * Lays what was entered in the search over the detected identity. Entering a
+ * different kind drops the detected numbers and IDs, since an episode's IDs
+ * find nothing in a movie search and the other way around.
+ */
+export function applyIdentityOverride(detected: MediaIdentity, entered: Partial<MediaIdentity>): MediaIdentity {
+	if (!entered.kind || entered.kind === detected.kind) return { ...detected, ...entered };
+	const { season: _s, episode: _e, imdbId: _i, tmdbId: _t, parentImdbId: _pi, parentTmdbId: _pt, ...kept } = detected;
+	return { ...kept, ...entered, sources: [...detected.sources, "your entry"] };
+}
+
 const HASH_CHUNK = 65_536;
 
 /** OpenSubtitles hash: the file size plus the 64-bit words of its first and last 64 KiB. */

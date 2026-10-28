@@ -65,15 +65,30 @@ function readIdentity(): Partial<SubtitleSearchIdentity> {
 	if (title) out.title = title;
 	if (imdb) out.imdbId = /^\d+$/.test(imdb) ? `tt${imdb.padStart(7, "0")}` : imdb;
 	const year = number("subsearch-year");
+	if (year) out.year = year;
+	const kind = kindSelect().value;
+	if (kind === "movie") {
+		out.kind = "movie";
+		return out;
+	}
 	const season = number("subsearch-season");
 	const episode = number("subsearch-episode");
-	if (year) out.year = year;
 	if (season !== undefined) out.season = season;
-	if (episode !== undefined) {
-		out.episode = episode;
-		out.kind = "episode";
-	}
+	if (episode !== undefined) out.episode = episode;
+	if (kind === "episode" || episode !== undefined) out.kind = "episode";
 	return out;
+}
+
+const kindSelect = () => byId<HTMLSelectElement>("subsearch-kind");
+
+/** Shows what Auto picked after a search, or plain Auto before one. */
+function setDetectedKind(kind?: "movie" | "episode"): void {
+	kindSelect().options[0]!.textContent = kind ? `Auto (${kind})` : "Auto";
+}
+
+export function updateSubtitleSearchKind(): void {
+	const movie = kindSelect().value === "movie";
+	for (const id of ["subsearch-season", "subsearch-episode"]) inputById(id).disabled = movie;
 }
 
 function describeIdentity(id: SubtitleSearchIdentity): string {
@@ -233,6 +248,7 @@ async function poll(current: number): Promise<void> {
 	}
 	for (const lang of search?.languages ?? []) if (lang.bestKey) choices.set(lang.language, lang.bestKey);
 	if (search?.state === "done") {
+		if (!kindSelect().value) setDetectedKind(search.identity?.kind);
 		const found = search.languages?.filter((l) => l.bestKey).length ?? 0;
 		setStatus(`Found ${found} of ${search.languages?.length ?? 0} language${search.languages?.length === 1 ? "" : "s"}`);
 	}
@@ -264,6 +280,9 @@ export function chooseSubtitleSearchVideo(): void {
 	openSubtitleSearchPicker((path) => {
 		videoPath = path;
 		for (const id of ["subsearch-title", "subsearch-year", "subsearch-season", "subsearch-episode", "subsearch-imdb"]) inputById(id).value = "";
+		kindSelect().value = "";
+		setDetectedKind();
+		updateSubtitleSearchKind();
 		resetResults();
 		renderVideo();
 	});

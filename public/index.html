@@ -1805,6 +1805,14 @@
 							<summary>Search as</summary>
 							<div class="settings-subsection-body">
 								<div class="subsearch-identity">
+									<label
+										>Type
+										<select class="select-input" id="subsearch-kind">
+											<option value="">Auto</option>
+											<option value="movie">Movie</option>
+											<option value="episode">Episode</option>
+										</select>
+									</label>
 									<label>Title <input type="text" class="lang-filter-input" id="subsearch-title" placeholder="From the file name" /></label>
 									<label>Year <input type="number" class="lang-filter-input" id="subsearch-year" min="1900" max="2100" /></label>
 									<label>Season <input type="number" class="lang-filter-input" id="subsearch-season" min="0" max="999" /></label>
@@ -1813,7 +1821,7 @@
 								</div>
 								<div class="lang-filter-hint">
 									Leave these empty to use the file name and the .nfo files Jellyfin, Kodi or Sonarr wrote next to the video. Fill them in when the search finds
-									the wrong title.
+									the wrong title. Auto searches for what the file looks like. Choose Movie for specials and films kept with a series.
 								</div>
 							</div>
 						</details>

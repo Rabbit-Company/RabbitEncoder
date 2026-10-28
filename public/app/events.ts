@@ -131,6 +131,7 @@ import {
 	handleSubtitleSearchResultsClick,
 	openSubtitleSearch,
 	runSubtitleSearch,
+	updateSubtitleSearchKind,
 } from "../features/subtitle-search";
 import {
 	chooseSubtitleOcrFolder,
@@ -319,6 +320,7 @@ export function initEventListeners() {
 	byId("subsearch-cancel").addEventListener("click", closeSubtitleSearch);
 	byId("subsearch-modal").addEventListener("click", closeSubtitleSearchIfOutside);
 	byId("subsearch-choose").addEventListener("click", chooseSubtitleSearchVideo);
+	byId("subsearch-kind").addEventListener("change", updateSubtitleSearchKind);
 	byId("subsearch-search").addEventListener("click", () => void runSubtitleSearch());
 	byId("subsearch-results").addEventListener("click", handleSubtitleSearchResultsClick);
 	byId("subsearch-results").addEventListener("change", handleSubtitleSearchResultsChange);
