@@ -1,4 +1,5 @@
 import { buildSubtitleTrackName, extractGroupFromTitle, extractSourceTag, type SubtitleTrackType } from "../tracks/tracks";
+import { resolveTranslateLang } from "../translate/translate-languages";
 
 /** Endings of a release name that are not a group: languages, formats and the halves of tags such as WEB-DL. */
 const NOT_GROUP = /^(?:dl|rip|web|hd|sd|uhd|hdr|sdr|dv|x264|x265|h264|h265|hevc|avc|aac|ac3|eac3|ddp|dts|flac|opus|srt|ass|sub|subs|forced|hi|sdh|cc)$/i;
@@ -29,6 +30,15 @@ export function downloadedSubtitleCredit(release: string, uploader: string): str
 	if (scene) return scene;
 	if (!NO_UPLOADER.test(uploader.trim())) return uploader.trim();
 	return "OpenSubtitles";
+}
+
+/**
+ * Language tag of a downloaded track, the way native tracks are tagged.
+ * "chi" becomes "zh-Hans", the Simplified Chinese it was searched as, instead
+ * of a bare "zh" that says nothing about the script.
+ */
+export function downloadedLanguageTag(language: string): string {
+	return resolveTranslateLang(language)?.code ?? language;
 }
 
 /** The release name, or the file name without its extension when there is none. */

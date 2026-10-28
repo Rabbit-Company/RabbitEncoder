@@ -6,7 +6,7 @@ import type { JobSettings, ProbeResult, SubtitleStreamInfo, SubtitleStyle } from
 import { probeFile } from "../pipeline/probe";
 import { downloadMissingSubtitles, subtitleDownloadEnabled, type DownloadedSubtitle } from "../subsearch/auto";
 import { POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
-import { downloadedTrackName } from "../subsearch/naming";
+import { downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
 import {
 	detectSubtitleTrackType,
 	buildSubtitleTrackName,
@@ -224,7 +224,7 @@ async function downloadedTracks(
 		writeFileSync(file, styled.content, "utf-8");
 		out.push({
 			file,
-			language: normalizeTag(d.language),
+			language: downloadedLanguageTag(normalizeTag(d.language)),
 			trackName: downloadedTrackName(trackType, d.release, d.uploader, d.fileName),
 			trackType,
 			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, false),

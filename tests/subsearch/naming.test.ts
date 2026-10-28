@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { candidateCredit, downloadedTrackName, sceneGroup } from "../../src/subsearch/naming";
+import { candidateCredit, downloadedLanguageTag, downloadedTrackName, sceneGroup } from "../../src/subsearch/naming";
 
 describe("downloaded subtitle track names", () => {
 	it("credit the source or group in the release name, as native tracks do", () => {
@@ -27,5 +27,14 @@ describe("downloaded subtitle track names", () => {
 		expect(candidateCredit("", "Anonymous", "Solo.Leveling.S01E01.NF.srt")).toBe("NF");
 		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.DUBTITLE.WEBRip", "tedi", "", "SubsPlease")).toBe("Full Dubtitles [SubsPlease]");
 		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.WEBRip", "tedi", "", "  ")).toBe("Full Subtitles [tedi]");
+	});
+});
+
+describe("downloaded subtitle language tags", () => {
+	it("name the Chinese script, as native tracks do", () => {
+		expect(downloadedLanguageTag("chi")).toBe("zh-Hans");
+		expect(downloadedLanguageTag("zh-hant")).toBe("zh-Hant");
+		expect(downloadedLanguageTag("pt-br")).toBe("pt-BR");
+		expect(downloadedLanguageTag("slv")).toBe("sl");
 	});
 });
