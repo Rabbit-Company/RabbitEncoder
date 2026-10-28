@@ -4717,6 +4717,10 @@ a.btn {
 	background: var(--accent-glow);
 }
 
+.subsearch-table tr.subsearch-skip td {
+	color: var(--text-2);
+}
+
 .subsearch-table tr.is-muted td {
 	color: var(--text-2);
 }

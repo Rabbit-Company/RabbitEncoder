@@ -166,6 +166,16 @@ function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate):
 	return html;
 }
 
+/** Lets a language be left out, since a radio button cannot be unchecked. */
+function skipRow(lang: SubtitleSearchLanguage): string {
+	if (!lang.candidates.some((c) => c.status === "rated")) return "";
+	const skipped = !choices.has(lang.language);
+	return `<tr class="subsearch-skip${skipped ? " is-chosen" : ""}">
+		<td><input type="radio" name="subsearch-${escapeHtml(lang.language)}" data-subsearch-choose="" data-language="${escapeHtml(lang.language)}"${skipped ? " checked" : ""} /></td>
+		<td colspan="5">Don't add ${escapeHtml(lang.name)}</td>
+	</tr>`;
+}
+
 function creditField(c: SubtitleSearchCandidate): string {
 	return `<label class="subsearch-credit">Credited as
 		<input type="text" class="lang-filter-input" maxlength="60" data-subsearch-credit="${escapeHtml(c.key)}" value="${escapeHtml(credits.get(c.key) ?? c.credit)}" placeholder="${escapeHtml(c.credit)}" />
@@ -191,7 +201,7 @@ function renderResults(): void {
 	const sections = search.languages
 		.filter((lang) => !unmatched.includes(lang))
 		.map((lang) => {
-			const rows = lang.candidates.map((c) => candidateRow(lang, c)).join("");
+			const rows = lang.candidates.map((c) => candidateRow(lang, c)).join("") + skipRow(lang);
 			const chosen = lang.candidates.find((c) => c.key === choices.get(lang.language));
 			const table = lang.candidates.length
 				? `<table class="subsearch-table"><thead><tr><th></th><th>Rating</th><th>Release</th><th>Downloads</th><th>Sync</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
@@ -351,8 +361,10 @@ export function handleSubtitleSearchResultsChange(event: Event): void {
 		else credits.set(creditKey, value);
 		return;
 	}
-	if (!input.dataset?.subsearchChoose || !input.dataset.language) return;
-	choices.set(input.dataset.language, input.dataset.subsearchChoose);
+	const key = input.dataset?.subsearchChoose;
+	if (key === undefined || !input.dataset.language) return;
+	if (key) choices.set(input.dataset.language, key);
+	else choices.delete(input.dataset.language);
 	renderResults();
 }
 
