@@ -692,6 +692,8 @@ export interface SubtitleSearchCandidate {
 	release: string;
 	fileName: string;
 	uploader: string;
+	/** What the track name credits, such as the release group. */
+	credit: string;
 	url: string;
 	downloads: number;
 	hearingImpaired: boolean;

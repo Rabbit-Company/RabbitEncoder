@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { downloadedTrackName, sceneGroup } from "../../src/subsearch/naming";
+import { candidateCredit, downloadedTrackName, sceneGroup } from "../../src/subsearch/naming";
 
 describe("downloaded subtitle track names", () => {
 	it("credit the source or group in the release name, as native tracks do", () => {
@@ -20,5 +20,12 @@ describe("downloaded subtitle track names", () => {
 		expect(sceneGroup("Show.S01E01.1080p.WEB-DL")).toBeNull();
 		expect(sceneGroup("Show.S01E01.x264-GROUP.eng.forced")).toBe("GROUP");
 		expect(sceneGroup("Show S01E01")).toBeNull();
+	});
+
+	it("use a credit entered by hand over the one read from the names", () => {
+		expect(candidateCredit("Solo.Leveling.S01E01.WEBRip", "tedi")).toBe("tedi");
+		expect(candidateCredit("", "Anonymous", "Solo.Leveling.S01E01.NF.srt")).toBe("NF");
+		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.DUBTITLE.WEBRip", "tedi", "", "SubsPlease")).toBe("Full Dubtitles [SubsPlease]");
+		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.WEBRip", "tedi", "", "  ")).toBe("Full Subtitles [tedi]");
 	});
 });

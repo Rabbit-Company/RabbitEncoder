@@ -14,6 +14,8 @@ let videoPath = "";
 let search: SubtitleSearchState | null = null;
 /** Chosen candidate key per language. */
 const choices = new Map<string, string>();
+/** Credits typed over the ones read from the release names, per candidate key. */
+const credits = new Map<string, string>();
 /** Candidates whose sample lines are shown. */
 const expanded = new Set<string>();
 /** Bumped on every search, so polling for an earlier one stops. */
@@ -164,6 +166,13 @@ function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate):
 	return html;
 }
 
+function creditField(c: SubtitleSearchCandidate): string {
+	return `<label class="subsearch-credit">Credited as
+		<input type="text" class="lang-filter-input" maxlength="60" data-subsearch-credit="${escapeHtml(c.key)}" value="${escapeHtml(credits.get(c.key) ?? c.credit)}" placeholder="${escapeHtml(c.credit)}" />
+		<span class="hdr-note">The group or source in brackets at the end of the track name. Fix it when it was read wrong.</span>
+	</label>`;
+}
+
 function renderResults(): void {
 	const container = byId("subsearch-results");
 	if (!search || search.state !== "done" || !search.languages) {
@@ -183,6 +192,7 @@ function renderResults(): void {
 		.filter((lang) => !unmatched.includes(lang))
 		.map((lang) => {
 			const rows = lang.candidates.map((c) => candidateRow(lang, c)).join("");
+			const chosen = lang.candidates.find((c) => c.key === choices.get(lang.language));
 			const table = lang.candidates.length
 				? `<table class="subsearch-table"><thead><tr><th></th><th>Rating</th><th>Release</th><th>Downloads</th><th>Sync</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
 				: "";
@@ -190,6 +200,7 @@ function renderResults(): void {
 				<h3>${escapeHtml(lang.name)} <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}</h3>
 				${lang.note ? `<div class="lang-filter-hint">${escapeHtml(lang.note)}</div>` : ""}
 				${table}
+				${chosen ? creditField(chosen) : ""}
 			</div>`;
 		})
 		.join("");
@@ -219,6 +230,7 @@ function resetResults(): void {
 	run++;
 	search = null;
 	choices.clear();
+	credits.clear();
 	expanded.clear();
 	setStatus("");
 	setError("");
@@ -331,6 +343,14 @@ export function handleSubtitleSearchResultsClick(event: MouseEvent): void {
 
 export function handleSubtitleSearchResultsChange(event: Event): void {
 	const input = event.target as HTMLInputElement;
+	const creditKey = input.dataset?.subsearchCredit;
+	if (creditKey) {
+		const candidate = search?.languages?.flatMap((l) => l.candidates).find((c) => c.key === creditKey);
+		const value = input.value.trim();
+		if (!value || value === candidate?.credit) credits.delete(creditKey);
+		else credits.set(creditKey, value);
+		return;
+	}
 	if (!input.dataset?.subsearchChoose || !input.dataset.language) return;
 	choices.set(input.dataset.language, input.dataset.subsearchChoose);
 	renderResults();
@@ -344,7 +364,7 @@ export async function applySubtitleSearch(mode: "mux" | "sidecar"): Promise<void
 	try {
 		const result = await applyVideoSubtitles(
 			search.searchId,
-			[...choices].map(([language, key]) => ({ language, key })),
+			[...choices].map(([language, key]) => ({ language, key, ...(credits.has(key) ? { credit: credits.get(key) } : {}) })),
 			mode,
 		);
 		if (mode === "sidecar") setStatus(`Saved ${result.files?.join(", ")}`);

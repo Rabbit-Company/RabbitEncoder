@@ -842,7 +842,7 @@ export async function cancelSubtitleSearch(searchId: string): Promise<void> {
 /** Adds the chosen subtitles to the video as a queued job, or saves them next to it. */
 export async function applyVideoSubtitles(
 	searchId: string,
-	choices: Array<{ language: string; key: string }>,
+	choices: Array<{ language: string; key: string; credit?: string }>,
 	mode: "mux" | "sidecar",
 ): Promise<{ jobId?: string; files?: string[] }> {
 	const response = await authFetch(`${API}/api/subsearch/apply`, {

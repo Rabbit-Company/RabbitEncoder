@@ -7,7 +7,7 @@ import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
-import { downloadedTrackName } from "../subsearch/naming";
+import { candidateCredit, downloadedTrackName } from "../subsearch/naming";
 import type { MediaIdentity } from "../subsearch/identify";
 import { checkOpenSubtitles } from "../subsearch/opensubtitles";
 import { accountFrom, LOGIN_NEEDED, searchSubtitles, type SubtitleSearchResult } from "../subsearch/search";
@@ -67,7 +67,10 @@ function publicSearch(id: string, s: StoredSearch) {
 	return {
 		...base,
 		...s.result,
-		languages: s.result.languages.map((l) => ({ ...l, candidates: l.candidates.map(({ syncedPath: _, ...c }) => c) })),
+		languages: s.result.languages.map((l) => ({
+			...l,
+			candidates: l.candidates.map(({ syncedPath: _, ...c }) => ({ ...c, credit: candidateCredit(c.release, c.uploader, c.fileName) })),
+		})),
 	};
 }
 
@@ -173,11 +176,13 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 			if (!search?.result) throw new Error("The search has expired. Search again.");
 			const result = search.result;
 			if (!Array.isArray(body.choices) || !body.choices.length) throw new Error("Choose a subtitle");
-			const picked = (body.choices as Array<{ language?: unknown; key?: unknown }>).map((choice) => {
+			const picked = (body.choices as Array<{ language?: unknown; key?: unknown; credit?: unknown }>).map((choice) => {
 				const lang = result.languages.find((l) => l.language === choice.language);
 				const candidate = lang?.candidates.find((x) => x.key === choice.key && x.status === "rated");
 				if (!lang || !candidate?.syncedPath || !existsSync(candidate.syncedPath)) throw new Error("That subtitle is not available. Search again.");
-				return { lang, candidate };
+				// Brackets would break the "[Credit]" at the end of the track name.
+				const credit = typeof choice.credit === "string" ? choice.credit.replace(/[[\]]/g, "").trim().slice(0, 60) : "";
+				return { lang, candidate, credit };
 			});
 			if (new Set(picked.map((p) => p.lang.language)).size !== picked.length) throw new Error("Choose one subtitle per language");
 
@@ -197,13 +202,13 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 
 			const workDir = join(config.tempDir, "subtitle-add", randomUUID());
 			mkdirSync(workDir, { recursive: true });
-			const tracks: SubtitleAddTrack[] = picked.map(({ lang, candidate }) => {
+			const tracks: SubtitleAddTrack[] = picked.map(({ lang, candidate, credit }) => {
 				const file = join(workDir, `${lang.language}.${candidate.format}`);
 				copyFileSync(candidate.syncedPath!, file);
 				return {
 					file,
 					language: lang.language,
-					trackName: downloadedTrackName(candidate.hearingImpaired ? "sdh" : "full", candidate.release, candidate.uploader, candidate.fileName),
+					trackName: downloadedTrackName(candidate.hearingImpaired ? "sdh" : "full", candidate.release, candidate.uploader, candidate.fileName, credit),
 					hearingImpaired: candidate.hearingImpaired,
 					...(lang.extra ? { extra: true } : {}),
 				};

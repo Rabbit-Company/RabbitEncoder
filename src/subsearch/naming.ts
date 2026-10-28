@@ -31,11 +31,22 @@ export function downloadedSubtitleCredit(release: string, uploader: string): str
 	return "OpenSubtitles";
 }
 
+/** The release name, or the file name without its extension when there is none. */
+function releaseName(release: string, fileName: string): string {
+	return release.trim() || fileName.replace(/\.[a-z0-9]{2,4}$/i, "");
+}
+
+/** The credit of a candidate, as its track name would show it. */
+export function candidateCredit(release: string, uploader: string, fileName = ""): string {
+	return downloadedSubtitleCredit(releaseName(release, fileName), uploader);
+}
+
 /**
  * Track name of a downloaded subtitle, with its credit and, from the release
  * name, whether it is a dubtitle. Without a release name the file name is used.
+ * A credit entered by hand replaces the one read from the names.
  */
-export function downloadedTrackName(type: SubtitleTrackType, release: string, uploader: string, fileName = ""): string {
-	const name = release.trim() || fileName.replace(/\.[a-z0-9]{2,4}$/i, "");
-	return buildSubtitleTrackName(type, name, downloadedSubtitleCredit(name, uploader));
+export function downloadedTrackName(type: SubtitleTrackType, release: string, uploader: string, fileName = "", credit?: string): string {
+	const name = releaseName(release, fileName);
+	return buildSubtitleTrackName(type, name, credit?.trim() || downloadedSubtitleCredit(name, uploader));
 }

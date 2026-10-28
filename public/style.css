@@ -4679,6 +4679,20 @@ a.btn {
 	font-size: 0.95rem;
 }
 
+.subsearch-credit {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 10px;
+	margin-top: 8px;
+	color: var(--text-2);
+	font-size: 0.78rem;
+}
+
+.subsearch-credit input {
+	width: 180px;
+}
+
 .subsearch-table {
 	width: 100%;
 	border-collapse: collapse;
