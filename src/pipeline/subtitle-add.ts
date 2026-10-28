@@ -161,7 +161,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 		// One default per language: the video keeps its own tracks, without the picture tracks this job removes.
 		const removedIndexes = new Set(removed.map((s) => s.index));
 		const kept = ((await probeFile(plan.targetPath)).subtitleStreams ?? []).filter((s) => !removedIndexes.has(s.index));
-		const kinds = tracks.map((t) => ({ language: t.language, trackType: t.trackType ?? (t.hearingImpaired ? "sdh" : "full"), extra: t.extra }));
+		const kinds = tracks.map((t) => ({ language: t.language, trackType: t.trackType ?? (t.hearingImpaired ? "sdh" : "full") }));
 		const defaults = addedDefaults(kept, kinds);
 		tracks = tracks.map((t, i) => ({ ...t, isDefault: defaults.has(i) }));
 

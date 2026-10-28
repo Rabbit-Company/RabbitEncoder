@@ -85,7 +85,7 @@ describe("addedDefaults", () => {
 		expect([...addedDefaults([stream(4, "slv", { isHearingImpaired: true, title: "SDH" })], [{ language: "sl", trackType: "full" }])]).toEqual([]);
 	});
 
-	it("prefers full to SDH, and never picks forced tracks or extra languages", () => {
+	it("prefers full to SDH, never picks forced tracks, and gives the most used languages a default too", () => {
 		const added = [
 			{ language: "slv", trackType: "sdh" },
 			{ language: "slv", trackType: "full" },
@@ -93,7 +93,7 @@ describe("addedDefaults", () => {
 			{ language: "spa", trackType: "full", extra: true },
 			{ language: "fre", trackType: "sdh" },
 		];
-		expect([...addedDefaults([], added)].sort()).toEqual([1, 4]);
+		expect([...addedDefaults([], added)].sort()).toEqual([1, 3, 4]);
 	});
 });
 

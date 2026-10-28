@@ -144,8 +144,6 @@ const DEFAULT_RANK: Record<string, number> = { full: 0, honorifics: 1, sdh: 2 };
 export interface AddedTrackKind {
 	language: string;
 	trackType: string;
-	/** One of the most used languages added on top. These are never the default, as dozens of defaults would confuse players. */
-	extra?: boolean;
 }
 
 /**
@@ -163,7 +161,7 @@ export function addedDefaults(kept: SubtitleStreamInfo[], added: AddedTrackKind[
 	added.forEach((track, i) => {
 		const rank = DEFAULT_RANK[track.trackType];
 		const language = group(track.language);
-		if (rank === undefined || track.extra || taken.has(language)) return;
+		if (rank === undefined || taken.has(language)) return;
 		const current = best.get(language);
 		if (current === undefined || rank < DEFAULT_RANK[added[current]!.trackType]!) best.set(language, i);
 	});

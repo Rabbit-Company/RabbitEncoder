@@ -210,7 +210,7 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 		);
 	}
 
-	it("adds the most used languages it can sync, after the targets and never as default", async () => {
+	it("adds the most used languages it can sync, after the targets and each as the default of its language", async () => {
 		offerExtras = true;
 		searchedLanguages.length = 0;
 		const job = await translateJob("extras", { translateTargetLanguages: ["slv"], subtitleDownloadExtraLanguages: 10 }, join(root, "tmp-x"));
@@ -220,7 +220,7 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 		// One search lists the target and the extra languages together.
 		expect(searchedLanguages).toEqual(["ar,de,es,fr,id,it,pt-br,ru,sl,zh-cn"]);
 		expect((await tracks(job.inputPath)).map((t) => t.language).sort()).toEqual(["eng", "fre", "slv", "spa"]);
-		expect(await defaults(job.inputPath)).toMatchObject({ slv: true, spa: false, fre: false });
+		expect(await defaults(job.inputPath)).toMatchObject({ slv: true, spa: true, fre: true });
 	}, 60_000);
 
 	it("leaves the extra languages out when the quota is nearly used up", async () => {
