@@ -1,5 +1,5 @@
-import type { RepairBatchPairing, RepairPairSuggestion } from "../types";
-import { createRepairBatchJobs, fetchRepairBatchPairing } from "../api/client";
+import type { RepairBatchPairing, RepairLayoutSourceTrack, RepairLayoutTrackPlan, RepairPairSuggestion, RepairSourceLayout } from "../types";
+import { createRepairBatchJobs, fetchRepairBatchLayouts, fetchRepairBatchPairing, fetchRepairBatchSuggestion } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker } from "./repair";
@@ -10,10 +10,28 @@ interface PairRow extends RepairPairSuggestion {
 	edited: boolean;
 }
 
+/** A source layout and the output tracks chosen for it. */
+interface LayoutState {
+	layout: RepairSourceLayout;
+	tracks: RepairLayoutTrackPlan[];
+	note: string;
+	/** What the subtitle workflow would build for the first source, null while it is being built. */
+	suggestion: RepairLayoutTrackPlan[] | null;
+	suggestionError: string;
+	/** Set once the user changes the tracks, so a late suggestion does not overwrite them. */
+	touched: boolean;
+}
+
 let targetDir = "";
 let sourceDir = "";
 let rows: PairRow[] = [];
 let sourceChoices: { path: string; name: string }[] = [];
+let layouts: LayoutState[] = [];
+/** The pairs the layouts were read for. Any other pairing makes them stale. */
+let layoutsKey = "";
+let readingLayouts = false;
+/** Bumped on every read, so suggestions for layouts that were replaced are dropped. */
+let layoutsGeneration = 0;
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -99,8 +117,308 @@ function renderPairs(): void {
 	if (duplicates.size) parts.push(`${duplicates.size} source${duplicates.size === 1 ? "" : "s"} used twice`);
 	byId("repair-batch-summary").textContent = rows.length ? parts.join(" | ") : "";
 
-	buttonById("repair-batch-queue-btn").disabled = paired === 0 || duplicates.size > 0;
 	buttonById("repair-batch-queue-btn").textContent = paired ? `Queue ${paired} replacement${paired === 1 ? "" : "s"}` : "Queue replacements";
+	renderMode();
+}
+
+const pairedRows = () => rows.filter((row) => row.sourcePath).map((row) => ({ targetPath: row.targetPath, sourcePath: row.sourcePath }));
+const pairsKey = () => JSON.stringify(pairedRows());
+const choosingTracks = () => byId<HTMLSelectElement>("repair-batch-mode").value === "layouts";
+const layoutsFresh = () => layouts.length > 0 && layoutsKey === pairsKey();
+
+function renderMode(): void {
+	const paired = pairedRows().length;
+	const choosing = choosingTracks();
+	const layoutsButton = buttonById("repair-batch-layouts-btn");
+	layoutsButton.style.display = choosing ? "" : "none";
+	layoutsButton.disabled = paired === 0 || readingLayouts;
+	layoutsButton.textContent = readingLayouts ? "Reading layouts..." : layouts.length ? "Read layouts again" : "Read subtitle layouts";
+	byId("repair-batch-mode-note").textContent = !choosing
+		? "Each source is named, ordered and filtered by the subtitle settings when its job runs."
+		: !layouts.length
+			? "Sources with the same subtitle tracks share a layout. You pick the output tracks once for each layout."
+			: layoutsFresh()
+				? `${layouts.length} layout${layouts.length === 1 ? "" : "s"} across ${paired} source${paired === 1 ? "" : "s"}.`
+				: "The pairs changed since the layouts were read. Read them again.";
+	byId("repair-batch-layouts").style.display = choosing && layouts.length ? "" : "none";
+	buttonById("repair-batch-queue-btn").disabled = paired === 0 || duplicateSourcePaths().size > 0 || (choosing && !layoutsFresh());
+}
+
+const trackLabel = (track: RepairLayoutSourceTrack): string => `#${track.id} ${track.title || "Untitled"} (${track.codec}, ${track.language})`;
+
+function renderSourceTrack(track: RepairLayoutSourceTrack, layoutIndex: number, used: boolean): string {
+	const flags = [
+		track.isDefault ? "Default" : "",
+		track.isForced ? "Forced" : "",
+		track.isHearingImpaired ? "HI" : "",
+		track.isCommentary ? "Commentary" : "",
+	].filter(Boolean);
+	return `<div class="repair-track repair-source-track">
+		<div class="repair-track-head">
+			<span class="sub-track-id">Source #${track.id}</span>
+			<span class="repair-codec">${escapeHtml(track.codec)}</span>
+			<button class="btn btn-primary btn-sm repair-add-track" type="button" data-layout-add="${track.position}" data-layout="${layoutIndex}" ${used ? "disabled" : ""}>${used ? "Added" : "Add →"}</button>
+		</div>
+		<div class="repair-source-title">${escapeHtml(track.title || "Untitled subtitle")}</div>
+		<div class="repair-source-meta">
+			<span>${escapeHtml(track.language || "und")}</span>
+			${flags.map((flag) => `<span>${escapeHtml(flag)}</span>`).join("")}
+		</div>
+	</div>`;
+}
+
+function renderOutputTrack(state: LayoutState, layoutIndex: number, index: number): string {
+	const track = state.tracks[index]!;
+	const source = state.layout.tracks[track.position];
+	const usedElsewhere = new Set(state.tracks.filter((_, other) => other !== index).map((other) => other.position));
+	const attrs = `data-layout="${layoutIndex}" data-row="${index}"`;
+	const flag = (field: keyof RepairLayoutTrackPlan, label: string) =>
+		`<label class="repair-flag"><input type="checkbox" data-field="${field}" ${attrs} ${track[field] ? "checked" : ""}> ${label}</label>`;
+	return `<div class="repair-track">
+		<div class="repair-track-head">
+			<select class="select-input repair-layout-source" data-field="position" ${attrs} title="The source subtitle this track is made from">
+				${state.layout.tracks
+					.map(
+						(choice) =>
+							`<option value="${choice.position}" ${choice.position === track.position ? "selected" : ""} ${usedElsewhere.has(choice.position) ? "disabled" : ""}>${escapeHtml(trackLabel(choice))}</option>`,
+					)
+					.join("")}
+			</select>
+			<div class="repair-order">
+				<button class="btn btn-ghost btn-sm" type="button" data-layout-move="up" ${attrs} ${index === 0 ? "disabled" : ""}>↑</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-layout-move="down" ${attrs} ${index === state.tracks.length - 1 ? "disabled" : ""}>↓</button>
+				<button class="btn btn-ghost btn-sm repair-remove-track" type="button" data-layout-remove ${attrs}>Remove</button>
+			</div>
+		</div>
+		<div class="repair-track-fields">
+			<label>Title<input class="repair-input" data-field="title" ${attrs} value="${escapeHtml(track.title)}" maxlength="512"></label>
+			<label>Language<input class="repair-input repair-language" data-field="language" ${attrs} value="${escapeHtml(track.language)}" maxlength="35"></label>
+			<label>Handling<select class="select-input" data-field="mode" ${attrs}>
+				<option value="copy" ${track.mode === "copy" ? "selected" : ""}>Copy unchanged</option>
+				<option value="rabbit" ${track.mode === "rabbit" ? "selected" : ""} ${source?.canRabbitProcess ? "" : "disabled"}>Rabbit defaults</option>
+			</select></label>
+			<label>Compression<select class="select-input" data-field="compression" ${attrs}>
+				<option value="preserve" ${track.compression === "preserve" ? "selected" : ""}>Preserve (${source?.currentCompression || "none"})</option>
+				<option value="auto" ${track.compression === "auto" ? "selected" : ""}>Auto (only if it saves space)</option>
+				<option value="none" ${track.compression === "none" ? "selected" : ""}>None</option>
+				<option value="zlib" ${track.compression === "zlib" ? "selected" : ""}>zlib</option>
+			</select></label>
+		</div>
+		<div class="repair-flags">
+			${flag("isDefault", "Default")}
+			${flag("isForced", "Forced")}
+			${flag("isEnabled", "Enabled")}
+			${flag("isHearingImpaired", "HI")}
+			${flag("isOriginal", "Original")}
+			${flag("isCommentary", "Commentary")}
+		</div>
+	</div>`;
+}
+
+function renderLayout(state: LayoutState, layoutIndex: number): string {
+	const { layout } = state;
+	const used = new Set(state.tracks.map((track) => track.position));
+	const names = layout.sourcePaths.map(fileName);
+	const copyButtons = layouts
+		.filter((_, other) => other !== layoutIndex)
+		.map(
+			(other) =>
+				`<button class="btn btn-ghost btn-sm" type="button" data-layout-copy="${layouts.indexOf(other)}" data-layout="${layoutIndex}" title="Pick the same tracks as layout ${other.layout.label}, matched by title and release group">Copy layout ${other.layout.label}</button>`,
+		)
+		.join("");
+	const building = state.suggestion === null && !state.suggestionError;
+	const notes = [
+		state.suggestionError ? `Rabbit could not suggest tracks: ${state.suggestionError}` : "",
+		state.note,
+		state.tracks.length || building ? "" : "No output tracks. These encodes will lose every subtitle.",
+	].filter(Boolean);
+	const emptyOutput = building
+		? '<div class="repair-empty">Building Rabbit\'s suggestion. Add tracks by hand or wait for it.</div>'
+		: '<div class="repair-empty">No output subtitles.</div>';
+	return `<section class="repair-layout">
+		<div class="repair-editor-header">
+			<div>
+				<h3>Layout ${escapeHtml(layout.label)}</h3>
+				<details class="repair-layout-files">
+					<summary>${names.length} source${names.length === 1 ? "" : "s"}: ${escapeHtml(names.slice(0, 3).join(", "))}${names.length > 3 ? ", ..." : ""}</summary>
+					${names.map((name) => `<div>${escapeHtml(name)}</div>`).join("")}
+				</details>
+			</div>
+			<div class="repair-layout-actions">
+				${copyButtons}
+				<button class="btn btn-ghost btn-sm" type="button" data-layout-suggest data-layout="${layoutIndex}" title="Start over from what the subtitle workflow would pick" ${state.suggestion ? "" : "disabled"}>${building ? "Building suggestion..." : "Rabbit suggestion"}</button>
+			</div>
+		</div>
+		${notes.map((note) => `<div class="repair-pair-warning">${escapeHtml(note)}</div>`).join("")}
+		<div class="repair-track-transfer">
+			<div class="repair-transfer-pane">
+				<div class="repair-tracks repair-source-tracks">${layout.tracks.map((track) => renderSourceTrack(track, layoutIndex, used.has(track.position))).join("")}</div>
+			</div>
+			<div class="repair-transfer-arrow" aria-hidden="true">→</div>
+			<div class="repair-transfer-pane">
+				<div class="repair-tracks">${state.tracks.map((_, index) => renderOutputTrack(state, layoutIndex, index)).join("") || emptyOutput}</div>
+			</div>
+		</div>
+	</section>`;
+}
+
+function renderLayouts(): void {
+	byId("repair-batch-layouts").innerHTML = layouts.map(renderLayout).join("");
+	renderMode();
+}
+
+export function handleRepairBatchModeChange(): void {
+	setError("");
+	renderMode();
+}
+
+export async function readRepairBatchLayouts(): Promise<void> {
+	const pairs = pairedRows();
+	if (!pairs.length) return;
+	setError("");
+	readingLayouts = true;
+	renderMode();
+	let read: RepairSourceLayout[];
+	try {
+		read = await fetchRepairBatchLayouts(pairs);
+	} catch (error) {
+		setError(errorMessage(error));
+		return;
+	} finally {
+		readingLayouts = false;
+		renderMode();
+	}
+	const generation = ++layoutsGeneration;
+	layouts = read.map((layout) => ({ layout, tracks: [], note: "", suggestion: null, suggestionError: "", touched: false }));
+	layoutsKey = JSON.stringify(pairs);
+	renderLayouts();
+
+	// One at a time, since each reads a whole source and they usually sit on the same disk.
+	for (const state of layouts) {
+		const sourcePath = state.layout.sourcePaths[0]!;
+		const pair = pairs.find((candidate) => candidate.sourcePath === sourcePath)!;
+		try {
+			const suggestion = await fetchRepairBatchSuggestion(pair);
+			if (generation !== layoutsGeneration) return;
+			state.suggestion = suggestion;
+			if (!state.touched) state.tracks = suggestion.map((track) => ({ ...track }));
+		} catch (error) {
+			if (generation !== layoutsGeneration) return;
+			state.suggestionError = errorMessage(error);
+		}
+		renderLayouts();
+	}
+}
+
+/** Swap "[Old]" for "[New]" in a title, so a renamed track keeps crediting the right release group. */
+export function swapReleaseGroup(title: string, from: string | null, to: string | null): string {
+	if (!from || from === to) return title;
+	const tag = `[${from}]`;
+	if (!title.includes(tag)) return title;
+	return to
+		? title.replace(tag, `[${to}]`)
+		: title
+				.replace(tag, "")
+				.replace(/\s{2,}/g, " ")
+				.trim();
+}
+
+function changeSourceTrack(state: LayoutState, track: RepairLayoutTrackPlan, position: number): void {
+	const from = state.layout.tracks[track.position];
+	const to = state.layout.tracks[position];
+	if (!from || !to) return;
+	track.position = position;
+	track.title = track.title === from.title ? to.title : swapReleaseGroup(track.title, from.releaseGroup, to.releaseGroup);
+	if (track.mode === "rabbit" && !to.canRabbitProcess) track.mode = "copy";
+}
+
+/** The track of `layout` that is the same subtitle as `track`: equal title first, then the same kind from the same release group. */
+function matchingTrack(track: RepairLayoutSourceTrack, layout: RepairSourceLayout, taken: Set<number>): RepairLayoutSourceTrack | undefined {
+	const free = layout.tracks.filter((candidate) => !taken.has(candidate.position) && candidate.codecId === track.codecId);
+	const sameTitle = free.filter((candidate) => candidate.title === track.title);
+	if (sameTitle.length) return sameTitle[0];
+	if (!track.releaseGroup) return undefined;
+	const sameGroup = free.filter(
+		(candidate) => candidate.isForced === track.isForced && candidate.releaseGroup?.toLowerCase() === track.releaseGroup!.toLowerCase(),
+	);
+	return sameGroup.length === 1 ? sameGroup[0] : undefined;
+}
+
+function copyLayout(target: LayoutState, from: LayoutState): void {
+	const taken = new Set<number>();
+	const missing: string[] = [];
+	target.tracks = from.tracks.flatMap((track) => {
+		const original = from.layout.tracks[track.position];
+		const match = original && matchingTrack(original, target.layout, taken);
+		if (!match) {
+			missing.push(original?.title || `#${track.position + 1}`);
+			return [];
+		}
+		taken.add(match.position);
+		return [{ ...track, position: match.position, mode: track.mode === "rabbit" && !match.canRabbitProcess ? "copy" : track.mode }];
+	});
+	target.note = missing.length ? `Layout ${from.layout.label} uses tracks this layout does not have: ${missing.join(", ")}. Add a replacement by hand.` : "";
+}
+
+export function handleRepairBatchLayoutClick(event: MouseEvent): void {
+	const element = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-layout]") : null;
+	if (!(element instanceof HTMLButtonElement)) return;
+	const state = layouts[Number(element.dataset.layout)];
+	if (!state) return;
+	const row = Number(element.dataset.row);
+
+	if (element.dataset.layoutAdd !== undefined) {
+		const source = state.layout.tracks[Number(element.dataset.layoutAdd)];
+		if (!source) return;
+		state.tracks.push({
+			position: source.position,
+			mode: "copy",
+			order: state.tracks.length,
+			title: source.title,
+			language: source.language,
+			compression: "preserve",
+			isDefault: source.isDefault,
+			isForced: source.isForced,
+			isEnabled: source.isEnabled,
+			isHearingImpaired: source.isHearingImpaired,
+			isOriginal: source.isOriginal,
+			isCommentary: source.isCommentary,
+		});
+	} else if (element.dataset.layoutRemove !== undefined) {
+		state.tracks.splice(row, 1);
+	} else if (element.dataset.layoutMove) {
+		const next = element.dataset.layoutMove === "up" ? row - 1 : row + 1;
+		if (next < 0 || next >= state.tracks.length) return;
+		[state.tracks[row], state.tracks[next]] = [state.tracks[next]!, state.tracks[row]!];
+	} else if (element.dataset.layoutCopy !== undefined) {
+		const from = layouts[Number(element.dataset.layoutCopy)];
+		if (!from) return;
+		copyLayout(state, from);
+	} else if (element.dataset.layoutSuggest !== undefined) {
+		if (!state.suggestion) return;
+		state.tracks = state.suggestion.map((track) => ({ ...track }));
+		state.note = "";
+	} else return;
+	state.touched = true;
+	renderLayouts();
+}
+
+export function handleRepairBatchLayoutInput(event: Event): void {
+	const element = event.target;
+	if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement)) return;
+	const state = layouts[Number(element.dataset.layout)];
+	const track = state?.tracks[Number(element.dataset.row)];
+	const field = element.dataset.field;
+	if (!state || !track || !field) return;
+	// Text fields update as they are typed, everything else once it is changed.
+	const isText = element instanceof HTMLInputElement && element.type !== "checkbox";
+	if ((event.type === "input") !== isText) return;
+	state.touched = true;
+	if (field === "position") {
+		changeSourceTrack(state, track, Number(element.value));
+		renderLayouts();
+	} else if (element instanceof HTMLInputElement && element.type === "checkbox") (track as any)[field] = element.checked;
+	else (track as any)[field] = element.value;
 }
 
 function loadPairing(data: RepairBatchPairing): void {
@@ -122,6 +440,10 @@ export function openRepairBatch(): void {
 	setError("");
 	rows = [];
 	sourceChoices = [];
+	layouts = [];
+	layoutsKey = "";
+	layoutsGeneration++;
+	byId("repair-batch-layouts").innerHTML = "";
 	renderFolders();
 	renderPairs();
 	byId("repair-batch-modal").style.display = "";
@@ -183,9 +505,13 @@ export function handleRepairBatchPairChange(event: Event): void {
 }
 
 export async function queueRepairBatch(): Promise<void> {
-	const pairs = rows.filter((row) => row.sourcePath).map((row) => ({ targetPath: row.targetPath, sourcePath: row.sourcePath }));
+	const pairs = pairedRows();
 	if (!pairs.length) {
 		setError("Pair at least one encode with a source.");
+		return;
+	}
+	if (choosingTracks() && !layoutsFresh()) {
+		setError("Read the subtitle layouts of the current pairs first.");
 		return;
 	}
 	setError("");
@@ -194,7 +520,13 @@ export async function queueRepairBatch(): Promise<void> {
 	button.disabled = true;
 	button.textContent = "Queueing...";
 	try {
-		await createRepairBatchJobs({ pairs, replaceTarget: byId<HTMLSelectElement>("repair-batch-save-mode").value === "existing" });
+		await createRepairBatchJobs({
+			pairs,
+			replaceTarget: byId<HTMLSelectElement>("repair-batch-save-mode").value === "existing",
+			layouts: choosingTracks()
+				? layouts.map((state) => ({ signature: state.layout.signature, tracks: state.tracks.map((track, order) => ({ ...track, order })) }))
+				: undefined,
+		});
 		closeRepairBatch();
 		await update();
 	} catch (error) {

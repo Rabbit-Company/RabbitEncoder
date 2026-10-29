@@ -2,7 +2,14 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import { randomUUID } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
-import { MEDIA_EXTENSIONS, type AppConfig, type RepairAuditGroupEdit, type RepairPlan } from "../core/types";
+import {
+	MEDIA_EXTENSIONS,
+	type AppConfig,
+	type RepairAuditGroupEdit,
+	type RepairInspectionFile,
+	type RepairPlan,
+	type RepairSourceLayout,
+} from "../core/types";
 import {
 	buildRepairAuditGroupPlans,
 	buildSourceReplacementPlan,
@@ -14,6 +21,7 @@ import {
 } from "../pipeline/repair";
 import { run } from "../core/process";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
+import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
 import { addRepairJob, getAllJobs, getJob } from "../queue/store";
 import { browseFolder } from "../queue/library";
 
@@ -108,6 +116,25 @@ async function inspectAuditPaths(inputs: { path: string; sourcePath?: string }[]
 		);
 	}
 	return groupRepairAuditFiles(files, folderPath);
+}
+
+function resolveBatchPairs(raw: unknown, config: AppConfig): { targetPath: string; sourcePath: string }[] {
+	if (!Array.isArray(raw) || raw.length === 0) throw new Error("Confirm at least one encode/source pair");
+	if (raw.length > 500) throw new Error("Batch replacement is limited to 500 files");
+	return raw.map((entry: any) => ({
+		targetPath: resolveAllowedMkv(entry?.targetPath, config, "Encoded target"),
+		sourcePath: resolveAllowedMkv(entry?.sourcePath, config, "Subtitle source"),
+	}));
+}
+
+async function inspectBatchSources(pairs: { sourcePath: string }[], signal?: AbortSignal): Promise<Map<string, RepairInspectionFile>> {
+	const paths = [...new Set(pairs.map((pair) => pair.sourcePath))];
+	const sources = new Map<string, RepairInspectionFile>();
+	for (let offset = 0; offset < paths.length; offset += 8) {
+		const inspected = await Promise.all(paths.slice(offset, offset + 8).map((path) => inspectRepairFile(path, signal)));
+		for (const file of inspected) sources.set(file.path, file);
+	}
+	return sources;
 }
 
 export function registerRepairRoutes(app: Web, config: AppConfig): void {
@@ -280,19 +307,53 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 		}
 	});
 
+	app.post("/api/repair/batch/layouts", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { pairs?: unknown };
+			const pairs = resolveBatchPairs(raw.pairs, config);
+			const sources = await inspectBatchSources(pairs, c.req.signal);
+			const layouts: RepairSourceLayout[] = groupSourceLayouts([...sources.values()]);
+			return c.json({ layouts });
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	// Separate from the layouts, since the workflow reads every subtitle of the source and that is slow on large remuxes.
+	app.post("/api/repair/batch/suggestion", async (c) => {
+		const workDir = join(config.tempDir, `repair-layout-${randomUUID()}`);
+		try {
+			const raw = (await c.req.json()) as { targetPath?: unknown; sourcePath?: unknown };
+			const targetPath = resolveAllowedMkv(raw.targetPath, config, "Encoded target");
+			const sourcePath = resolveAllowedMkv(raw.sourcePath, config, "Subtitle source");
+			mkdirSync(workDir, { recursive: true });
+			const [plan, source] = await Promise.all([
+				buildSourceReplacementPlan({ targetPath, sourcePath, settings: config.defaults, tempDir: workDir, replaceTarget: true, signal: c.req.signal }),
+				inspectRepairFile(sourcePath, c.req.signal),
+			]);
+			return c.json({ tracks: planToLayoutTracks(plan.tracks, source.subtitles) });
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		} finally {
+			rmSync(workDir, { recursive: true, force: true });
+		}
+	});
+
 	app.post("/api/repair/batch/jobs", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { pairs?: unknown; replaceTarget?: unknown };
-			if (!Array.isArray(raw.pairs) || raw.pairs.length === 0) throw new Error("Confirm at least one encode/source pair");
-			if (raw.pairs.length > 500) throw new Error("Batch replacement is limited to 500 files");
+			const raw = (await c.req.json()) as { pairs?: unknown; replaceTarget?: unknown; layouts?: unknown };
+			const pairs = resolveBatchPairs(raw.pairs, config);
+			const replaceTarget = raw.replaceTarget !== false;
 
-			const plans: RepairPlan[] = raw.pairs.map((entry: any) => ({
-				targetPath: resolveAllowedMkv(entry?.targetPath, config, "Encoded target"),
-				sourcePath: resolveAllowedMkv(entry?.sourcePath, config, "Subtitle source"),
-				replaceTarget: raw.replaceTarget !== false,
-				replaceFromSource: true,
-				tracks: [],
-			}));
+			// With layouts the tracks are chosen by the user, so the plans are final now.
+			// Without them each job runs the subtitle workflow on its own source.
+			let plans: RepairPlan[];
+			if (Array.isArray(raw.layouts)) {
+				const sources = await inspectBatchSources(pairs, c.req.signal);
+				plans = buildLayoutRepairPlans({ pairs, sources, layouts: raw.layouts, replaceTarget });
+			} else {
+				plans = pairs.map((pair) => ({ ...pair, replaceTarget, replaceFromSource: true, tracks: [] }));
+			}
 			const targets = plans.map((plan) => plan.targetPath);
 			if (new Set(targets).size !== targets.length) throw new Error("The same encode was paired more than once");
 

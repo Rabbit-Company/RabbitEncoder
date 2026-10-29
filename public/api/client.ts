@@ -19,7 +19,9 @@ import type {
 	RepairAuditGroupEdit,
 	RepairBatchPairing,
 	RepairInspection,
+	RepairLayoutTrackPlan,
 	RepairPlan,
+	RepairSourceLayout,
 	StyleAppearance,
 	SubtitleSearchIdentity,
 	SubtitleSearchResult,
@@ -209,9 +211,32 @@ export async function fetchRepairBatchPairing(options: { targetDir: string; sour
 	return data;
 }
 
+export async function fetchRepairBatchLayouts(pairs: { targetPath: string; sourcePath: string }[]): Promise<RepairSourceLayout[]> {
+	const response = await authFetch(`${API}/api/repair/batch/layouts`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ pairs }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the subtitle layouts of the sources");
+	return data.layouts;
+}
+
+export async function fetchRepairBatchSuggestion(pair: { targetPath: string; sourcePath: string }): Promise<RepairLayoutTrackPlan[]> {
+	const response = await authFetch(`${API}/api/repair/batch/suggestion`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(pair),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not build Rabbit's suggestion");
+	return data.tracks;
+}
+
 export async function createRepairBatchJobs(options: {
 	pairs: { targetPath: string; sourcePath: string }[];
 	replaceTarget: boolean;
+	layouts?: { signature: string; tracks: RepairLayoutTrackPlan[] }[];
 }): Promise<{ jobIds: string[] }> {
 	const response = await authFetch(`${API}/api/repair/batch/jobs`, {
 		method: "POST",

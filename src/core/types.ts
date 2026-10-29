@@ -705,6 +705,24 @@ export interface RepairBatchPairing {
 	unmatchedSources: string[];
 }
 
+/** A track of a batch layout plan, pointing at a source subtitle by its position among the subtitles. */
+export interface RepairLayoutTrackPlan extends Omit<RepairSubtitleTrackPlan, "source" | "trackId"> {
+	position: number;
+}
+
+export interface RepairLayoutSourceTrack extends RepairSubtitleTrack {
+	position: number;
+	releaseGroup: string | null;
+}
+
+/** Sources of a batch that share the same subtitle tracks, so one plan fits them all. */
+export interface RepairSourceLayout {
+	signature: string;
+	label: string;
+	sourcePaths: string[];
+	tracks: RepairLayoutSourceTrack[];
+}
+
 export interface RepairPlan {
 	targetPath: string;
 	sourcePath?: string;

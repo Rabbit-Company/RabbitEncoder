@@ -593,6 +593,22 @@ export interface RepairBatchPairing {
 	unmatchedSources: string[];
 }
 
+export interface RepairLayoutTrackPlan extends Omit<RepairSubtitleTrackPlan, "source" | "trackId"> {
+	position: number;
+}
+
+export interface RepairLayoutSourceTrack extends RepairSubtitleTrack {
+	position: number;
+	releaseGroup: string | null;
+}
+
+export interface RepairSourceLayout {
+	signature: string;
+	label: string;
+	sourcePaths: string[];
+	tracks: RepairLayoutSourceTrack[];
+}
+
 export interface RepairPlan {
 	targetPath: string;
 	sourcePath?: string;

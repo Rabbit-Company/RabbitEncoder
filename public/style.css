@@ -4272,6 +4272,53 @@ a.btn {
 	color: var(--text-2);
 }
 
+.repair-batch-mode .repair-batch-save {
+	margin-right: 0;
+}
+
+.repair-batch-layouts {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.repair-layout {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	background: var(--bg-0);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+.repair-layout-files {
+	font-size: 0.7rem;
+	color: var(--text-2);
+}
+
+.repair-layout-files summary {
+	cursor: pointer;
+}
+
+.repair-layout-files div {
+	font-family: var(--font-mono);
+	font-size: 0.63rem;
+	margin-top: 2px;
+}
+
+.repair-layout-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.repair-layout-source {
+	flex: 1;
+	min-width: 0;
+}
+
 /* Settings forms: each setting is its own card, so sections read as separate without relying on spacing. */
 #advanced-modal .modal-body,
 .settings-section-body {

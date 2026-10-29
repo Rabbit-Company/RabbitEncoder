@@ -181,12 +181,16 @@ import {
 import {
 	closeRepairBatch,
 	closeRepairBatchIfOutside,
+	handleRepairBatchLayoutClick,
+	handleRepairBatchLayoutInput,
+	handleRepairBatchModeChange,
 	handleRepairBatchPairChange,
 	openRepairBatch,
 	pairRepairBatchFolders,
 	pickRepairBatchSourceFolder,
 	pickRepairBatchTargetFolder,
 	queueRepairBatch,
+	readRepairBatchLayouts,
 } from "../features/repair-batch";
 import {
 	closeRepairAudit,
@@ -233,6 +237,11 @@ export function initEventListeners() {
 	byId("repair-batch-pair-btn").addEventListener("click", pairRepairBatchFolders);
 	byId("repair-batch-pairs").addEventListener("change", handleRepairBatchPairChange);
 	byId("repair-batch-queue-btn").addEventListener("click", queueRepairBatch);
+	byId("repair-batch-mode").addEventListener("change", handleRepairBatchModeChange);
+	byId("repair-batch-layouts-btn").addEventListener("click", readRepairBatchLayouts);
+	byId("repair-batch-layouts").addEventListener("click", handleRepairBatchLayoutClick);
+	byId("repair-batch-layouts").addEventListener("input", handleRepairBatchLayoutInput);
+	byId("repair-batch-layouts").addEventListener("change", handleRepairBatchLayoutInput);
 	byId("repair-pick-target-btn").addEventListener("click", () => openRepairPicker("target"));
 	byId("repair-pick-source-btn").addEventListener("click", () => openRepairPicker("source"));
 	byId("repair-clear-source-btn").addEventListener("click", clearRepairSource);

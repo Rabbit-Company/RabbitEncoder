@@ -1992,6 +1992,18 @@
 						<div id="repair-batch-error" class="sub-preview-error" style="display: none"></div>
 						<div id="repair-batch-summary" class="repair-audit-summary"></div>
 						<div id="repair-batch-pairs" class="repair-batch-pairs"></div>
+						<div class="repair-path-actions repair-batch-mode">
+							<label class="repair-batch-save">
+								Subtitles
+								<select id="repair-batch-mode" class="select-input">
+									<option value="workflow">Run the subtitle workflow on every source</option>
+									<option value="layouts">Choose the tracks for each subtitle layout</option>
+								</select>
+							</label>
+							<button class="btn btn-ghost" id="repair-batch-layouts-btn" type="button" style="display: none">Read subtitle layouts</button>
+							<span id="repair-batch-mode-note"></span>
+						</div>
+						<div id="repair-batch-layouts" class="repair-batch-layouts" style="display: none"></div>
 					</div>
 					<div class="modal-footer">
 						<label class="repair-batch-save">
