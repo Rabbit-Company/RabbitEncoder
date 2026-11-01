@@ -16,6 +16,8 @@ import {
 	DENOISE_LEVELS,
 	PIPELINE_PRESETS,
 	PIPELINE_PRESET_HELP,
+	BOOSTERS,
+	ENCODERS,
 	QUALITIES,
 	SPEEDS,
 	SUBTITLE_FANSUB_TIEBREAK_OPTIONS,
@@ -205,11 +207,13 @@ export function updateDenoiseLevelHint(prefix: SettingsFormPrefix, settings: Job
  */
 export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSettings): void {
 	const el = (suffix: string): HTMLElement => byId(`${prefix}-${suffix}`);
+	// The booster controls depend on the encoder, which is picked above them.
+	let renderBoosterOnEncoderChange: (() => void) | undefined;
 
 	renderRadioPills(el("quality"), QUALITIES, settings.quality, (v) => (settings.quality = v));
 	renderRadioPills(el("speed"), SPEEDS, settings.finalSpeed, (v) => (settings.finalSpeed = v));
 
-	wireEncoderControls(prefix, settings);
+	wireEncoderControls(prefix, settings, () => renderBoosterOnEncoderChange?.());
 
 	renderRadioPills(el("denoise"), DENOISE_LEVELS, settings.denoise || "off", (v) => (settings.denoise = v));
 	updateDenoiseLevelHint(prefix, settings);
@@ -249,6 +253,40 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 	});
 	renderCropLimit(el("crop-limit"), settings.crop, settings.cropLimit ?? 0.1, (v) => (settings.cropLimit = v));
 	renderSkipBoostingToggle(el("skip-boosting"), settings.skipBoosting || false, (v) => (settings.skipBoosting = v));
+	const renderBooster = (): void => {
+		const encoder = ENCODERS[settings.encoder] ?? ENCODERS["svt-av1-essential"];
+		const rabbit = encoder.rabbitBoost && settings.booster === "rabbit-boost";
+		const boosting = encoder.usesAutoBoost || rabbit;
+		const group = (suffix: string) => el(suffix).closest<HTMLElement>(".setting-group")!;
+		group("booster").style.display = encoder.usesAutoBoost || encoder.rabbitBoost ? "" : "none";
+		group("skip-boosting").style.display = boosting ? "" : "none";
+		group("max-bitrate").style.display = boosting ? "" : "none";
+		el("boost-dark-group").style.display = rabbit ? "" : "none";
+		el("booster-hint").textContent = rabbit
+			? "Makes a quick test encode first, checks how good each scene looks, and gives weaker scenes more bits and easy ones fewer. Works like Auto-Boost-Essential, but judges scenes closer to how people see them."
+			: encoder.usesAutoBoost
+				? "Makes a quick test encode first, checks how good each scene looks, and gives weaker scenes more bits and easy ones fewer."
+				: "Encodes the whole video at the CRF and preset above. Rabbit Boost first adjusts the CRF scene by scene.";
+		renderRadioPills(
+			el("booster"),
+			BOOSTERS,
+			settings.booster ?? "auto-boost-essential",
+			(v) => {
+				settings.booster = v;
+				renderBooster();
+			},
+			(v) => (v === "rabbit-boost" ? "Rabbit Boost" : encoder.usesAutoBoost ? "Auto-Boost-Essential" : "Off"),
+		);
+	};
+	renderBooster();
+	renderBoosterOnEncoderChange = renderBooster;
+	renderLabeledToggle(el("boost-dark"), settings.boostDarkAware ?? true, "Protect dark scenes", (v) => (settings.boostDarkAware = v));
+	const maxBitrate = el("max-bitrate") as HTMLInputElement;
+	maxBitrate.value = String(settings.maxBitrateMbps ?? 0);
+	maxBitrate.oninput = () => {
+		const value = parseFloat(maxBitrate.value);
+		settings.maxBitrateMbps = Number.isFinite(value) && value > 0 ? Math.min(1000, value) : 0;
+	};
 	renderNoPhaseInvToggle(el("no-phase-inv"), settings.noPhaseInv || false, (v) => (settings.noPhaseInv = v));
 	renderDedupeSubtitlesToggle(el("dedupe-subtitles"), settings.dedupeSubtitles || false, (v) => (settings.dedupeSubtitles = v));
 	renderSubtitleLangDetectControl(el("sub-lang-detect"), settings.subtitleLangDetect ?? "enabled", (v) => (settings.subtitleLangDetect = v));

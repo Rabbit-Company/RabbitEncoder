@@ -1,10 +1,17 @@
 import type { EncoderId } from "../core/types";
+import { ESSENTIAL_BITRATE_MODEL, type BitrateModel } from "../boost/plan";
 
 export interface EncoderDef {
 	id: EncoderId;
 	label: string;
 	binary: string;
 	usesAutoBoost: boolean;
+	/** Applies a CRF per scene from a Zones config, so Rabbit Boost can drive it. */
+	rabbitBoost: boolean;
+	/** Has --quality and --speed. Others take --crf and --preset only. */
+	speedNames: boolean;
+	/** How Rabbit Boost estimates the final bitrate of a scene from its fast pass. */
+	bitrateModel?: BitrateModel;
 	defaultCrf: number;
 	defaultPreset: number;
 	crfMin: number;
@@ -19,6 +26,9 @@ export const ENCODERS: Record<EncoderId, EncoderDef> = {
 		label: "SVT-AV1-Essential",
 		binary: "SVT-AV1-Essential",
 		usesAutoBoost: true,
+		rabbitBoost: true,
+		speedNames: true,
+		bitrateModel: ESSENTIAL_BITRATE_MODEL,
 		defaultCrf: 28,
 		defaultPreset: 4,
 		crfMin: 1,
@@ -31,6 +41,8 @@ export const ENCODERS: Record<EncoderId, EncoderDef> = {
 		label: "SVT-AV1-HDR",
 		binary: "SVT-AV1-HDR",
 		usesAutoBoost: false,
+		rabbitBoost: false,
+		speedNames: false,
 		defaultCrf: 24,
 		defaultPreset: 4,
 		crfMin: 1,
@@ -43,6 +55,8 @@ export const ENCODERS: Record<EncoderId, EncoderDef> = {
 		label: "SVT-AV1-5FISH",
 		binary: "SVT-AV1-5FISH",
 		usesAutoBoost: false,
+		rabbitBoost: false,
+		speedNames: false,
 		defaultCrf: 24,
 		defaultPreset: 4,
 		crfMin: 1,
@@ -55,6 +69,10 @@ export const ENCODERS: Record<EncoderId, EncoderDef> = {
 		label: "SVT-AV1-Tritium",
 		binary: "SVT-AV1-Tritium",
 		usesAutoBoost: false,
+		rabbitBoost: true,
+		speedNames: false,
+		// Fitted on the same 69 scenes as Essential's, at preset 4. Its bitrate falls more slowly with CRF.
+		bitrateModel: { crfPerHalving: 16, efficiency: 0.85 },
 		defaultCrf: 24,
 		defaultPreset: 4,
 		crfMin: 1,

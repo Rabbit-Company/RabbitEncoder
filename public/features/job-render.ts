@@ -392,6 +392,11 @@ export function renderJobCard(job: Job): string {
 		meta += `<span>${rate}${job.settings.downscale ? ", ↓1080p" : ""}</span>`;
 	}
 	if (!isToolJob(job) && job.settings.skipBoosting) meta += `<span>No Boost</span>`;
+	const encoderDef = ENCODERS[job.settings.encoder];
+	const rabbitBoost = !!encoderDef?.rabbitBoost && job.settings.booster === "rabbit-boost";
+	if (!isToolJob(job) && rabbitBoost && !job.settings.skipBoosting) meta += `<span>Rabbit Boost</span>`;
+	if (!isToolJob(job) && (encoderDef?.usesAutoBoost || rabbitBoost) && (job.settings.maxBitrateMbps ?? 0) > 0)
+		meta += `<span>Max ${job.settings.maxBitrateMbps} Mb/s</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode === "off") meta += `<span>No AV1</span>`;
 	if (!isToolJob(job) && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
 	if (!isToolJob(job) && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;

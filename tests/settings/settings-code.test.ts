@@ -38,6 +38,43 @@ describe("settings code — Essential manual CRF and preset", () => {
 	});
 });
 
+describe("settings code — booster and bitrate cap", () => {
+	const base = getDefaultJobSettings();
+	const mk = (o: Partial<JobSettings>) => encodeSettingsCode({ ...base, ...o });
+
+	it("writes nothing for Auto-Boost-Essential without a cap, so older codes stay the same", () => {
+		expect(mk({})).toBe("RE1");
+		expect(mk({ boostDarkAware: false })).toBe("RE1");
+	});
+
+	it("round-trips Rabbit Boost, its dark-aware scoring and the cap", () => {
+		const code = mk({ booster: "rabbit-boost", boostDarkAware: false, maxBitrateMbps: 6.5 });
+		expect(code).toBe("RE1|c~bo=r,da=0,mb=6.5");
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.booster).toBe("rabbit-boost");
+		expect(decoded.boostDarkAware).toBe(false);
+		expect(decoded.maxBitrateMbps).toBe(6.5);
+	});
+
+	it("caps Auto-Boost-Essential too", () => {
+		expect(mk({ maxBitrateMbps: 10 })).toBe("RE1|c~mb=10");
+		expect(decodeSettingsCode("RE1|c~mb=10").booster).toBe("auto-boost-essential");
+	});
+
+	it("leaves them out for encoders that cannot apply zones", () => {
+		expect(mk({ encoder: "svt-av1-hdr", booster: "rabbit-boost", maxBitrateMbps: 10 })).toBe("RE1|c~en=svt-av1-hdr");
+		expect(mk({ encoder: "svt-av1-5fish", booster: "rabbit-boost", skipBoosting: true })).toBe("RE1|c~en=svt-av1-5fish");
+	});
+
+	it("writes them for Tritium only when Rabbit Boost drives it", () => {
+		const tritium = { encoder: "svt-av1-tritium" as const, manualCrf: 30 };
+		expect(mk({ ...tritium, maxBitrateMbps: 8 })).toBe("RE1|c~en=svt-av1-tritium,cr=30");
+		const code = mk({ ...tritium, booster: "rabbit-boost", maxBitrateMbps: 8, skipBoosting: true });
+		expect(code).toBe("RE1|c~en=svt-av1-tritium,cr=30,sb=1,bo=r,mb=8");
+		expect(decodeSettingsCode(code)).toMatchObject({ encoder: "svt-av1-tritium", booster: "rabbit-boost", maxBitrateMbps: 8, skipBoosting: true });
+	});
+});
+
 describe("settings code — font/style not carried (RE1 compat)", () => {
 	it("never emits font/style/group fields", () => {
 		const s: JobSettings = { ...getDefaultJobSettings(), fontGroup: "Anime old", convertSrtToAss: true };

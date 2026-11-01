@@ -1,6 +1,7 @@
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
 export type EncoderQuality = "lower" | "low" | "medium" | "high" | "higher";
 export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
+export type Booster = "auto-boost-essential" | "rabbit-boost";
 export type DenoiseLevel = "off" | "light" | "medium" | "heavy" | "auto";
 export type DebandLevel = "off" | "light" | "medium" | "heavy";
 
@@ -255,6 +256,12 @@ export interface JobSettings {
 	/** Measure HDR10+ metadata and write it into AV1 encodes of PQ sources, with the scenes of a Dolby Vision source. */
 	hdr10Plus?: boolean;
 	skipBoosting: boolean;
+	/** Which tool sets a CRF per scene for SVT-AV1-Essential. */
+	booster: Booster;
+	/** Rabbit Boost also scores each sampled frame with dark areas brightened, and keeps the lower score. */
+	boostDarkAware: boolean;
+	/** Highest video bitrate in Mb/s, 0 for none. Rabbit Boost raises the CRF of scenes over it, and both boosters pass it as --mbr. */
+	maxBitrateMbps: number;
 	noPhaseInv: boolean;
 	dedupeSubtitles: boolean;
 	keepBestAudioChannelsOnly: boolean;

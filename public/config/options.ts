@@ -6,6 +6,7 @@ import type {
 	AvdEngine,
 	AvdParams,
 	AvdPreset,
+	Booster,
 	CropMode,
 	DebandLevel,
 	DenoiseBackend,
@@ -22,11 +23,22 @@ import type { PipelinePreset } from "../ui/models";
 
 export const ENCODERS: Record<
 	EncoderId,
-	{ label: string; usesAutoBoost: boolean; crfMin: number; crfMax: number; presetMin: number; presetMax: number; defaultCrf: number; defaultPreset: number }
+	{
+		label: string;
+		usesAutoBoost: boolean;
+		rabbitBoost: boolean;
+		crfMin: number;
+		crfMax: number;
+		presetMin: number;
+		presetMax: number;
+		defaultCrf: number;
+		defaultPreset: number;
+	}
 > = {
 	"svt-av1-essential": {
 		label: "SVT-AV1-Essential",
 		usesAutoBoost: true,
+		rabbitBoost: true,
 		crfMin: 1,
 		crfMax: 70,
 		presetMin: -1,
@@ -34,9 +46,39 @@ export const ENCODERS: Record<
 		defaultCrf: 28,
 		defaultPreset: 4,
 	},
-	"svt-av1-hdr": { label: "SVT-AV1-HDR", usesAutoBoost: false, crfMin: 1, crfMax: 70, presetMin: -1, presetMax: 13, defaultCrf: 24, defaultPreset: 4 },
-	"svt-av1-5fish": { label: "SVT-AV1-5FISH", usesAutoBoost: false, crfMin: 1, crfMax: 70, presetMin: -1, presetMax: 13, defaultCrf: 24, defaultPreset: 4 },
-	"svt-av1-tritium": { label: "SVT-AV1-Tritium", usesAutoBoost: false, crfMin: 1, crfMax: 70, presetMin: -1, presetMax: 13, defaultCrf: 24, defaultPreset: 4 },
+	"svt-av1-hdr": {
+		label: "SVT-AV1-HDR",
+		usesAutoBoost: false,
+		rabbitBoost: false,
+		crfMin: 1,
+		crfMax: 70,
+		presetMin: -1,
+		presetMax: 13,
+		defaultCrf: 24,
+		defaultPreset: 4,
+	},
+	"svt-av1-5fish": {
+		label: "SVT-AV1-5FISH",
+		usesAutoBoost: false,
+		rabbitBoost: false,
+		crfMin: 1,
+		crfMax: 70,
+		presetMin: -1,
+		presetMax: 13,
+		defaultCrf: 24,
+		defaultPreset: 4,
+	},
+	"svt-av1-tritium": {
+		label: "SVT-AV1-Tritium",
+		usesAutoBoost: false,
+		rabbitBoost: true,
+		crfMin: 1,
+		crfMax: 70,
+		presetMin: -1,
+		presetMax: 13,
+		defaultCrf: 24,
+		defaultPreset: 4,
+	},
 };
 export const ENCODER_IDS = Object.keys(ENCODERS) as EncoderId[];
 export const ENCODER_HELP: Record<EncoderId, string> = {
@@ -52,6 +94,7 @@ export const DENOISE_LEVELS: readonly DenoiseLevel[] = ["off", "auto", "light", 
 export const DEBAND_LEVELS: readonly DebandLevel[] = ["off", "light", "medium", "heavy"];
 export const PARAM_LEVELS = ["light", "medium", "heavy"] as const;
 export const CROP_OPTIONS: readonly CropMode[] = ["off", "auto"];
+export const BOOSTERS: readonly Booster[] = ["auto-boost-essential", "rabbit-boost"];
 
 export const DENOISE_BACKENDS: readonly DenoiseBackend[] = ["cpu", "auto", "vulkan", "opencl"];
 

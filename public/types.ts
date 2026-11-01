@@ -191,6 +191,12 @@ export interface JobSettings {
 	downscale: boolean;
 	hdr10Plus?: boolean;
 	skipBoosting: boolean;
+	/** Which tool sets a CRF per scene for SVT-AV1-Essential. */
+	booster: Booster;
+	/** Rabbit Boost also scores each sampled frame with dark areas brightened, and keeps the lower score. */
+	boostDarkAware: boolean;
+	/** Highest video bitrate in Mb/s, 0 for none. Rabbit Boost raises the CRF of scenes over it, and both boosters pass it as --mbr. */
+	maxBitrateMbps: number;
 	noPhaseInv: boolean;
 	dedupeSubtitles: boolean;
 	keepBestAudioChannelsOnly: boolean;
@@ -1177,3 +1183,5 @@ export interface VersionsReport {
 	cpuLevel: string | null;
 	tools: ToolVersion[];
 }
+
+export type Booster = "auto-boost-essential" | "rabbit-boost";

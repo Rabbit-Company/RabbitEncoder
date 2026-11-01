@@ -86,6 +86,7 @@ import {
 	runRegrain,
 } from "../video/film-grain-generator";
 import type { FilmGrainCrop } from "../video/film-grain-crop";
+import { runRabbitBoost, type BoostStage } from "../boost/rabbit-boost";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
 import {
 	applyArgs as hdr10PlusApplyArgs,
@@ -1157,13 +1158,62 @@ export async function encodeJob(
 						probe.duration,
 				);
 
-				if (enc.usesAutoBoost) {
+				const maxKbps = Math.max(0, Math.round((job.settings.maxBitrateMbps ?? 0) * 1000));
+
+				if (enc.rabbitBoost && job.settings.booster === "rabbit-boost") {
+					const totalFrames = Math.max(1, Math.round(probe.duration * probe.videoStreamFps));
+					const boostSteps: Record<BoostStage, number> = { fast: S_FAST, scenes: S_SCENES, metrics: S_METRICS, zones: S_ZONES, final: S_FINAL };
+					mkdirSync(join(tempDir, "abe_temp"), { recursive: true });
+					const result = await runRabbitBoost({
+						binary: enc.binary,
+						input: preparedVideo,
+						output: inProgressIvf,
+						workDir: join(tempDir, "rabbit_boost"),
+						quality: job.settings.quality,
+						manual: !enc.speedNames || job.settings.manualQuality ? { crf: job.settings.manualCrf, preset: job.settings.manualPreset } : undefined,
+						speedNames: enc.speedNames,
+						bitrateModel: enc.bitrateModel,
+						finalSpeed: job.settings.finalSpeed,
+						colorParams: svtColorParamsFromProbe(probe).split(/\s+/).filter(Boolean),
+						customParams: (job.settings.customEncoderParams ?? "").trim().split(/\s+/).filter(Boolean),
+						dark: job.settings.boostDarkAware ?? true,
+						maxKbps,
+						skipBoosting: job.settings.skipBoosting,
+						expectedFrames: totalFrames,
+						signal: stageSignal,
+						onStage: (stage, status, detail) => {
+							const si = boostSteps[stage];
+							if (status === "active") setStep(si, { status: "active", progress: 0, detail });
+							else setStep(si, { status: "done", progress: 100, detail: detail ?? steps[si]!.detail });
+						},
+						onProgress: (stage, done, total) => {
+							const si = boostSteps[stage];
+							let estVideo: string | undefined;
+							let estTotal: string | undefined;
+							if (stage === "final" && done / total >= 0.02) {
+								try {
+									const estVideoBytes = statSync(inProgressIvf).size / (done / total);
+									estVideo = humanSize(estVideoBytes);
+									estTotal = humanSize(estVideoBytes + estimatedAudioBytes + 2 * 1024 * 1024);
+									updateJob({ estimatedVideoSize: estVideo, estimatedFinalSize: estTotal });
+								} catch {}
+							}
+							setStep(si, { progress: pct2(done, total), detail: fmtFramesWithFps(done, total, steps[si]!.startedAt, estVideo, estTotal) });
+						},
+					});
+					checkCancelled();
+					Logger.info(`[boost] Rabbit Boost: ${result.summary}`);
+					if (job.settings.skipBoosting) {
+						for (const si of [S_FAST, S_METRICS, S_SCENES, S_ZONES]) setStep(si, { status: "done", progress: 100, detail: "Skipped" });
+					}
+					if (existsSync(inProgressIvf)) renameSync(inProgressIvf, ivfFile);
+				} else if (enc.usesAutoBoost) {
 					const colorParams = svtColorParamsFromProbe(probe);
 					const custom = job.settings.customEncoderParams?.trim() ?? "";
 					// ABE takes the base CRF from --crf in the fast params and the preset from --preset in the final params
 					const manual = job.settings.manualQuality;
 					const fastParams = manual ? `${colorParams} --crf ${job.settings.manualCrf}` : colorParams;
-					const finalParams = `${fastParams}${manual ? ` --preset ${job.settings.manualPreset}` : ""}${custom ? ` ${custom}` : ""}`;
+					const finalParams = `${fastParams}${manual ? ` --preset ${job.settings.manualPreset}` : ""}${custom ? ` ${custom}` : ""}${maxKbps > 0 ? ` --mbr ${maxKbps}` : ""}`;
 
 					const abeArgs = [
 						"python3",

@@ -332,6 +332,29 @@
 											<label>Boosting</label>
 											<div class="toggle-group" id="default-skip-boosting"></div>
 										</div>
+										<div class="setting-group">
+											<label>Booster</label>
+											<div class="radio-group" id="default-booster"></div>
+											<div class="lang-filter-hint" id="default-booster-hint"></div>
+										</div>
+										<div class="setting-group" id="default-boost-dark-group">
+											<label>Dark scenes</label>
+											<div class="toggle-group" id="default-boost-dark"></div>
+											<div class="lang-filter-hint">
+												Gives dark scenes more bits, so shadows and night scenes do not break into flat blocky patches. Files of dark shows get somewhat larger.
+											</div>
+										</div>
+										<div class="setting-group">
+											<label>Max bitrate</label>
+											<div class="slider-row">
+												<input type="number" id="default-max-bitrate" min="0" max="1000" step="0.5" class="num-input" />
+												<span>Mb/s, 0 for no limit</span>
+											</div>
+											<div class="lang-filter-hint">
+												Caps noisy scenes that are not worth the bits. Rabbit Boost gives scenes over it a higher CRF, and both boosters keep peaks under it
+												with --mbr.
+											</div>
+										</div>
 									</div>
 								</div>
 								<div class="setting-group">
@@ -682,6 +705,29 @@
 										<div class="setting-group">
 											<label>Boosting</label>
 											<div class="toggle-group" id="job-skip-boosting"></div>
+										</div>
+										<div class="setting-group">
+											<label>Booster</label>
+											<div class="radio-group" id="job-booster"></div>
+											<div class="lang-filter-hint" id="job-booster-hint"></div>
+										</div>
+										<div class="setting-group" id="job-boost-dark-group">
+											<label>Dark scenes</label>
+											<div class="toggle-group" id="job-boost-dark"></div>
+											<div class="lang-filter-hint">
+												Gives dark scenes more bits, so shadows and night scenes do not break into flat blocky patches. Files of dark shows get somewhat larger.
+											</div>
+										</div>
+										<div class="setting-group">
+											<label>Max bitrate</label>
+											<div class="slider-row">
+												<input type="number" id="job-max-bitrate" min="0" max="1000" step="0.5" class="num-input" />
+												<span>Mb/s, 0 for no limit</span>
+											</div>
+											<div class="lang-filter-hint">
+												Caps noisy scenes that are not worth the bits. Rabbit Boost gives scenes over it a higher CRF, and both boosters keep peaks under it
+												with --mbr.
+											</div>
 										</div>
 									</div>
 								</div>

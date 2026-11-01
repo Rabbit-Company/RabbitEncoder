@@ -19,6 +19,7 @@ import type {
 	SubtitleFormatPriority,
 	AudioCodecPriority,
 	CropMode,
+	Booster,
 	DenoiseEngine,
 	AvdEngine,
 	AvdPreset,
@@ -79,6 +80,9 @@ const BASELINE: JobSettings = {
 	downscale: false,
 	hdr10Plus: true,
 	skipBoosting: false,
+	booster: "auto-boost-essential",
+	boostDarkAware: true,
+	maxBitrateMbps: 0,
 	noPhaseInv: false,
 	dedupeSubtitles: false,
 	keepBestAudioChannelsOnly: false,
@@ -173,6 +177,8 @@ const SPEED_TO_CODE: Record<EncoderSpeed, string> = { slower: "sr", slow: "s", m
 const DENOISE_TO_CODE: Record<DenoiseLevel, string> = { off: "o", light: "l", medium: "m", heavy: "h", auto: "a" };
 const DEBAND_TO_CODE: Record<DebandLevel, string> = { off: "o", light: "l", medium: "m", heavy: "h" };
 const CROP_TO_CODE: Record<CropMode, string> = { off: "o", auto: "a" };
+const BOOSTER_TO_CODE: Record<Booster, string> = { "auto-boost-essential": "abe", "rabbit-boost": "r" };
+const CODE_TO_BOOSTER = reverse(BOOSTER_TO_CODE);
 
 function reverse<T extends string>(map: Record<T, string>): Record<string, T> {
 	const out: Record<string, T> = {};
@@ -319,7 +325,13 @@ export function encodeSettingsCode(s: JobSettings): string {
 	if (s.crop !== BASELINE.crop) core.put("crp", CROP_TO_CODE[s.crop] ?? CROP_TO_CODE.off);
 	if (s.cropLimit !== BASELINE.cropLimit) core.put("cl", s.cropLimit);
 	if (s.downscale !== BASELINE.downscale) core.put("ds", s.downscale);
-	if (autoBoost && s.skipBoosting !== BASELINE.skipBoosting) core.put("sb", s.skipBoosting);
+	// Auto-Boost-Essential runs on Essential only. Rabbit Boost on every encoder that applies zones.
+	const rabbit = getEncoder(s.encoder).rabbitBoost && s.booster === "rabbit-boost";
+	const boosting = autoBoost || rabbit;
+	if (boosting && s.skipBoosting !== BASELINE.skipBoosting) core.put("sb", s.skipBoosting);
+	if (rabbit) core.put("bo", BOOSTER_TO_CODE[s.booster]);
+	if (rabbit && (s.boostDarkAware ?? true) !== BASELINE.boostDarkAware) core.put("da", !!s.boostDarkAware);
+	if (boosting && (s.maxBitrateMbps ?? 0) > 0) core.put("mb", s.maxBitrateMbps);
 	if (s.noPhaseInv !== BASELINE.noPhaseInv) core.put("np", s.noPhaseInv);
 	if (s.dedupeSubtitles !== BASELINE.dedupeSubtitles) core.put("dd", s.dedupeSubtitles);
 	if (s.keepBestAudioChannelsOnly !== BASELINE.keepBestAudioChannelsOnly) core.put("kc", s.keepBestAudioChannelsOnly);
@@ -665,6 +677,9 @@ function applyCore(out: JobSettings, kv: Record<string, string>): void {
 	if (kv.cl !== undefined) out.cropLimit = parseFloat(kv.cl) || out.cropLimit;
 	if (kv.ds !== undefined) out.downscale = kv.ds === "1";
 	if (kv.sb !== undefined) out.skipBoosting = kv.sb === "1";
+	if (kv.bo && CODE_TO_BOOSTER[kv.bo]) out.booster = CODE_TO_BOOSTER[kv.bo]!;
+	if (kv.da !== undefined) out.boostDarkAware = kv.da === "1";
+	if (kv.mb !== undefined) out.maxBitrateMbps = Math.max(0, numOr(kv.mb, out.maxBitrateMbps));
 	if (kv.np !== undefined) out.noPhaseInv = kv.np === "1";
 	if (kv.dd !== undefined) out.dedupeSubtitles = kv.dd === "1";
 	if (kv.kc !== undefined) out.keepBestAudioChannelsOnly = kv.kc === "1";

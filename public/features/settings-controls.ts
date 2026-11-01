@@ -8,7 +8,7 @@ import { errorMessage } from "../shared/errors";
 
 const SUBTITLE_TARGET_TYPES = ["full", "honorifics", "forced", "sdh", "commentary"] as const;
 
-export function wireEncoderControls(prefix: "default" | "job", settings: JobSettings): void {
+export function wireEncoderControls(prefix: "default" | "job", settings: JobSettings, onEncoderChange?: () => void): void {
 	const id = (s: string) => byId(`${prefix}-${s}`) as HTMLElement;
 
 	const applyVisibility = () => {
@@ -18,10 +18,6 @@ export function wireEncoderControls(prefix: "default" | "job", settings: JobSett
 		id("quality-mode-group").style.display = direct ? "none" : "";
 		id("abe-controls").style.display = manual ? "none" : "";
 		id("manual-controls").style.display = manual ? "" : "none";
-		// skip-boosting is an ABE concept - hide it for direct encoders if present
-		const sb = byId(`${prefix}-skip-boosting`);
-		const sbGroup = sb.closest<HTMLElement>(".setting-group");
-		if (sbGroup) sbGroup.style.display = direct ? "none" : "";
 	};
 
 	renderRadioPills(
@@ -53,6 +49,7 @@ export function wireEncoderControls(prefix: "default" | "job", settings: JobSett
 			if (settings.manualPreset == null) settings.manualPreset = ENCODERS[eid].defaultPreset;
 			syncManual();
 			applyVisibility();
+			onEncoderChange?.();
 		};
 		encEl.appendChild(pill);
 	});
