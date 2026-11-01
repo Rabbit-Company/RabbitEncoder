@@ -201,6 +201,20 @@ import {
 	readRepairBatchLayouts,
 } from "../features/repair-batch";
 import {
+	addReleaseSubsSourceFolder,
+	closeReleaseSubs,
+	closeReleaseSubsIfOutside,
+	handleReleaseSubsGridChange,
+	handleReleaseSubsGridClick,
+	handleReleaseSubsOptionChange,
+	handleReleaseSubsSourcesClick,
+	handleReleaseSubsSourcesInput,
+	openReleaseSubs,
+	pickReleaseSubsTargetFolder,
+	queueReleaseSubs,
+	scanReleaseSubs,
+} from "../features/release-subs";
+import {
 	closeRepairAudit,
 	closeRepairAuditIfOutside,
 	handleRepairAuditClick,
@@ -240,6 +254,20 @@ export function initEventListeners() {
 	byId("repair-inspect-btn").addEventListener("click", () => inspectRepairPaths());
 	byId("repair-queue-btn").addEventListener("click", queueRepair);
 	byId("repair-replace-btn").addEventListener("click", replaceSubtitlesFromSource);
+	byId("open-release-subs-btn").addEventListener("click", openReleaseSubs);
+	byId("close-release-subs-btn").addEventListener("click", closeReleaseSubs);
+	byId("release-subs-cancel-btn").addEventListener("click", closeReleaseSubs);
+	byId("release-subs-modal").addEventListener("click", closeReleaseSubsIfOutside);
+	byId("release-subs-pick-target-btn").addEventListener("click", pickReleaseSubsTargetFolder);
+	byId("release-subs-add-source-btn").addEventListener("click", addReleaseSubsSourceFolder);
+	byId("release-subs-sources").addEventListener("click", handleReleaseSubsSourcesClick);
+	byId("release-subs-sources").addEventListener("input", handleReleaseSubsSourcesInput);
+	byId("release-subs-preferred").addEventListener("input", handleReleaseSubsOptionChange);
+	byId("release-subs-replace").addEventListener("change", handleReleaseSubsOptionChange);
+	byId("release-subs-scan-btn").addEventListener("click", scanReleaseSubs);
+	byId("release-subs-grid").addEventListener("change", handleReleaseSubsGridChange);
+	byId("release-subs-grid").addEventListener("click", handleReleaseSubsGridClick);
+	byId("release-subs-queue-btn").addEventListener("click", queueReleaseSubs);
 	byId("open-repair-batch-btn").addEventListener("click", openRepairBatch);
 	byId("close-repair-batch-btn").addEventListener("click", closeRepairBatch);
 	byId("repair-batch-cancel-btn").addEventListener("click", closeRepairBatch);

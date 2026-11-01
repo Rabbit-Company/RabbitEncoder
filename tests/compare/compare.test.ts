@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-	bestLag,
 	comparisonFileName,
 	measureBlocker,
 	measurementCsv,
@@ -14,40 +13,6 @@ import {
 } from "../../src/compare/compare";
 import { parseVmafLog, summarize } from "../../src/compare/metrics";
 import { buildZip } from "../../src/core/zip";
-
-/** Envelope-like noise with a fixed seed, so the test is repeatable. */
-function envelope(length: number, seed = 1): Float32Array {
-	let x = seed >>> 0;
-	const out = new Float32Array(length);
-	for (let i = 0; i < length; i++) {
-		x = (x + 0x6d2b79f5) >>> 0;
-		let t = Math.imul(x ^ (x >>> 15), x | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		out[i] = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	}
-	return out;
-}
-
-describe("bestLag", () => {
-	it("finds a release that starts later", () => {
-		const a = envelope(30000);
-		const b = a.slice(730); // 7.3 s missing from the start
-		expect(bestLag(a, b)).toMatchObject({ lag: -730 });
-		expect(bestLag(a, b).score).toBeGreaterThan(0.99);
-	});
-
-	it("finds a release with extra footage at the start", () => {
-		const a = envelope(30000);
-		const b = new Float32Array(a.length + 1234);
-		b.set(envelope(1234, 7), 0);
-		b.set(a, 1234);
-		expect(bestLag(a, b).lag).toBe(1234);
-	});
-
-	it("reports a low score for unrelated audio", () => {
-		expect(bestLag(envelope(20000, 1), envelope(20000, 99)).score).toBeLessThan(0.35);
-	});
-});
 
 describe("planFrameTimes", () => {
 	it("spreads frames over the covered stretch without its first and last 5%", () => {

@@ -690,6 +690,8 @@ export interface RepairSubtitleTrackPlan {
 	isHearingImpaired: boolean;
 	isOriginal: boolean;
 	isCommentary: boolean;
+	/** With source "source": which source, 0 for `sourcePath` and 1 on for `extraSources`. */
+	sourceIndex?: number;
 }
 
 export interface RepairPairSuggestion {
@@ -697,7 +699,9 @@ export interface RepairPairSuggestion {
 	targetName: string;
 	sourcePath: string;
 	sourceName: string;
-	method: "episode" | "order" | "none";
+	method: "episode" | "absolute" | "order" | "none";
+	/** With method "absolute": the source's number less the target's episode. */
+	offset?: number;
 }
 
 export interface RepairBatchPairing {
@@ -730,7 +734,17 @@ export interface RepairPlan {
 	sourcePath?: string;
 	replaceTarget: boolean;
 	replaceFromSource?: boolean;
+	/** The source is another release, so its subtitles are retimed to the target by their audio. */
+	alignSource?: boolean;
+	/** More releases to take tracks from after `sourcePath`, which tracks name by `sourceIndex`. */
+	extraSources?: RepairSource[];
 	tracks: RepairSubtitleTrackPlan[];
+}
+
+export interface RepairSource {
+	path: string;
+	/** Another release, so its subtitles are retimed to the target by their audio. */
+	alignSource?: boolean;
 }
 
 export interface RepairSubtitleTrack {

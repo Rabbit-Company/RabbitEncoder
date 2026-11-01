@@ -2474,6 +2474,13 @@ a.btn {
 	grid-template-columns: minmax(0, 1fr) minmax(90px, 140px);
 }
 
+.repair-source-timing {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
 .repair-save-mode,
 .repair-audit-save-mode {
 	display: flex;
@@ -5162,4 +5169,156 @@ a.btn {
 
 .repair-file-option {
 	margin-top: 4px;
+}
+
+/* Copy subtitles from releases: episode by language grid */
+.release-subs-modal {
+	width: min(1500px, calc(100vw - 32px));
+}
+
+.release-subs-sources {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.release-subs-source {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.release-subs-source .repair-file-selection {
+	flex: 1;
+	min-width: 0;
+}
+
+.release-subs-options {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px 20px;
+}
+
+.release-subs-preferred {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.release-subs-preferred input {
+	width: 180px;
+}
+
+.release-subs-grid {
+	max-height: 56vh;
+	overflow: auto;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+.release-grid {
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: 0.78rem;
+}
+
+.release-grid th,
+.release-grid td {
+	padding: 5px 8px;
+	border-bottom: 1px solid var(--border-subtle);
+	vertical-align: top;
+}
+
+.release-grid thead th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--bg-2);
+	font-weight: 500;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.release-grid .release-row-head {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	background: var(--bg-2);
+	min-width: 260px;
+	max-width: 340px;
+	text-align: left;
+	font-weight: 400;
+}
+
+.release-grid thead .release-row-head {
+	z-index: 3;
+}
+
+.release-col.is-excluded {
+	color: var(--text-2);
+}
+
+.release-row-source {
+	color: var(--text-2);
+	font-size: 0.7rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.release-row-head .btn {
+	margin-top: 4px;
+}
+
+.release-check {
+	font-size: 0.7rem;
+	margin-top: 3px;
+	overflow-wrap: anywhere;
+}
+
+.release-check.is-matched {
+	color: var(--green);
+}
+
+.release-cell {
+	min-width: 130px;
+	text-align: center;
+}
+
+.release-cell-select {
+	width: 100%;
+	font-size: 0.74rem;
+}
+
+.release-cell.is-have {
+	color: var(--green);
+}
+
+.release-cell.is-missing {
+	color: var(--text-2);
+}
+
+.release-cell.is-add {
+	background: var(--accent-glow);
+}
+
+.release-cell.is-replace {
+	background: var(--amber-dim);
+}
+
+.release-cell.is-skip .release-cell-select {
+	color: var(--text-2);
+}
+
+.release-subs-offset {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-2);
+	font-size: 0.75rem;
+}
+
+.release-subs-offset input {
+	width: 72px;
 }

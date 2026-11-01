@@ -18,6 +18,8 @@ import type {
 	RepairFolderAudit,
 	RepairAuditGroupEdit,
 	RepairAuditLanguageRemoval,
+	ReleaseCheck,
+	ReleaseScan,
 	RepairBatchPairing,
 	RepairInspection,
 	RepairLayoutTrackPlan,
@@ -232,6 +234,48 @@ export async function fetchRepairBatchSuggestion(pair: { targetPath: string; sou
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not build Rabbit's suggestion");
 	return data.tracks;
+}
+
+export async function fetchReleaseScan(options: {
+	targetDir: string;
+	sourceDirs: Array<{ path: string; offset?: number }>;
+	preferredSources: string[];
+	replaceWorse: boolean;
+}): Promise<ReleaseScan> {
+	const response = await authFetch(`${API}/api/release-subs/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the releases");
+	return data;
+}
+
+export async function fetchReleaseCheck(options: { targetPath: string; sourcePaths: string[] }): Promise<ReleaseCheck[]> {
+	const response = await authFetch(`${API}/api/release-subs/check`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not compare the audio");
+	return data.results;
+}
+
+export async function createReleaseSubtitleJobs(options: {
+	rows: { targetPath: string; sourcePaths: string[]; choices: Record<string, { sourcePath: string; trackId: number } | null> }[];
+	replaceTarget: boolean;
+	preferredSources: string[];
+}): Promise<{ jobIds: string[]; unchanged: number }> {
+	const response = await authFetch(`${API}/api/release-subs/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle jobs");
+	return data;
 }
 
 export async function createRepairBatchJobs(options: {

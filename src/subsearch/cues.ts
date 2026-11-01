@@ -86,6 +86,50 @@ export function mapCue<T extends Interval>(cue: T, map: TimeMap): T {
 	return { ...cue, startMs: Math.round(cue.startMs * map.scale + offset), endMs: Math.round(cue.endMs * map.scale + offset) };
 }
 
+/**
+ * Maps a cue through a map whose pieces are real cuts, as found between two
+ * releases, and `removed`, the sorted parts of the source the target lacks.
+ * A cue inside a removed part is dropped and one reaching into it is cut to
+ * the rest. A cue running across a cut ends by its own piece, so it closes
+ * the gap a removed part leaves. Where the target has footage the source
+ * lacks, the cue ends where that footage starts, not after it. Returns null
+ * for a cue with nothing left.
+ */
+export function mapCueAcrossCuts<T extends Interval>(cue: T, map: TimeMap, removed: Interval[] = []): T | null {
+	// Zero-length lines, such as comments, keep their length unless they fall in a removed part.
+	if (cue.endMs <= cue.startMs) {
+		if (removed.some((r) => cue.startMs >= r.startMs && cue.startMs < r.endMs)) return null;
+		return mapCue(cue, map);
+	}
+	let start = cue.startMs;
+	let end = cue.endMs;
+	for (const r of removed) {
+		if (start >= r.startMs && start < r.endMs) start = r.endMs;
+		if (end > r.startMs && end <= r.endMs) end = r.startMs;
+	}
+	if (end <= start) return null;
+	let offset = offsetAt(map, start);
+	for (const piece of map.pieces) {
+		if (piece.fromMs <= start) continue;
+		if (piece.fromMs > end) break;
+		if (piece.offsetMs > offset) {
+			end = piece.fromMs;
+			break;
+		}
+		offset = piece.offsetMs;
+	}
+	const mappedStart = Math.round(start * map.scale + offsetAt(map, start));
+	const mappedEnd = Math.round(end * map.scale + offset);
+	return mappedEnd > mappedStart ? { ...cue, startMs: mappedStart, endMs: mappedEnd } : null;
+}
+
+export interface RetimeOptions {
+	/** The map's pieces are real cuts, so cues are mapped with `mapCueAcrossCuts`. */
+	acrossCuts?: boolean;
+	/** With `acrossCuts`, parts of the source the target lacks. */
+	removed?: Interval[];
+}
+
 function pad(n: number, width = 2): string {
 	return String(n).padStart(width, "0");
 }
@@ -115,13 +159,19 @@ function parseAssTime(tc: string): number | null {
  * length, cues after it are dropped and cues running past it are cut, so the
  * track never makes the file longer than its video.
  */
-export function retimeDocument(doc: SubDocument, map: TimeMap, endMs?: number): SubDocument {
+export function retimeDocument(doc: SubDocument, map: TimeMap, endMs?: number, options: RetimeOptions = {}): SubDocument {
 	const limit = endMs && endMs > 0 ? endMs : Infinity;
-	const clip = <T extends Interval>(cue: T): T => ({ ...cue, endMs: Math.min(cue.endMs, limit) });
+	const removed = options.acrossCuts ? mergeIntervals(options.removed ?? []) : [];
+	const retime = <T extends Interval>(cue: T): T | null => {
+		const mapped = options.acrossCuts ? mapCueAcrossCuts(cue, map, removed) : mapCue(cue, map);
+		if (!mapped) return null;
+		mapped.endMs = Math.min(mapped.endMs, limit);
+		return mapped.endMs > 0 && mapped.startMs < limit ? mapped : null;
+	};
 	if (doc.format === "srt") {
 		const cues = parseSrt(doc.content)
-			.map((cue) => clip(mapCue(cue, map)))
-			.filter((cue) => cue.endMs > 0 && cue.startMs < limit)
+			.map(retime)
+			.filter((cue) => cue !== null)
 			.sort((a, b) => a.startMs - b.startMs);
 		const out = cues.map((cue, i) => `${i + 1}\n${srtTime(cue.startMs)} --> ${srtTime(cue.endMs)}\n${cue.text}\n`);
 		return { format: "srt", content: out.join("\n") };
@@ -136,8 +186,8 @@ export function retimeDocument(doc: SubDocument, map: TimeMap, endMs?: number): 
 			out.push(line);
 			continue;
 		}
-		const mapped = clip(mapCue({ startMs: start, endMs: end }, map));
-		if (mapped.endMs <= 0 || mapped.startMs >= limit) continue;
+		const mapped = retime({ startMs: start, endMs: end });
+		if (!mapped) continue;
 		out.push(`${m[1]}${assTime(mapped.startMs)},${assTime(mapped.endMs)},${line.slice(m[0].length)}`);
 	}
 	return { format: "ass", content: out.join("\n") };

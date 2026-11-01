@@ -4,8 +4,7 @@ import { Logger } from "../core/logger";
 import { run } from "../core/process";
 import type { JobSettings } from "../core/types";
 import { FONT_EXTS, fontRegistry, listMkvAttachments, scanFontNames, type ResolvedFace } from "../fonts/fonts";
-import { createFaceMaterializer, type FaceMaterializer } from "../fonts/inject";
-import { fontAttachmentFileName } from "../fonts/font-instance";
+import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
 import { normalizeFontName } from "./ass-classifier";
 import { restyleAssDialogueFont } from "./ass-style";
 import { zlibWorthIt } from "./zlib-probe";
@@ -53,11 +52,6 @@ export interface FontReservations {
 	attachedFiles: Set<string>;
 }
 
-/** Family without the " 2" Rabbit adds when the plain name was taken. */
-function baseFamily(family: string): string {
-	return family.replace(/ \d+$/, "");
-}
-
 /**
  * Font names a remux must not reuse, as the file keeps all its attachments.
  * A face Rabbit attached in an earlier pass is recognised by its file name,
@@ -71,7 +65,6 @@ export async function remuxFontReservations(mkvPath: string, settings: JobSettin
 	for (const a of fonts) attachedFiles.add(a.fileName.toLowerCase());
 	if (!fonts.length) return { occupied, attachedFiles };
 
-	const groupFamilies = new Set((fontRegistry.findFamily(settings.fontGroup)?.faces ?? []).map((f) => normalizeFontName(f.family)));
 	const outById = new Map(fonts.map((a) => [a.id, join(tempDir, `remux_font_${a.id}${extname(a.fileName).toLowerCase()}`)]));
 	const extracted = await run(["mkvextract", mkvPath, "attachments", ...fonts.map((a) => `${a.id}:${outById.get(a.id)}`)], { signal });
 	if (extracted.code !== 0) Logger.warn(`[fonts] Could not read the fonts attached to ${basename(mkvPath)}. Reserving their file names only.`);
@@ -80,7 +73,7 @@ export async function remuxFontReservations(mkvPath: string, settings: JobSettin
 		const out = outById.get(a.id)!;
 		const { family, names } = existsSync(out) ? await scanFontNames(out, signal) : { family: "", names: [] };
 		const ext = extname(a.fileName).toLowerCase();
-		const ours = !!family && groupFamilies.has(normalizeFontName(baseFamily(family))) && a.fileName.toLowerCase() === fontAttachmentFileName(family, ext);
+		const ours = isRabbitGroupFace(a.fileName, family, settings.fontGroup);
 		if (ours) continue;
 		if (names.length) for (const name of names) occupied.add(name);
 		else occupied.add(normalizeFontName(basename(a.fileName, extname(a.fileName))));

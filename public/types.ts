@@ -578,6 +578,8 @@ export interface RepairSubtitleTrackPlan {
 	isHearingImpaired: boolean;
 	isOriginal: boolean;
 	isCommentary: boolean;
+	/** With source "source": which source, 0 for `sourcePath` and 1 on for `extraSources`. */
+	sourceIndex?: number;
 }
 
 export interface RepairPairSuggestion {
@@ -585,7 +587,63 @@ export interface RepairPairSuggestion {
 	targetName: string;
 	sourcePath: string;
 	sourceName: string;
-	method: "episode" | "order" | "none";
+	method: "episode" | "absolute" | "order" | "none";
+	/** With method "absolute": the source's number less the target's episode. */
+	offset?: number;
+}
+
+/** One source track a grid cell can take. */
+export interface ReleaseCandidate {
+	sourcePath: string;
+	trackId: number;
+	codec: string;
+	codecId: string;
+	language: string;
+	title: string;
+	credit: string | null;
+	text: boolean;
+	rabbit: boolean;
+	isOriginal: boolean;
+	preferredRank: number;
+}
+
+export type ReleaseCellAction = "keep" | "add" | "replace" | "skip" | "missing";
+
+export interface ReleaseCell {
+	key: string;
+	language: string;
+	kind: string;
+	have: { trackId: number; title: string; language: string; preferredRank: number }[];
+	candidates: ReleaseCandidate[];
+	action: ReleaseCellAction;
+	chosen?: ReleaseCandidate;
+}
+
+export interface ReleaseColumn {
+	key: string;
+	language: string;
+	kind: string;
+	label: string;
+}
+
+export interface ReleaseRow {
+	targetPath: string;
+	targetName: string;
+	sources: { path: string; name: string; method: "episode" | "absolute" | "order" | "none"; offset?: number }[];
+	cells: ReleaseCell[];
+}
+
+export interface ReleaseScan {
+	columns: ReleaseColumn[];
+	rows: ReleaseRow[];
+	unmatchedSources: string[];
+}
+
+export interface ReleaseCheck {
+	sourcePath: string;
+	matched: boolean;
+	coveredShare: number;
+	detail: string;
 }
 
 export interface RepairBatchPairing {
@@ -615,7 +673,17 @@ export interface RepairPlan {
 	targetPath: string;
 	sourcePath?: string;
 	replaceTarget: boolean;
+	/** The source is another release, so its subtitles are retimed to the target by their audio. */
+	alignSource?: boolean;
+	/** More releases to take tracks from after `sourcePath`, which tracks name by `sourceIndex`. */
+	extraSources?: RepairSource[];
 	tracks: RepairSubtitleTrackPlan[];
+}
+
+export interface RepairSource {
+	path: string;
+	/** Another release, so its subtitles are retimed to the target by their audio. */
+	alignSource?: boolean;
 }
 
 export interface RepairSubtitleTrack {

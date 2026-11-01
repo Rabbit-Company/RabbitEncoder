@@ -74,6 +74,8 @@ function duplicateSourcePaths(): Set<string> {
 function methodLabel(row: PairRow): string {
 	if (row.edited) return '<span class="repair-pair-method repair-pair-edited">Chosen by you</span>';
 	if (row.method === "episode") return '<span class="repair-pair-method">Episode number</span>';
+	if (row.method === "absolute")
+		return `<span class="repair-pair-method" title="The source numbers its episodes across seasons">Absolute number (+${row.offset ?? "?"})</span>`;
 	if (row.method === "order") return '<span class="repair-pair-method repair-pair-weak">Filename order</span>';
 	return '<span class="repair-pair-method repair-pair-none">No match</span>';
 }

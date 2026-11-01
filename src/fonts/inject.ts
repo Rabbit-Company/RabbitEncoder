@@ -3,6 +3,20 @@ import { Logger } from "../core/logger";
 import { fontRegistry, type ResolvedFace } from "./fonts";
 import { axisSuffix, chooseAvailableFontFamily, fontAttachmentFileName, instancedFontNames, instanceFont } from "./font-instance";
 import type { StyleAppearance } from "../subtitles/subtitle-style";
+import { normalizeFontName } from "../subtitles/ass-classifier";
+
+/**
+ * A face Rabbit attached in an earlier pass, recognised by a family of the
+ * font group, plus the " 2" a collision gave it, and the file name Rabbit
+ * gives such a face, "noto_sans.ttf" for "Noto Sans". Its names stay free, so
+ * the materializer reuses it instead of attaching a copy as "Noto Sans 2".
+ */
+export function isRabbitGroupFace(fileName: string, family: string, fontGroup: string): boolean {
+	if (!family) return false;
+	const groupFamilies = new Set((fontRegistry.findFamily(fontGroup)?.faces ?? []).map((f) => normalizeFontName(f.family)));
+	const base = family.replace(/ \d+$/, "");
+	return groupFamilies.has(normalizeFontName(base)) && fileName.toLowerCase() === fontAttachmentFileName(family, extname(fileName).toLowerCase());
+}
 
 /**
  * Attachment extension for an injected face. Anything that is not a known

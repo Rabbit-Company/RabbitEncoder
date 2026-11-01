@@ -13,6 +13,7 @@ import type {
 	RepairAuditLanguageRemoval,
 	RepairFolderAudit,
 	RepairPlan,
+	RepairSource,
 	RepairSubtitleTrack,
 	RepairSubtitleTrackPlan,
 	SubtitleStyle,
@@ -21,7 +22,7 @@ import type {
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
 import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttachmentFontNames, type KeptAttachment } from "../fonts/fonts";
-import { createFaceMaterializer, type FaceMaterializer } from "../fonts/inject";
+import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
 import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
@@ -31,6 +32,28 @@ import { planSubtitleTracks } from "../tracks/subtitle-plan";
 import { resolveUniqueOutputPath } from "./output";
 import { probeFile } from "./probe";
 import { analyzeSourceTracks } from "./source-analysis";
+import {
+	alignmentProblem,
+	describeTiming,
+	mkvmergeSync,
+	retimeSubtitleText,
+	retimingFailed,
+	retimingFits,
+	sourceTimingFor,
+	type SourceTiming,
+} from "./repair-timing";
+import { alignReleaseFiles } from "../sync/release-align";
+import {
+	fontAttachment,
+	planSourceFonts,
+	readInputFonts,
+	renameAssFonts,
+	renamedNames,
+	renameFontFamily,
+	type AssFontRename,
+	type InputFont,
+} from "./repair-fonts";
+import { buildReference, type ReferenceTimeline } from "../subsearch/reference";
 
 interface MkvTrackProperties {
 	codec_id?: string;
@@ -476,6 +499,25 @@ function durationsAreCompatible(a: MkvIdentification, b: MkvIdentification): boo
 	return Math.abs(aSeconds - bSeconds) <= Math.max(2, aSeconds * 0.01);
 }
 
+/** Every source of a plan: `sourcePath` first, then its extra sources. */
+export function repairSources(plan: Pick<RepairPlan, "sourcePath" | "alignSource" | "extraSources">): RepairSource[] {
+	if (!plan.sourcePath) return [];
+	return [{ path: plan.sourcePath, ...(plan.alignSource ? { alignSource: true } : {}) }, ...(plan.extraSources ?? [])];
+}
+
+/** Which source a source track comes from, or -1 for a target track. */
+export function sourceIndexOf(track: Pick<RepairSubtitleTrackPlan, "source" | "sourceIndex">): number {
+	return track.source === "source" ? (track.sourceIndex ?? 0) : -1;
+}
+
+/** "target:3", "source:5" for a track of the first source, "source2:5" for one of the third. */
+export function repairTrackKey(track: Pick<RepairSubtitleTrackPlan, "source" | "sourceIndex" | "trackId">): string {
+	if (track.source === "target") return `target:${track.trackId}`;
+	return `source${track.sourceIndex || ""}:${track.trackId}`;
+}
+
+const MAX_EXTRA_SOURCES = 9;
+
 /** Normalize untrusted API/persisted repair input before it reaches mkvmerge. */
 export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	if (!raw || typeof raw !== "object") throw new Error("Invalid repair plan");
@@ -484,9 +526,21 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	if (!targetPath) throw new Error("An encoded target path is required");
 	const replaceFromSource = !!raw.replaceFromSource;
 	if (replaceFromSource && !sourcePath) throw new Error("Replacing subtitles from source requires a source path");
+	const alignSource = !!raw.alignSource && !!sourcePath;
+	if (raw.extraSources !== undefined && !Array.isArray(raw.extraSources)) throw new Error("Invalid extra subtitle sources");
+	const extraSources: RepairSource[] = (raw.extraSources ?? []).map((item, index) => {
+		const path = checkedText(item?.path, 4096);
+		if (!path) throw new Error(`Subtitle source ${index + 2} has no path`);
+		return { path, ...(item.alignSource ? { alignSource: true } : {}) };
+	});
+	if (extraSources.length && !sourcePath) throw new Error("Extra subtitle sources need a first source");
+	if (extraSources.length > MAX_EXTRA_SOURCES) throw new Error(`A repair job may take subtitles from at most ${MAX_EXTRA_SOURCES + 1} sources`);
+	if (new Set([sourcePath, ...extraSources.map((s) => s.path)]).size !== extraSources.length + 1) throw new Error("The same subtitle source was chosen twice");
+	if (extraSources.length && replaceFromSource) throw new Error("Replacing subtitles from source takes a single source");
+	const sourceFields = { ...(alignSource ? { alignSource } : {}), ...(extraSources.length ? { extraSources } : {}) };
 	if (!Array.isArray(raw.tracks)) {
 		// A replacement plan is built when the job runs, so it starts without tracks.
-		if (replaceFromSource) return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, tracks: [] };
+		if (replaceFromSource) return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, ...sourceFields, tracks: [] };
 		throw new Error("Subtitle track plan is required");
 	}
 	if (raw.tracks.length > MAX_REPAIR_TRACKS) throw new Error(`A repair job may contain at most ${MAX_REPAIR_TRACKS} subtitle tracks`);
@@ -497,7 +551,10 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		const trackId = Number(item?.trackId);
 		if (!source || !Number.isInteger(trackId) || trackId < 0) throw new Error(`Invalid subtitle track at position ${index + 1}`);
 		if (source === "source" && !sourcePath) throw new Error("A source path is required for imported subtitle tracks");
-		const key = `${source}:${trackId}`;
+		const sourceIndex = source === "source" && item.sourceIndex !== undefined ? Number(item.sourceIndex) : 0;
+		if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex > extraSources.length)
+			throw new Error(`Subtitle track at position ${index + 1} names a source the plan does not have`);
+		const key = repairTrackKey({ source, trackId, sourceIndex });
 		if (seen.has(key)) throw new Error(`Subtitle track ${key} was selected more than once`);
 		seen.add(key);
 		const mode = item.mode === "rabbit" ? "rabbit" : "copy";
@@ -516,11 +573,12 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 			isHearingImpaired: !!item.isHearingImpaired,
 			isOriginal: !!item.isOriginal,
 			isCommentary: !!item.isCommentary,
+			...(sourceIndex ? { sourceIndex } : {}),
 		};
 	});
 	tracks.sort((a, b) => a.order - b.order);
 	tracks.forEach((track, index) => (track.order = index));
-	return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, tracks };
+	return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, ...sourceFields, tracks };
 }
 
 function trackUsesZlib(track: MkvTrack | undefined): boolean {
@@ -559,7 +617,7 @@ function languageMatches(planLanguage: string, properties: MkvTrackProperties): 
 	return normalizeLanguageGroup(ietf || properties.language || "und") === normalizeLanguageGroup(planLanguage);
 }
 
-function assertSubtitlePlanApplied(plan: RepairPlan, outputTracks: MkvTrack[], target: MkvIdentification, source?: MkvIdentification): void {
+function assertSubtitlePlanApplied(plan: RepairPlan, outputTracks: MkvTrack[], target: MkvIdentification, sources: MkvIdentification[]): void {
 	for (let index = 0; index < plan.tracks.length; index++) {
 		const expected = plan.tracks[index]!;
 		const actual = outputTracks[index];
@@ -574,7 +632,7 @@ function assertSubtitlePlanApplied(plan: RepairPlan, outputTracks: MkvTrack[], t
 			throw new Error(`Verification failed: subtitle ${index + 1} HI flag was not applied`);
 		if (!!properties.flag_original !== expected.isOriginal) throw new Error(`Verification failed: subtitle ${index + 1} original flag was not applied`);
 		if (!!properties.flag_commentary !== expected.isCommentary) throw new Error(`Verification failed: subtitle ${index + 1} commentary flag was not applied`);
-		const original = findTrack(expected.source === "target" ? target : source!, expected);
+		const original = findTrack(expected.source === "target" ? target : sources[sourceIndexOf(expected)]!, expected);
 		const expectedZlib = expected.compression === "zlib" || (expected.compression === "preserve" && trackUsesZlib(original));
 		if (trackUsesZlib(actual) !== expectedZlib) throw new Error(`Verification failed: subtitle ${index + 1} compression was not applied`);
 	}
@@ -668,7 +726,7 @@ async function extractRabbitTrack(
 	signal?: AbortSignal,
 ): Promise<ExtractedTrack> {
 	const extension = extractedExtension(track);
-	const prefix = `${plan.source}_${plan.trackId}`;
+	const prefix = repairTrackKey(plan).replace(":", "_");
 	const extracted = join(tempDir, `${prefix}.raw${extension}`);
 	const extract = await run(["mkvextract", inputPath, "tracks", `${plan.trackId}:${extracted}`], { signal });
 	if (signal?.aborted) throw new CancelledError();
@@ -728,7 +786,7 @@ async function styleRabbitTrack(
 	const family = face?.family || settings.fontGroup;
 	const styled = styleExtractedText(extracted, { ...appearance, fontName: family });
 
-	const output = join(tempDir, `${plan.source}_${plan.trackId}.rabbit.ass`);
+	const output = join(tempDir, `${repairTrackKey(plan).replace(":", "_")}.rabbit.ass`);
 	writeFileSync(output, styled, "utf-8");
 	const changed = styled !== rawText;
 	return {
@@ -748,16 +806,18 @@ async function styleRabbitTrack(
 async function readCopiedAssText(
 	plan: RepairPlan,
 	target: MkvIdentification,
-	source: MkvIdentification | undefined,
+	sources: MkvIdentification[],
 	tempDir: string,
 	signal?: AbortSignal,
+	prepared: PreparedTrack[] = [],
 ): Promise<{ texts: string[]; complete: boolean }> {
 	const texts: string[] = [];
 	let complete = true;
+	const sourcePaths = repairSources(plan).map((s) => s.path);
 	for (const trackPlan of plan.tracks) {
 		if (trackPlan.mode !== "copy") continue;
-		const identified = trackPlan.source === "target" ? target : source;
-		const inputPath = trackPlan.source === "target" ? plan.targetPath : plan.sourcePath;
+		const identified = trackPlan.source === "target" ? target : sources[sourceIndexOf(trackPlan)];
+		const inputPath = trackPlan.source === "target" ? plan.targetPath : sourcePaths[sourceIndexOf(trackPlan)];
 		if (!identified || !inputPath) {
 			complete = false;
 			continue;
@@ -768,13 +828,19 @@ async function readCopiedAssText(
 			continue;
 		}
 		if (extractedExtension(track) !== ".ass") continue; // SRT and bitmap tracks use no fonts
+		// A copied track rewritten for this repair uses the fonts its rewrite names.
+		const rewritten = prepared.find((item) => repairTrackKey(item.plan) === repairTrackKey(trackPlan));
+		if (rewritten && existsSync(rewritten.path)) {
+			texts.push(readFileSync(rewritten.path, "utf-8"));
+			continue;
+		}
 
-		const out = join(tempDir, `copied_${trackPlan.source}_${trackPlan.trackId}.ass`);
+		const out = join(tempDir, `copied_${repairTrackKey(trackPlan).replace(":", "_")}.ass`);
 		const extract = await run(["mkvextract", inputPath, "tracks", `${trackPlan.trackId}:${out}`], { signal });
 		if (signal?.aborted) throw new CancelledError();
 		if (extract.code !== 0 || !existsSync(out)) {
 			complete = false;
-			Logger.warn(`[repair] Could not read copied ${trackPlan.source} track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-200)}`);
+			Logger.warn(`[repair] Could not read copied track ${repairTrackKey(trackPlan)}: ${(extract.stderr || extract.stdout).slice(-200)}`);
 			continue;
 		}
 		texts.push(readFileSync(out, "utf-8"));
@@ -812,7 +878,7 @@ export function usedFontsAfterRepair(extracted: readonly ExtractedTrack[], copie
 export function applyAutoCompression(plan: RepairPlan, decisions: ReadonlyMap<string, boolean>): void {
 	for (const track of plan.tracks) {
 		if (track.compression !== "auto") continue;
-		track.compression = decisions.get(`${track.source}:${track.trackId}`) ? "zlib" : "none";
+		track.compression = decisions.get(repairTrackKey(track)) ? "zlib" : "none";
 	}
 }
 
@@ -827,27 +893,28 @@ export function applyAutoCompression(plan: RepairPlan, decisions: ReadonlyMap<st
 async function resolveAutoCompression(options: {
 	plan: RepairPlan;
 	target: MkvIdentification;
-	source?: MkvIdentification;
+	sources: MkvIdentification[];
 	prepared: PreparedTrack[];
 	tempDir: string;
 	minSavings: number;
 	signal?: AbortSignal;
 }): Promise<void> {
-	const { plan, target, source, prepared, tempDir, minSavings, signal } = options;
+	const { plan, target, sources, prepared, tempDir, minSavings, signal } = options;
+	const sourcePaths = repairSources(plan).map((s) => s.path);
 	const pending = plan.tracks.filter((track) => track.compression === "auto");
 	if (pending.length === 0) return;
 
 	const decisions = new Map<string, boolean>();
 	for (const track of pending) {
-		const key = `${track.source}:${track.trackId}`;
-		const preparedItem = prepared.find((item) => item.plan.source === track.source && item.plan.trackId === track.trackId);
+		const key = repairTrackKey(track);
+		const preparedItem = prepared.find((item) => repairTrackKey(item.plan) === key);
 		let probePath = preparedItem?.path;
 
 		if (!probePath) {
-			const inputPath = track.source === "target" ? plan.targetPath : plan.sourcePath;
-			const identified = track.source === "target" ? target : source;
+			const inputPath = track.source === "target" ? plan.targetPath : sourcePaths[sourceIndexOf(track)];
+			const identified = track.source === "target" ? target : sources[sourceIndexOf(track)];
 			if (!inputPath || !identified) continue;
-			const single = join(tempDir, `zprobe_src_${track.source}_${track.trackId}.mkv`);
+			const single = join(tempDir, `zprobe_src_${key.replace(":", "_")}.mkv`);
 			const extract = await run(
 				["mkvmerge", "-o", single, "--subtitle-tracks", String(track.trackId), "--no-video", "--no-audio", "--no-attachments", "--no-chapters", inputPath],
 				{ signal },
@@ -871,32 +938,44 @@ export function buildRepairMkvmergeArgs(options: {
 	outputPath: string;
 	plan: RepairPlan;
 	target: MkvIdentification;
+	/** The plan's first source. */
 	source?: MkvIdentification;
+	/** Every source of the plan, in the order `repairSources` gives them, when there is more than one. */
+	sources?: MkvIdentification[];
 	prepared: PreparedTrack[];
 	/**
 	 * Attachments that survive the unused-font pass, already extracted. When
-	 * given, both inputs are muxed with `--no-attachments` and only these are
-	 * re-attached; omit it to pass every input attachment through untouched.
+	 * given, every input is muxed with `--no-attachments` and only these are
+	 * re-attached; omit it to pass input attachments through untouched.
 	 */
 	keptAttachments?: KeptAttachment[] | null;
+	/** Timing per source for its tracks muxed straight from it, when it is another release. */
+	sourceSyncs?: Array<{ delayMs: number; scale: number } | null>;
+	/**
+	 * The source fonts chosen for this repair, already extracted and renamed
+	 * where they clashed. Sources then bring no attachments of their own.
+	 */
+	sourceFonts?: KeptAttachment[] | null;
 }): string[] {
-	const { outputPath, plan, target, source, prepared, keptAttachments } = options;
+	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts } = options;
+	const sourceIds = options.sources ?? (options.source ? [options.source] : []);
+	const sourcePaths = repairSources(plan).map((s) => s.path);
 	const rewriteAttachments = !!keptAttachments;
-	const directTarget = plan.tracks.filter((track) => track.source === "target" && track.mode === "copy");
-	const directSource = plan.tracks.filter((track) => track.source === "source" && track.mode === "copy");
-	const needsSourceInput = plan.tracks.some((track) => track.source === "source");
-	const targetAttachmentNames = new Set((target.attachments || []).map((attachment) => attachment.file_name.toLowerCase()));
-	const sourceAddsAttachments =
-		needsSourceInput && (source?.attachments || []).some((attachment) => !targetAttachmentNames.has(attachment.file_name.toLowerCase()));
-	const sourceFileIndex = needsSourceInput ? 1 : -1;
-	const firstPreparedFileIndex = needsSourceInput ? 2 : 1;
+	const preparedIndex = (track: RepairSubtitleTrackPlan) => prepared.findIndex((item) => repairTrackKey(item.plan) === repairTrackKey(track));
+	// A copied track that had to be rewritten, such as one retimed to another release, is muxed from its prepared file.
+	const isDirect = (track: RepairSubtitleTrackPlan) => track.mode === "copy" && preparedIndex(track) < 0;
+	const directTarget = plan.tracks.filter((track) => track.source === "target" && isDirect(track));
+	// Sources in use, each muxed as its own input after the target.
+	const usedSources = [...new Set(plan.tracks.filter((track) => track.source === "source").map(sourceIndexOf))].sort((a, b) => a - b);
+	const fileIndexOfSource = new Map(usedSources.map((index, i) => [index, i + 1]));
+	const firstPreparedFileIndex = usedSources.length + 1;
 
 	const targetNonSubs = (target.tracks || []).filter((track) => track.type !== "subtitles").map((track) => `0:${track.id}`);
 	const plannedOrder = plan.tracks.map((track) => {
-		if (track.mode === "copy") return `${track.source === "target" ? 0 : sourceFileIndex}:${track.trackId}`;
-		const preparedIndex = prepared.findIndex((item) => item.plan.source === track.source && item.plan.trackId === track.trackId);
-		if (preparedIndex < 0) throw new Error(`Prepared subtitle ${track.source}:${track.trackId} is missing`);
-		return `${firstPreparedFileIndex + preparedIndex}:0`;
+		if (isDirect(track)) return `${track.source === "target" ? 0 : fileIndexOfSource.get(sourceIndexOf(track))}:${track.trackId}`;
+		const index = preparedIndex(track);
+		if (index < 0) throw new Error(`Prepared subtitle ${repairTrackKey(track)} is missing`);
+		return `${firstPreparedFileIndex + index}:0`;
 	});
 
 	const args = ["mkvmerge", "-o", outputPath, "--track-order", [...targetNonSubs, ...plannedOrder].join(",")];
@@ -909,33 +988,47 @@ export function buildRepairMkvmergeArgs(options: {
 	}
 	args.push(plan.targetPath);
 
-	if (needsSourceInput) {
+	// Passing through, a source brings only attachments no earlier input has under the same name.
+	const availableAttachmentNames = new Set((target.attachments || []).map((attachment) => attachment.file_name.toLowerCase()));
+	for (const index of usedSources) {
+		const identified = sourceIds[index];
+		if (!identified || !sourcePaths[index]) throw new Error(`Subtitle source ${index + 1} is missing`);
 		args.push("--no-video", "--no-audio", "--no-chapters", "--no-global-tags");
-		if (rewriteAttachments || !sourceAddsAttachments) args.push("--no-attachments");
-		if (directSource.length) {
-			args.push("--subtitle-tracks", directSource.map((track) => track.trackId).join(","));
-			for (const track of directSource) args.push(...trackOptions(track, track.trackId, findTrack(source!, track)));
+		const all = identified.attachments || [];
+		const fresh = rewriteAttachments || sourceFonts ? [] : all.filter((attachment) => !availableAttachmentNames.has(attachment.file_name.toLowerCase()));
+		if (!fresh.length) args.push("--no-attachments");
+		else if (fresh.length < all.length) args.push("--attachments", fresh.map((attachment) => attachment.id).join(","));
+		for (const attachment of fresh) availableAttachmentNames.add(attachment.file_name.toLowerCase());
+		const direct = plan.tracks.filter((track) => track.source === "source" && sourceIndexOf(track) === index && isDirect(track));
+		if (direct.length) {
+			args.push("--subtitle-tracks", direct.map((track) => track.trackId).join(","));
+			const sync = sourceSyncs[index];
+			for (const track of direct) {
+				args.push(...trackOptions(track, track.trackId, findTrack(identified, track)));
+				if (sync) args.push("--sync", `${track.trackId}:${sync.delayMs},${sync.scale}`);
+			}
 		} else {
 			args.push("--no-subtitles");
 		}
-		args.push(plan.sourcePath!);
+		args.push(sourcePaths[index]!);
 	}
 
 	for (const item of prepared) {
-		const originalIdentification = item.plan.source === "target" ? target : source!;
+		const originalIdentification = item.plan.source === "target" ? target : sourceIds[sourceIndexOf(item.plan)]!;
 		args.push(...trackOptions(item.plan, 0, findTrack(originalIdentification, item.plan)), item.path);
 	}
 
 	const attached = new Set<string>();
-	const availableAttachmentNames = new Set<string>();
+	if (sourceFonts && !rewriteAttachments) {
+		args.push(...keptAttachmentArgs(sourceFonts));
+		for (const font of sourceFonts) availableAttachmentNames.add(font.fileName.toLowerCase());
+	}
 	if (rewriteAttachments) {
 		// Only the attachments that survived are re-attached, so a stale font is
 		// gone and its family name is free for the face we inject below.
 		args.push(...keptAttachmentArgs(keptAttachments!));
+		availableAttachmentNames.clear();
 		for (const attachment of keptAttachments!) availableAttachmentNames.add(attachment.fileName.toLowerCase());
-	} else {
-		for (const name of targetAttachmentNames) availableAttachmentNames.add(name);
-		if (sourceAddsAttachments) for (const attachment of source?.attachments || []) availableAttachmentNames.add(attachment.file_name.toLowerCase());
 	}
 	for (const item of prepared) {
 		if (!item.attachFontPath || attached.has(item.attachFontPath)) continue;
@@ -953,9 +1046,10 @@ export function buildRepairMkvmergeArgs(options: {
 	return args;
 }
 
-function makeSteps(): JobStep[] {
+function makeSteps(align: boolean): JobStep[] {
 	return [
 		{ label: "Inspect files", status: "pending", progress: 0 },
+		...(align ? [{ label: "Align timing", status: "pending" as const, progress: 0 }] : []),
 		{ label: "Prepare subtitles", status: "pending", progress: 0 },
 		{ label: "Stream-copy remux", status: "pending", progress: 0 },
 	];
@@ -967,7 +1061,11 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 	const tempDir = join(config.tempDir, job.id);
 	mkdirSync(tempDir, { recursive: true });
 	const stagePath = join(dirname(plan.targetPath), `.rabbit-repair-${job.id}.mkv`);
-	const steps = makeSteps();
+	const aligning = repairSources(plan).some((source) => source.alignSource);
+	const steps = makeSteps(aligning);
+	const S_ALIGN = 1;
+	const S_PREPARE = aligning ? 2 : 1;
+	const S_MUX = S_PREPARE + 1;
 
 	const setStep = (index: number, partial: Partial<JobStep>) => {
 		const step = steps[index]!;
@@ -987,7 +1085,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 	try {
 		if (!existsSync(plan.targetPath)) throw new Error("Encoded target file no longer exists");
 		if (extname(plan.targetPath).toLowerCase() !== ".mkv") throw new Error("Subtitle repair currently supports MKV targets only");
-		if (plan.sourcePath && !existsSync(plan.sourcePath)) throw new Error("Subtitle source file no longer exists");
+		for (const source of repairSources(plan)) if (!existsSync(source.path)) throw new Error(`Subtitle source ${basename(source.path)} no longer exists`);
 		if (existsSync(stagePath)) throw new Error(`Repair staging file already exists: ${stagePath}`);
 
 		setStep(0, { status: "active", progress: 10 });
@@ -1000,6 +1098,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			setStep(0, { progress: 25, detail: "Analysing source subtitles" });
 			const planDir = join(tempDir, "plan");
 			mkdirSync(planDir, { recursive: true });
+			const alignSource = plan.alignSource;
 			plan = await buildSourceReplacementPlan({
 				targetPath: plan.targetPath,
 				sourcePath: plan.sourcePath!,
@@ -1008,26 +1107,99 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				replaceTarget: plan.replaceTarget,
 				signal,
 			});
+			if (alignSource) plan.alignSource = true;
 			checkCancelled();
 			updateJob({ repairPlan: plan });
 		}
 
-		const [targetId, sourceId, probe] = await Promise.all([
+		const sources = repairSources(plan);
+		const [targetId, probe, ...sourceIds] = await Promise.all([
 			identifyMatroska(plan.targetPath, signal),
-			plan.sourcePath ? identifyMatroska(plan.sourcePath, signal) : Promise.resolve(undefined),
 			probeFile(plan.targetPath),
+			...sources.map((source) => identifyMatroska(source.path, signal)),
 		]);
 		checkCancelled();
-		if (sourceId && plan.tracks.some((track) => track.source === "source") && !durationsAreCompatible(targetId, sourceId)) {
+		const usesSource = (index: number) => plan.tracks.some((track) => sourceIndexOf(track) === index);
+		// Another release may be longer or shorter, so its audio decides instead.
+		sources.forEach((source, index) => {
+			if (source.alignSource || !usesSource(index) || durationsAreCompatible(targetId, sourceIds[index]!)) return;
 			throw new Error(
-				`Source and target durations differ (${durationSeconds(sourceId).toFixed(1)}s vs ${durationSeconds(targetId).toFixed(1)}s). Refusing to combine unrelated files.`,
+				`Source and target durations differ (${durationSeconds(sourceIds[index]!).toFixed(1)}s vs ${durationSeconds(targetId).toFixed(1)}s). Refusing to combine unrelated files.`,
 			);
-		}
-		for (const trackPlan of plan.tracks) findTrack(trackPlan.source === "target" ? targetId : sourceId!, trackPlan);
+		});
+		const identifiedFor = (track: RepairSubtitleTrackPlan) => (track.source === "target" ? targetId : sourceIds[sourceIndexOf(track)]!);
+		const inputFor = (track: RepairSubtitleTrackPlan) => (track.source === "target" ? plan.targetPath : sources[sourceIndexOf(track)]!.path);
+		for (const trackPlan of plan.tracks) findTrack(identifiedFor(trackPlan), trackPlan);
 		updateJob({ probe });
 		setStep(0, { status: "done", progress: 100, detail: `${plan.tracks.length} subtitle track(s) selected` });
 
-		setStep(1, { status: "active", progress: 0 });
+		const warnings: string[] = [];
+		const dropTrack = (trackPlan: RepairSubtitleTrackPlan, reason: string) => {
+			plan = { ...plan, tracks: plan.tracks.filter((track) => track !== trackPlan) };
+			const from = sources.length > 1 ? `${basename(inputFor(trackPlan))} track` : "source track";
+			warnings.push(`Left out ${from} ${trackPlan.trackId} (${trackPlan.language}): ${reason}`);
+			Logger.warn(`[repair] ${warnings[warnings.length - 1]}`);
+		};
+		const timings: Array<SourceTiming | null> = sources.map(() => null);
+		if (aligning) {
+			setStep(S_ALIGN, { status: "active", progress: 10, detail: "Comparing the audio of the releases" });
+			const details: string[] = [];
+			const hadSourceTracks = plan.tracks.some((track) => track.source === "source");
+			const problems: string[] = [];
+			for (const [index, source] of sources.entries()) {
+				if (!source.alignSource || !usesSource(index)) continue;
+				const label = sources.length > 1 ? `${basename(source.path)}: ` : "";
+				const alignment = await alignReleaseFiles(plan.targetPath, source.path, { cacheDir: config.tempDir, targetProbe: probe, signal });
+				checkCancelled();
+				const problem = alignmentProblem(alignment);
+				if (problem) {
+					problems.push(problem);
+					for (const trackPlan of plan.tracks.filter((track) => sourceIndexOf(track) === index)) dropTrack(trackPlan, problem);
+					details.push(`${label}does not match`);
+					continue;
+				}
+				const timing = sourceTimingFor(alignment, durationSeconds(targetId) * 1000, probe);
+				timings[index] = timing;
+				const described = describeTiming(alignment.map, alignment.removed);
+				Logger.info(
+					`[repair] Timing of ${basename(source.path)} against ${basename(plan.targetPath)}: ${described}, ${Math.round(alignment.coveredShare * 100)}% matched`,
+				);
+				// Picture tracks are copied as they are, which can shift and scale them but not follow cuts.
+				if (timing && !mkvmergeSync(timing.map)) {
+					for (const trackPlan of plan.tracks.filter((track) => sourceIndexOf(track) === index && !isRabbitProcessable(findTrack(sourceIds[index]!, track))))
+						dropTrack(trackPlan, "picture subtitles cannot follow the scenes cut between the releases");
+				}
+				details.push(`${label}${timing ? `retiming by ${described}` : "already lines up"}`);
+			}
+			// One release that does not belong is left out, but a job with nothing left to take fails.
+			if (hadSourceTracks && problems.length && !plan.tracks.some((track) => track.source === "source")) throw new Error(problems.join(". "));
+			const detail = details.join(", ") || "No source tracks to retime";
+			setStep(S_ALIGN, { status: "done", progress: 100, detail: detail.charAt(0).toUpperCase() + detail.slice(1) });
+		}
+
+		const durationMs = durationSeconds(targetId) * 1000;
+		let reference: Promise<ReferenceTimeline | null> | undefined;
+		const targetReference = () => {
+			if (!reference) {
+				const dir = join(tempDir, "reference");
+				mkdirSync(dir, { recursive: true });
+				reference = buildReference(plan.targetPath, probe, dir, signal);
+			}
+			return reference;
+		};
+		/** The retimed text, or null when it does not fit the encode after all. */
+		const retimeChecked = async (text: string, format: "ass" | "srt", trackPlan: RepairSubtitleTrackPlan, timing: SourceTiming): Promise<string | null> => {
+			const retimed = retimeSubtitleText(text, format, timing);
+			const fits = await retimingFits(text, retimed, format, targetReference, durationMs);
+			checkCancelled();
+			if (retimingFailed(fits)) {
+				dropTrack(trackPlan, `retiming made it fit the encode worse (${Math.round(fits!.before * 100)}% before, ${Math.round(fits!.after * 100)}% after)`);
+				return null;
+			}
+			return retimed;
+		};
+
+		setStep(S_PREPARE, { status: "active", progress: 0 });
 		const rabbitPlans = plan.tracks.filter((track) => track.mode === "rabbit");
 		const prepared: PreparedTrack[] = [];
 		let keptAttachments: KeptAttachment[] | null = null;
@@ -1038,19 +1210,110 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		for (let i = 0; i < rabbitPlans.length; i++) {
 			checkCancelled();
 			const trackPlan = rabbitPlans[i]!;
-			const identified = trackPlan.source === "target" ? targetId : sourceId!;
-			const input = trackPlan.source === "target" ? plan.targetPath : plan.sourcePath!;
-			setStep(1, { progress: Math.round((i / Math.max(1, rabbitPlans.length)) * 50), detail: `Extracting ${trackPlan.source} track ${trackPlan.trackId}` });
-			extracted.push(await extractRabbitTrack(trackPlan, findTrack(identified, trackPlan), input, tempDir, job.settings, signal));
+			setStep(S_PREPARE, {
+				progress: Math.round((i / Math.max(1, rabbitPlans.length)) * 50),
+				detail: `Extracting ${trackPlan.source} track ${trackPlan.trackId}`,
+			});
+			extracted.push(await extractRabbitTrack(trackPlan, findTrack(identifiedFor(trackPlan), trackPlan), inputFor(trackPlan), tempDir, job.settings, signal));
 		}
+
+		// Tracks from another release move to the encode's timing before anything else reads them.
+		const timingOf = (track: RepairSubtitleTrackPlan) => (track.source === "source" ? timings[sourceIndexOf(track)] : null);
+		if (timings.some(Boolean)) {
+			setStep(S_PREPARE, { progress: 50, detail: "Retiming source subtitles" });
+			for (const item of [...extracted]) {
+				const timing = timingOf(item.plan);
+				if (!timing) continue;
+				const text = item.rawText ?? readFileSync(item.path, "utf-8");
+				const retimed = await retimeChecked(text, item.rawText !== undefined ? "ass" : "srt", item.plan, timing);
+				if (retimed === null) {
+					extracted.splice(extracted.indexOf(item), 1);
+					continue;
+				}
+				if (item.rawText !== undefined) item.rawText = retimed;
+				else {
+					item.path = join(tempDir, `${repairTrackKey(item.plan).replace(":", "_")}.retimed.srt`);
+					writeFileSync(item.path, retimed, "utf-8");
+				}
+			}
+			for (const trackPlan of plan.tracks.filter((track) => track.mode === "copy" && timingOf(track))) {
+				checkCancelled();
+				const track = findTrack(identifiedFor(trackPlan), trackPlan);
+				if (!isRabbitProcessable(track)) continue;
+				const extension = extractedExtension(track);
+				const name = repairTrackKey(trackPlan).replace(":", "_");
+				const raw = join(tempDir, `${name}.copy${extension}`);
+				const extract = await run(["mkvextract", inputFor(trackPlan), "tracks", `${trackPlan.trackId}:${raw}`], { signal });
+				checkCancelled();
+				if (extract.code !== 0)
+					throw new Error(`Could not extract source subtitle track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
+				const retimed = await retimeChecked(readFileSync(raw, "utf-8"), extension === ".ass" ? "ass" : "srt", trackPlan, timingOf(trackPlan)!);
+				if (retimed === null) continue;
+				const out = join(tempDir, `${name}.retimed${extension}`);
+				writeFileSync(out, retimed, "utf-8");
+				prepared.push({ plan: trackPlan, path: out });
+			}
+		}
+		// Fonts of the sources are compared with the target's, and earlier sources', by content and name.
+		let sourceFonts: KeptAttachment[] | null = null;
+		if (plan.tracks.some((track) => track.source === "source")) {
+			setStep(S_PREPARE, { progress: 52, detail: "Comparing the fonts of the files" });
+			const fontDir = join(tempDir, "fonts");
+			const targetFonts = await readInputFonts(plan.targetPath, -1, fontDir, signal);
+			const candidates: InputFont[] = [];
+			for (const [index, source] of sources.entries()) if (usesSource(index)) candidates.push(...(await readInputFonts(source.path, index, fontDir, signal)));
+			checkCancelled();
+			const fontPlan = planSourceFonts(targetFonts, candidates);
+			sourceFonts = fontPlan.keep.map((font) => fontAttachment(font.path, font.fileName, font.names));
+			const assRenames = new Map<number, Map<string, AssFontRename>>();
+			for (const rename of fontPlan.renames) {
+				const out = join(fontDir, `renamed_${rename.font.input}_${rename.font.id}${extname(rename.font.path)}`);
+				if (!(await renameFontFamily(rename.font.path, out, rename.font.family, rename.family, signal))) {
+					sourceFonts.push(fontAttachment(rename.font.path, rename.fileName, rename.font.names));
+					warnings.push(`${rename.font.fileName} could not be renamed, so another font of the same name may show in its place`);
+					continue;
+				}
+				sourceFonts.push(fontAttachment(out, rename.fileName, renamedNames(rename.font, rename.family)));
+				const byFamily = assRenames.get(rename.font.input) ?? new Map<string, AssFontRename>();
+				const entry = byFamily.get(rename.family) ?? { names: new Set<string>(), from: rename.font.family, to: rename.family };
+				for (const name of rename.font.names) entry.names.add(name);
+				byFamily.set(rename.family, entry);
+				assRenames.set(rename.font.input, byFamily);
+			}
+			checkCancelled();
+			Logger.info(
+				`[repair] Source fonts: ${fontPlan.keep.length} added, ${fontPlan.duplicates.length} already in the file, ${fontPlan.renames.length} renamed${fontPlan.renames.length ? ` (${[...new Set(fontPlan.renames.map((r) => r.family))].join(", ")})` : ""}`,
+			);
+			// Tracks of a source whose fonts were renamed point at the new names.
+			const renamesOf = (track: RepairSubtitleTrackPlan) => [...(assRenames.get(sourceIndexOf(track))?.values() ?? [])];
+			for (const item of extracted) {
+				const renames = renamesOf(item.plan);
+				if (renames.length && item.kind === "ass" && item.rawText !== undefined) item.rawText = renameAssFonts(item.rawText, renames);
+			}
+			for (const trackPlan of plan.tracks.filter((track) => track.mode === "copy" && renamesOf(track).length)) {
+				const track = findTrack(identifiedFor(trackPlan), trackPlan);
+				if (!isRabbitProcessable(track) || extractedExtension(track) !== ".ass") continue;
+				let item = prepared.find((p) => repairTrackKey(p.plan) === repairTrackKey(trackPlan));
+				if (!item) {
+					const out = join(tempDir, `${repairTrackKey(trackPlan).replace(":", "_")}.fonts.ass`);
+					const extract = await run(["mkvextract", inputFor(trackPlan), "tracks", `${trackPlan.trackId}:${out}`], { signal });
+					checkCancelled();
+					if (extract.code !== 0)
+						throw new Error(`Could not extract source subtitle track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
+					prepared.push((item = { plan: trackPlan, path: out }));
+				}
+				writeFileSync(item.path, renameAssFonts(readFileSync(item.path, "utf-8"), renamesOf(trackPlan)), "utf-8");
+			}
+		}
+		if (warnings.length) updateJob({ repairPlan: plan, warning: warnings.join(". ") });
 
 		// Pass 2 - work out which attachments survive. A font still referenced by
 		// a copied or partly-restyled track is kept and keeps its family name; the
 		// rest are dropped, which frees their names for the faces we inject.
 		const occupiedFontNames = new Set<string>();
 		if (rabbitPlans.length > 0) {
-			setStep(1, { progress: 55, detail: "Checking which fonts are still used" });
-			const copied = await readCopiedAssText(plan, targetId, sourceId, tempDir, signal);
+			setStep(S_PREPARE, { progress: 55, detail: "Checking which fonts are still used" });
+			const copied = await readCopiedAssText(plan, targetId, sourceIds, tempDir, signal, prepared);
 			checkCancelled();
 			const dropUnusedFonts = job.settings.removeUnusedFonts && copied.complete;
 			if (job.settings.removeUnusedFonts && !copied.complete) {
@@ -1058,8 +1321,8 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			}
 			const usedFonts = usedFontsAfterRepair(extracted, copied.texts);
 
+			// Source fonts were chosen above, so only the target's attachments are read here.
 			const inputs = [{ path: plan.targetPath, prefix: "att_target" }];
-			if (plan.sourcePath && plan.tracks.some((track) => track.source === "source")) inputs.push({ path: plan.sourcePath, prefix: "att_source" });
 
 			const collected: KeptAttachment[] = [];
 			let complete = true;
@@ -1079,8 +1342,14 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				for (const attachment of kept) {
 					if (collected.some((existing) => existing.fileName.toLowerCase() === attachment.fileName.toLowerCase())) continue;
 					collected.push(attachment);
+					// A face Rabbit attached in an earlier pass is reused, so its names stay free.
+					if (attachment.isFont && isRabbitGroupFace(attachment.fileName, attachment.family ?? "", job.settings.fontGroup)) continue;
 					for (const name of attachment.names) occupiedFontNames.add(name);
 				}
+			}
+			for (const font of sourceFonts ?? []) {
+				for (const name of font.names) occupiedFontNames.add(name);
+				if (!dropUnusedFonts || font.names.some((name) => usedFonts.has(name))) collected.push(font);
 			}
 			// Rewriting the attachment set is only safe with a complete inventory;
 			// otherwise the collected names still serve as collision reservations.
@@ -1095,15 +1364,26 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		for (let i = 0; i < extracted.length; i++) {
 			checkCancelled();
 			const item = extracted[i]!;
-			setStep(1, { progress: 60 + Math.round((i / Math.max(1, extracted.length)) * 40), detail: `Styling ${item.plan.source} track ${item.plan.trackId}` });
+			setStep(S_PREPARE, {
+				progress: 60 + Math.round((i / Math.max(1, extracted.length)) * 40),
+				detail: `Styling ${item.plan.source} track ${item.plan.trackId}`,
+			});
 			prepared.push(await styleRabbitTrack(item, tempDir, job.settings, materializeFace));
 		}
-		setStep(1, { status: "done", progress: 100, detail: rabbitPlans.length ? `${rabbitPlans.length} track(s) processed` : "No subtitle conversion needed" });
+		setStep(S_PREPARE, {
+			status: "done",
+			progress: 100,
+			detail: rabbitPlans.length
+				? `${rabbitPlans.length} track(s) processed`
+				: timings.some(Boolean)
+					? "Source subtitles retimed"
+					: "No subtitle conversion needed",
+		});
 
 		await resolveAutoCompression({
 			plan,
 			target: targetId,
-			source: sourceId,
+			sources: sourceIds,
 			prepared,
 			tempDir,
 			minSavings: job.settings.compressSubtitlesMinSavings ?? 10,
@@ -1112,7 +1392,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		checkCancelled();
 
 		const metadataOnly = isMetadataOnlyRepair(plan, targetId);
-		setStep(2, { status: "active", progress: 10, detail: metadataOnly ? "Creating safe metadata-edit copy" : "Copying streams without video encoding" });
+		setStep(S_MUX, { status: "active", progress: 10, detail: metadataOnly ? "Creating safe metadata-edit copy" : "Copying streams without video encoding" });
 		updateJob({ status: "muxing" });
 		if (metadataOnly) {
 			Logger.info(`[repair] Applying metadata-only repair to ${basename(plan.targetPath)} with mkvpropedit`);
@@ -1124,7 +1404,16 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			checkCancelled();
 			if (edited.code !== 0) throw new Error(`mkvpropedit repair failed (exit ${edited.code}): ${(edited.stderr || edited.stdout).slice(-800)}`);
 		} else {
-			const args = buildRepairMkvmergeArgs({ outputPath: stagePath, plan, target: targetId, source: sourceId, prepared, keptAttachments });
+			const args = buildRepairMkvmergeArgs({
+				outputPath: stagePath,
+				plan,
+				target: targetId,
+				sources: sourceIds,
+				prepared,
+				keptAttachments,
+				sourceFonts,
+				sourceSyncs: timings.map((timing) => (timing ? mkvmergeSync(timing.map) : null)),
+			});
 			Logger.info(`[repair] Remuxing ${basename(plan.targetPath)} with ${plan.tracks.length} subtitle track(s)`);
 			const merged = await run(args, { signal });
 			checkCancelled();
@@ -1133,7 +1422,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			if (merged.code === 1) Logger.warn(`[repair] mkvmerge completed with warnings: ${(merged.stderr || merged.stdout).slice(-500)}`);
 		}
 
-		setStep(2, { progress: 80, detail: "Verifying repaired MKV" });
+		setStep(S_MUX, { progress: 80, detail: "Verifying repaired MKV" });
 		const verified = await identifyMatroska(stagePath, signal);
 		checkCancelled();
 		const targetVideo = (targetId.tracks || []).filter((track) => track.type === "video").map((track) => track.properties.codec_id || track.codec);
@@ -1145,13 +1434,13 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		if (JSON.stringify(targetAudio) !== JSON.stringify(outputAudio)) throw new Error("Verification failed: target audio tracks changed during repair");
 		if (outputSubs.length !== plan.tracks.length)
 			throw new Error(`Verification failed: expected ${plan.tracks.length} subtitle tracks, found ${outputSubs.length}`);
-		assertSubtitlePlanApplied(plan, outputSubs, targetId, sourceId);
+		assertSubtitlePlanApplied(plan, outputSubs, targetId, sourceIds);
 		if (!durationsAreCompatible(targetId, verified)) throw new Error("Verification failed: repaired duration differs from the encoded target");
 
 		const parsed = parsePath(plan.targetPath);
 		const finalPath = plan.replaceTarget ? plan.targetPath : resolveUniqueOutputPath(parsed.dir, `${parsed.name}.repaired.mkv`);
 		renameSync(stagePath, finalPath);
-		setStep(2, { status: "done", progress: 100, detail: plan.replaceTarget ? "Target replaced after verification" : "Repaired copy created" });
+		setStep(S_MUX, { status: "done", progress: 100, detail: plan.replaceTarget ? "Target replaced after verification" : "Repaired copy created" });
 		updateJob({
 			status: "done",
 			currentStage: "Complete",

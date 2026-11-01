@@ -16,6 +16,7 @@ import { registerHdrRoutes } from "./hdr";
 import { registerGrainRoutes } from "./grain";
 import { registerSubtitleSearchRoutes } from "./subsearch";
 import { registerOcrRoutes } from "./ocr";
+import { registerReleaseSubtitleRoutes } from "./release-subs";
 import type { AppConfig } from "../core/types";
 
 export function registerApiRoutes(app: Web, config: AppConfig): void {
@@ -36,4 +37,5 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerGrainRoutes(app, config);
 	registerSubtitleSearchRoutes(app, config);
 	registerOcrRoutes(app, config);
+	registerReleaseSubtitleRoutes(app, config);
 }

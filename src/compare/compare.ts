@@ -4,16 +4,11 @@ import { randomUUID } from "crypto";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
 import { createSemaphore } from "../core/concurrency";
+import { audioEnvelope, bestLag, ENVELOPE_RATE } from "../sync/audio-envelope";
 import { measureImagePairs, measureVideoPair, summarize, METRIC_NAMES, type FrameScores, type MetricName, type MetricSummary, type VsMatrix } from "./metrics";
 
-/** Envelope rate for the fine alignment pass: one value per 10 ms. */
-const FINE_RATE = 100;
-/** Coarse pass rate: one value per 100 ms, so a wide lag search stays fast. */
-const COARSE_RATE = 10;
 /** Audio decoded from the start of each file for alignment. */
 const ALIGN_WINDOW_SEC = 600;
-/** Largest start difference searched between two releases. */
-const MAX_LAG_SEC = 180;
 /** Below this correlation peak the offset is a guess, so it is not applied. */
 const MIN_ALIGN_CONFIDENCE = 0.35;
 /** Sessions kept on disk, the oldest go first. */
@@ -27,7 +22,6 @@ const CHECK_RADIUS = 4;
 const CHECK_MIN_GAIN = 0.85;
 const THUMB_W = 64;
 const THUMB_H = 36;
-const SAMPLE_RATE = 8000;
 
 export interface CompareSourceInput {
 	path: string;
@@ -262,117 +256,6 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 
 function isHdr(info: VideoInfo): boolean {
 	return info.transfer === "smpte2084" || info.transfer === "arib-std-b67";
-}
-
-/** Log RMS per 10 ms of the first minutes of one audio stream, mono at 8 kHz. */
-async function audioEnvelope(path: string, streamIndex: number, signal: AbortSignal): Promise<Float32Array> {
-	const proc = Bun.spawn(
-		[
-			"ffmpeg",
-			"-hide_banner",
-			"-loglevel",
-			"error",
-			"-i",
-			path,
-			"-map",
-			`0:${streamIndex}`,
-			"-t",
-			String(ALIGN_WINDOW_SEC),
-			"-ac",
-			"1",
-			"-ar",
-			String(SAMPLE_RATE),
-			"-f",
-			"s16le",
-			"-",
-		],
-		{ stdout: "pipe", stderr: "pipe" },
-	);
-	const onAbort = () => proc.kill();
-	signal.addEventListener("abort", onAbort, { once: true });
-	try {
-		const buf = await new Response(proc.stdout).arrayBuffer();
-		await proc.exited;
-		if (signal.aborted) throw new Error("Comparison cancelled");
-		const pcm = new Int16Array(buf, 0, Math.floor(buf.byteLength / 2));
-		const per = SAMPLE_RATE / FINE_RATE;
-		const env = new Float32Array(Math.floor(pcm.length / per));
-		for (let i = 0; i < env.length; i++) {
-			let sum = 0;
-			for (let k = i * per; k < (i + 1) * per; k++) sum += pcm[k]! * pcm[k]!;
-			env[i] = Math.log10(1e-3 + Math.sqrt(sum / per) / 32768);
-		}
-		return env;
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-	}
-}
-
-function downsample(env: Float32Array, factor: number): Float32Array {
-	const out = new Float32Array(Math.floor(env.length / factor));
-	for (let i = 0; i < out.length; i++) {
-		let sum = 0;
-		for (let k = 0; k < factor; k++) sum += env[i * factor + k]!;
-		out[i] = sum / factor;
-	}
-	return out;
-}
-
-/** Pearson correlation of a[i] with b[i + lag] over their overlap. */
-function correlationAt(a: Float32Array, b: Float32Array, lag: number): number {
-	const start = Math.max(0, -lag);
-	const end = Math.min(a.length, b.length - lag);
-	const n = end - start;
-	if (n < 100) return -1;
-	let sa = 0,
-		sb = 0,
-		saa = 0,
-		sbb = 0,
-		sab = 0;
-	for (let i = start; i < end; i++) {
-		const x = a[i]!;
-		const y = b[i + lag]!;
-		sa += x;
-		sb += y;
-		saa += x * x;
-		sbb += y * y;
-		sab += x * y;
-	}
-	const cov = sab - (sa * sb) / n;
-	const va = saa - (sa * sa) / n;
-	const vb = sbb - (sb * sb) / n;
-	return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : -1;
-}
-
-/**
- * Lag in fine steps (10 ms) where b best matches a, with the correlation at
- * that lag. A coarse search over the whole range finds the area, a fine one
- * around it sets the exact value.
- */
-export function bestLag(a: Float32Array, b: Float32Array, maxLagSec = MAX_LAG_SEC): { lag: number; score: number } {
-	const factor = FINE_RATE / COARSE_RATE;
-	const ca = downsample(a, factor);
-	const cb = downsample(b, factor);
-	const maxCoarse = Math.round(maxLagSec * COARSE_RATE);
-	let coarse = 0;
-	let coarseScore = -Infinity;
-	for (let lag = -maxCoarse; lag <= maxCoarse; lag++) {
-		const score = correlationAt(ca, cb, lag);
-		if (score > coarseScore) {
-			coarseScore = score;
-			coarse = lag;
-		}
-	}
-	let lag = coarse * factor;
-	let score = -Infinity;
-	for (let l = (coarse - 1) * factor; l <= (coarse + 1) * factor; l++) {
-		const s = correlationAt(a, b, l);
-		if (s > score) {
-			score = s;
-			lag = l;
-		}
-	}
-	return { lag, score };
 }
 
 /** Same language as the first source's audio when the file has it, else its first audio stream. */
@@ -714,8 +597,8 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 				continue;
 			}
 			update({ detail: `Aligning ${src.label}`, progress: 10 + Math.round((i / req.sources.length) * 30) });
-			firstEnv ??= await audioEnvelope(req.sources[0]!.path, firstAudio.index, signal);
-			const env = await audioEnvelope(src.path, audio.index, signal);
+			firstEnv ??= await audioEnvelope(req.sources[0]!.path, firstAudio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
+			const env = await audioEnvelope(src.path, audio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
 			const { lag, score } = bestLag(firstEnv, env);
 			state.confidence = Math.round(score * 100) / 100;
 			if (score < MIN_ALIGN_CONFIDENCE) {
@@ -723,7 +606,7 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 				continue;
 			}
 			// First source sample k lines up with this source's sample k + lag.
-			const offsetSec = audio.start - infos[i]!.formatStart - (firstAudio.start - first.formatStart) + lag / FINE_RATE;
+			const offsetSec = audio.start - infos[i]!.formatStart - (firstAudio.start - first.formatStart) + lag / ENVELOPE_RATE;
 			Object.assign(state, { offsetMs: Math.round(offsetSec * 1000), offsetFrom: "auto" });
 		}
 

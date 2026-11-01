@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pairRepairFiles, parseEpisodeKey } from "../../src/pipeline/repair-pairing";
+import { pairRepairFiles, parseEpisodeKey, parseEpisodeName } from "../../src/pipeline/repair-pairing";
 
 describe("parseEpisodeKey", () => {
 	test("reads the common season/episode spellings", () => {
@@ -82,5 +82,56 @@ describe("pairRepairFiles", () => {
 
 		expect(pairs.map((pair) => pair.method)).toEqual(["order", "order", "episode"]);
 		expect(pairs.find((pair) => pair.targetName === "Show - S01E01.mkv")!.sourceName).toBe("Show - 01.mkv");
+	});
+
+	test("pairs a season with a release numbered across seasons by the offset its episodes agree on", () => {
+		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv", "/enc/Show - S02E04.mkv"];
+		const sources = ["/src/[Erai-raws] Show - 13 [1080p].mkv", "/src/[Erai-raws] Show - 14 [1080p].mkv", "/src/[Erai-raws] Show - 16 [1080p].mkv"];
+		const { pairs, unmatchedSources } = pairRepairFiles(season2, sources);
+
+		expect(pairs.map((pair) => [pair.targetName, pair.sourceName, pair.method, pair.offset])).toEqual([
+			["Show - S02E01.mkv", "[Erai-raws] Show - 13 [1080p].mkv", "absolute", 12],
+			["Show - S02E02.mkv", "[Erai-raws] Show - 14 [1080p].mkv", "absolute", 12],
+			["Show - S02E04.mkv", "[Erai-raws] Show - 16 [1080p].mkv", "absolute", 12],
+		]);
+		expect(unmatchedSources).toEqual([]);
+	});
+
+	test("keeps exact matches for season one and offsets the next season", () => {
+		const both = ["/enc/Show - S01E01.mkv", "/enc/Show - S01E02.mkv", "/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv"];
+		const sources = ["/src/Show - 01.mkv", "/src/Show - 02.mkv", "/src/Show - 13.mkv", "/src/Show - 14.mkv"];
+		const { pairs } = pairRepairFiles(both, sources);
+
+		expect(pairs.map((pair) => [pair.targetName, pair.sourceName, pair.method])).toEqual([
+			["Show - S01E01.mkv", "Show - 01.mkv", "episode"],
+			["Show - S01E02.mkv", "Show - 02.mkv", "episode"],
+			["Show - S02E01.mkv", "Show - 13.mkv", "absolute"],
+			["Show - S02E02.mkv", "Show - 14.mkv", "absolute"],
+		]);
+	});
+
+	test("does not guess an offset when several fit, as with a folder of the whole series", () => {
+		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv"];
+		const series = Array.from({ length: 24 }, (_, i) => `/src/Show - ${String(i + 1).padStart(2, "0")}.mkv`);
+		const { pairs } = pairRepairFiles(season2, series);
+
+		expect(pairs.every((pair) => pair.method === "none")).toBe(true);
+	});
+
+	test("uses an offset given by hand", () => {
+		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv"];
+		const series = Array.from({ length: 24 }, (_, i) => `/src/Show - ${String(i + 1).padStart(2, "0")}.mkv`);
+		const { pairs } = pairRepairFiles(season2, series, { absoluteOffset: 12 });
+
+		expect(pairs.map((pair) => [pair.sourceName, pair.method, pair.offset])).toEqual([
+			["Show - 13.mkv", "absolute", 12],
+			["Show - 14.mkv", "absolute", 12],
+		]);
+	});
+
+	test("reads whether a name gives its season", () => {
+		expect(parseEpisodeName("Show - S02E01.mkv")).toEqual({ season: 2, episode: 1 });
+		expect(parseEpisodeName("[Group] Show - 13v2 [1080p].mkv")).toEqual({ episode: 13 });
+		expect(parseEpisodeName("Show Episode 7.mkv")).toEqual({ episode: 7 });
 	});
 });

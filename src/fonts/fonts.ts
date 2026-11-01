@@ -514,6 +514,8 @@ export interface KeptAttachment {
 	isFont: boolean;
 	/** Normalized internal names of a kept font; empty for other attachments. */
 	names: string[];
+	/** Internal family of a kept font, as fontconfig reads it. */
+	family?: string;
 }
 
 /**
@@ -555,12 +557,12 @@ export async function collectKeptAttachments(
 			kept.push({ fileName: a.fileName, path: out, mime: "", isFont: false, names: [] });
 			continue;
 		}
-		const { names } = await scanFontNames(out, signal);
+		const { family, names } = await scanFontNames(out, signal);
 		if (!dropUnusedFonts || names.some((n) => usedFonts.has(n))) {
 			// A font we could not scan still reserves its visible stem, so an
 			// injected face cannot take a name this attachment might answer to.
 			const reserved = names.length > 0 ? names : [normalizeFontName(basename(a.fileName, extname(a.fileName)))].filter(Boolean);
-			kept.push({ fileName: a.fileName, path: out, mime: mimeForFont(out), isFont: true, names: reserved });
+			kept.push({ fileName: a.fileName, path: out, mime: mimeForFont(out), isFont: true, names: reserved, ...(family ? { family } : {}) });
 		} else {
 			Logger.info(`[fonts] Dropping unused font: ${a.fileName}`);
 		}

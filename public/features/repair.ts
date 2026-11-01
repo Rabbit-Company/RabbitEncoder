@@ -103,6 +103,7 @@ function renderSelectedFiles(): void {
 	byId("repair-target-selection").innerHTML = selectedFileHtml(selectedTargetPath, "No encoded target selected");
 	byId("repair-source-selection").innerHTML = selectedFileHtml(selectedSourcePath, "No original source selected");
 	buttonById("repair-clear-source-btn").style.display = selectedSourcePath ? "" : "none";
+	byId("repair-source-timing-row").style.display = selectedSourcePath ? "" : "none";
 	buttonById("repair-inspect-btn").disabled = !selectedTargetPath;
 }
 
@@ -254,6 +255,7 @@ export async function openRepair(jobId?: string): Promise<void> {
 	selectedTargetPath = "";
 	selectedSourcePath = "";
 	byId<HTMLSelectElement>("repair-save-mode").value = "existing";
+	byId<HTMLSelectElement>("repair-source-timing").value = "same";
 	byId("repair-editor").style.display = "none";
 	buttonById("repair-queue-btn").disabled = true;
 	setError("");
@@ -269,6 +271,7 @@ export async function openRepairPaths(targetPath: string, sourcePath?: string): 
 	selectedTargetPath = targetPath;
 	selectedSourcePath = sourcePath || "";
 	byId<HTMLSelectElement>("repair-save-mode").value = "existing";
+	byId<HTMLSelectElement>("repair-source-timing").value = "same";
 	byId("repair-editor").style.display = "none";
 	buttonById("repair-queue-btn").disabled = true;
 	setError("");
@@ -720,6 +723,7 @@ export async function queueRepair(): Promise<void> {
 			targetPath: inspection.target.path,
 			sourcePath: inspection.source?.path,
 			replaceTarget: byId<HTMLSelectElement>("repair-save-mode").value === "existing",
+			alignSource: !!inspection.source && byId<HTMLSelectElement>("repair-source-timing").value === "align",
 			tracks,
 		});
 		closeRepair();

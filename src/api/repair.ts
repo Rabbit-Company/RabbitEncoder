@@ -406,6 +406,7 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			const normalized = sanitizeRepairPlan(raw);
 			normalized.targetPath = resolveAllowedMkv(normalized.targetPath, config, "Encoded target");
 			if (normalized.sourcePath) normalized.sourcePath = resolveAllowedMkv(normalized.sourcePath, config, "Subtitle source");
+			for (const source of normalized.extraSources ?? []) source.path = resolveAllowedMkv(source.path, config, "Subtitle source");
 			const job = addRepairJob(normalized);
 			return c.json(job, 201);
 		} catch (error: any) {
