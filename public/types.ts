@@ -680,10 +680,25 @@ export interface RepairAuditGroup {
 	representativePath: string;
 }
 
+/** A subtitle language of a folder audit and the files it is missing from. */
+export interface RepairAuditLanguage {
+	language: string;
+	fileCount: number;
+	trackCount: number;
+	missingFrom: string[];
+}
+
 export interface RepairFolderAudit {
 	path?: string;
 	files: RepairAuditFile[];
 	groups: RepairAuditGroup[];
+	languages: RepairAuditLanguage[];
+}
+
+export interface RepairAuditLanguageRemoval {
+	paths: string[];
+	languages: string[];
+	replaceTarget: boolean;
 }
 
 export type RepairAuditSubtitleMetadata = Pick<

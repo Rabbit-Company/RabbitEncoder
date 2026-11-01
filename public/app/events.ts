@@ -197,6 +197,8 @@ import {
 	closeRepairAuditIfOutside,
 	handleRepairAuditClick,
 	handleRepairAuditInput,
+	handleRepairAuditLanguagesChange,
+	handleRepairAuditLanguagesClick,
 	openRepairAuditJobs,
 	openRepairAuditPicker,
 	openSelectedAuditRepair,
@@ -218,6 +220,8 @@ export function initEventListeners() {
 	byId("repair-audit-pick-folder-btn").addEventListener("click", openRepairAuditPicker);
 	byId("repair-audit-files").addEventListener("click", handleRepairAuditClick);
 	byId("repair-audit-groups").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-languages").addEventListener("click", handleRepairAuditLanguagesClick);
+	byId("repair-audit-languages").addEventListener("change", handleRepairAuditLanguagesChange);
 	byId("repair-audit-details").addEventListener("click", handleRepairAuditClick);
 	byId("repair-audit-details").addEventListener("input", handleRepairAuditInput);
 	byId("repair-audit-open-btn").addEventListener("click", openSelectedAuditRepair);

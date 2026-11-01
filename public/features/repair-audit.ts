@@ -1,5 +1,5 @@
-import type { RepairAuditFile, RepairAuditSubtitleMetadata, RepairAuditTrack, RepairFolderAudit } from "../types";
-import { createRepairAuditGroupJobs, fetchRepairFolderAudit } from "../api/client";
+import type { RepairAuditFile, RepairAuditLanguage, RepairAuditSubtitleMetadata, RepairAuditTrack, RepairFolderAudit } from "../types";
+import { createRepairAuditGroupJobs, fetchRepairFolderAudit, removeRepairAuditLanguages } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker, openRepairPaths } from "./repair";
@@ -12,6 +12,9 @@ let groupSubtitles: RepairAuditSubtitleMetadata[] = [];
 let originalSubtitles = "";
 let queueingGroup = false;
 const queuedPaths = new Set<string>();
+/** Subtitle languages ticked for removal. */
+const removeLanguages = new Set<string>();
+let languagesOpen: boolean | null = null;
 
 const subtitleFlags = [
 	["isDefault", "Default"],
@@ -175,8 +178,141 @@ function renderAudit(): void {
 			return `<span class="repair-audit-group-summary"><span class="repair-audit-group-badge ${groupClass(group.group)}">${escapeHtml(group.label)}</span>${group.count} file${group.count === 1 ? "" : "s"}${group.group === 0 ? " (majority)" : ""}<button class="btn btn-ghost btn-sm" type="button" data-audit-edit-group="${group.group}" ${canEdit ? "" : "disabled"}>Edit group</button></span>`;
 		})
 		.join("");
+	renderLanguages();
 	renderFileList();
 	renderDetails();
+}
+
+const languageNames = (() => {
+	try {
+		return new Intl.DisplayNames(["en"], { type: "language" });
+	} catch {
+		return null;
+	}
+})();
+
+function languageName(tag: string): string {
+	try {
+		return languageNames?.of(tag) ?? tag;
+	} catch {
+		return tag;
+	}
+}
+
+/** The episode code of a file name, such as S01E12, or the whole name. */
+function shortFileName(name: string): string {
+	return name.match(/S\d{1,2}E\d{1,4}/i)?.[0]?.toUpperCase() ?? name;
+}
+
+function languageRow(lang: RepairAuditLanguage, total: number): string {
+	const complete = lang.fileCount === total;
+	const missing = lang.missingFrom.map(shortFileName);
+	const missingText = complete ? "" : missing.length > 8 ? `missing in ${missing.length} files` : `missing in ${missing.join(", ")}`;
+	return `<label class="repair-audit-language${complete ? "" : " is-partial"}" title="${escapeHtml(lang.missingFrom.join("\n"))}">
+		<input type="checkbox" data-audit-remove-language="${escapeHtml(lang.language)}" ${removeLanguages.has(lang.language) ? "checked" : ""} ${queueingGroup ? "disabled" : ""}>
+		<strong>${escapeHtml(lang.language)}</strong>
+		<span>${escapeHtml(languageName(lang.language))}</span>
+		<span class="repair-audit-language-count">${lang.fileCount}/${total}</span>
+		${lang.trackCount > lang.fileCount ? `<span class="repair-audit-language-count">${lang.trackCount} tracks</span>` : ""}
+		${missingText ? `<small>${escapeHtml(missingText)}</small>` : ""}
+	</label>`;
+}
+
+/** The subtitle languages of the folder, which files lack each, and removing chosen ones from every file. */
+function renderLanguages(): void {
+	const container = byId("repair-audit-languages");
+	const languages = audit?.languages ?? [];
+	const total = audit?.files.length ?? 0;
+	if (!languages.length || !total) {
+		container.innerHTML = "";
+		return;
+	}
+	const previous = container.querySelector("details");
+	if (previous) languagesOpen = previous.open;
+	const complete = languages.filter((lang) => lang.fileCount === total);
+	const partial = languages.filter((lang) => lang.fileCount < total);
+	languagesOpen ??= partial.length > 0;
+	const affected = audit!.files.filter((file) => file.tracks.some((track) => track.type === "subtitles" && removeLanguages.has(track.language)));
+	const summary = partial.length ? `${complete.length} on all ${total} files, ${partial.length} on only some` : `All ${complete.length} on every file`;
+	const section = (title: string, list: RepairAuditLanguage[]) =>
+		list.length
+			? `<div class="repair-audit-language-section"><strong>${title}</strong><div class="repair-audit-language-list">${list.map((lang) => languageRow(lang, total)).join("")}</div></div>`
+			: "";
+	container.innerHTML = `<details class="settings-subsection repair-audit-languages"${languagesOpen ? " open" : ""}>
+		<summary>Subtitle languages <span class="hdr-note">${escapeHtml(summary)}</span></summary>
+		<div class="settings-subsection-body">
+			${section("On only some files", partial)}
+			${section("On every file", complete)}
+			<div class="repair-audit-language-actions">
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-select-partial ${partial.length && !queueingGroup ? "" : "disabled"}>Select the ones on only some files</button>
+				<label class="repair-audit-save-mode">Save changes to
+					<select class="select-input" id="repair-audit-languages-save-mode" ${queueingGroup ? "disabled" : ""}>
+						<option value="existing" selected>Existing MKV files</option>
+						<option value="copies">New .repaired.mkv copies</option>
+					</select>
+				</label>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-remove-languages ${removeLanguages.size && affected.length && !queueingGroup ? "" : "disabled"}>
+					Remove ${removeLanguages.size} language${removeLanguages.size === 1 ? "" : "s"} from ${affected.length} file${affected.length === 1 ? "" : "s"}
+				</button>
+			</div>
+		</div>
+	</details>`;
+}
+
+export function handleRepairAuditLanguagesChange(event: Event): void {
+	const input = event.target instanceof HTMLInputElement ? event.target : null;
+	const language = input?.dataset.auditRemoveLanguage;
+	if (!input || language === undefined || queueingGroup) return;
+	if (input.checked) removeLanguages.add(language);
+	else removeLanguages.delete(language);
+	renderLanguages();
+}
+
+export function handleRepairAuditLanguagesClick(event: MouseEvent): void {
+	if (queueingGroup || !audit) return;
+	const target = event.target instanceof Element ? event.target : null;
+	if (target?.closest("[data-audit-select-partial]")) {
+		for (const lang of audit.languages) if (lang.fileCount < audit.files.length) removeLanguages.add(lang.language);
+		renderLanguages();
+		return;
+	}
+	if (target?.closest("[data-audit-remove-languages]")) void queueLanguageRemoval();
+}
+
+async function queueLanguageRemoval(): Promise<void> {
+	if (!audit || !removeLanguages.size || queueingGroup) return;
+	const currentAudit = audit;
+	const languages = [...removeLanguages];
+	const files = audit.files.filter((file) => file.tracks.some((track) => track.type === "subtitles" && removeLanguages.has(track.language)));
+	if (!files.length) return;
+	const busy = files.find((file) => queuedPaths.has(file.path));
+	if (busy) {
+		byId("repair-audit-status").textContent = `${busy.filename} already has queued changes. Audit again after they finish.`;
+		return;
+	}
+	const replaceTarget = (byId("repair-audit-languages-save-mode") as HTMLSelectElement).value === "existing";
+	const where = replaceTarget ? "The files are rewritten in place." : "New .repaired.mkv copies are written next to them.";
+	if (!confirm(`Remove every subtitle track in ${languages.join(", ")} from ${files.length} file${files.length === 1 ? "" : "s"}?\n\n${where}`)) return;
+	queueingGroup = true;
+	buttonById("repair-audit-pick-folder-btn").disabled = true;
+	renderLanguages();
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} files...`;
+	try {
+		const result = await removeRepairAuditLanguages({ paths: files.map((file) => file.path), languages, replaceTarget });
+		if (audit === currentAudit) {
+			files.forEach((file) => queuedPaths.add(file.path));
+			removeLanguages.clear();
+			byId("repair-audit-status").textContent =
+				`Queued ${result.jobIds.length} repairs removing ${languages.join(", ")}. Follow their progress in the job list. Audit again after completion to see the updated tracks.`;
+		}
+		void update().catch(() => {});
+	} catch (error) {
+		if (audit === currentAudit) byId("repair-audit-status").textContent = errorMessage(error);
+	} finally {
+		queueingGroup = false;
+		buttonById("repair-audit-pick-folder-btn").disabled = false;
+		if (audit === currentAudit) renderAudit();
+	}
 }
 
 async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: string): Promise<void> {
@@ -186,6 +322,9 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	editingGroup = null;
 	groupSubtitles = [];
 	queuedPaths.clear();
+	removeLanguages.clear();
+	languagesOpen = null;
+	byId("repair-audit-languages").innerHTML = "";
 	byId("repair-audit-status").textContent = "";
 	byId("repair-audit-modal").style.display = "";
 	byId("repair-audit-title-note").textContent = label || options.path || "Completed encoding folder";

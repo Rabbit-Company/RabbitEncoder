@@ -9,6 +9,8 @@ import type {
 	RepairAuditGroup,
 	RepairAuditTrack,
 	RepairAuditGroupEdit,
+	RepairAuditLanguage,
+	RepairAuditLanguageRemoval,
 	RepairFolderAudit,
 	RepairPlan,
 	RepairSubtitleTrack,
@@ -352,7 +354,66 @@ export function groupRepairAuditFiles(rawFiles: Array<Omit<RepairAuditFile, "gro
 		count: entry.count,
 		representativePath: rawFiles[entry.firstIndex]!.path,
 	}));
-	return { path, files, groups };
+	return { path, files, groups, languages: auditLanguages(rawFiles) };
+}
+
+/** Each subtitle language of the files, the most widespread first, with the files it is missing from. */
+export function auditLanguages(files: Pick<RepairAuditFile, "filename" | "tracks">[]): RepairAuditLanguage[] {
+	const byLanguage = new Map<string, { files: Set<string>; tracks: number }>();
+	for (const file of files) {
+		for (const track of file.tracks) {
+			if (track.type !== "subtitles") continue;
+			const entry = byLanguage.get(track.language) ?? { files: new Set<string>(), tracks: 0 };
+			entry.files.add(file.filename);
+			entry.tracks++;
+			byLanguage.set(track.language, entry);
+		}
+	}
+	return [...byLanguage]
+		.map(([language, entry]) => ({
+			language,
+			fileCount: entry.files.size,
+			trackCount: entry.tracks,
+			missingFrom: files.map((file) => file.filename).filter((name) => !entry.files.has(name)),
+		}))
+		.sort((a, b) => b.fileCount - a.fileCount || a.language.localeCompare(b.language));
+}
+
+/**
+ * Plans that drop every subtitle track in the chosen languages and keep the
+ * rest as they are. Files without any of those languages are left out.
+ */
+export function buildRepairLanguageRemovalPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], removal: RepairAuditLanguageRemoval): RepairPlan[] {
+	if (!Array.isArray(removal.languages) || !removal.languages.length) throw new Error("Choose at least one language to remove");
+	const remove = new Set(removal.languages.filter((language) => typeof language === "string"));
+	const plans = files.flatMap((file) => {
+		const subtitles = file.tracks.filter((track) => track.type === "subtitles");
+		if (!subtitles.some((track) => remove.has(track.language))) return [];
+		const kept = subtitles.filter((track) => !remove.has(track.language));
+		return [
+			sanitizeRepairPlan({
+				targetPath: file.path,
+				replaceTarget: !!removal.replaceTarget,
+				tracks: kept.map((track, order) => ({
+					title: track.title,
+					language: track.language,
+					isDefault: track.isDefault,
+					isForced: track.isForced,
+					isEnabled: track.isEnabled,
+					isHearingImpaired: track.isHearingImpaired,
+					isOriginal: track.isOriginal,
+					isCommentary: track.isCommentary,
+					source: "target",
+					trackId: track.id,
+					mode: "copy",
+					order,
+					compression: "preserve",
+				})),
+			}),
+		];
+	});
+	if (!plans.length) throw new Error("None of the files have subtitles in those languages");
+	return plans;
 }
 
 /** Match subtitles by their ordered position, since MKV track IDs can differ between episodes. */

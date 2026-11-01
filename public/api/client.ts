@@ -17,6 +17,7 @@ import type {
 	PreviewState,
 	RepairFolderAudit,
 	RepairAuditGroupEdit,
+	RepairAuditLanguageRemoval,
 	RepairBatchPairing,
 	RepairInspection,
 	RepairLayoutTrackPlan,
@@ -267,6 +268,18 @@ export async function createRepairAuditGroupJobs(edit: RepairAuditGroupEdit): Pr
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue group edits");
+	return data;
+}
+
+/** Queues one repair per file that drops every subtitle track in the chosen languages. */
+export async function removeRepairAuditLanguages(removal: RepairAuditLanguageRemoval): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/remove-languages`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(removal),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the language removal");
 	return data;
 }
 

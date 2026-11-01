@@ -2395,6 +2395,69 @@ a.btn {
 	gap: 6px;
 }
 
+.repair-audit-languages {
+	margin: 0;
+}
+
+.repair-audit-language-section + .repair-audit-language-section {
+	margin-top: 12px;
+}
+
+.repair-audit-language-section > strong {
+	display: block;
+	margin-bottom: 6px;
+	font-size: 0.75rem;
+}
+
+.repair-audit-language-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: 6px;
+}
+
+.repair-audit-language {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 6px 8px;
+	font-size: 0.75rem;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+.repair-audit-language.is-partial {
+	border-color: var(--amber);
+}
+
+.repair-audit-language small {
+	flex-basis: 100%;
+	color: var(--amber);
+}
+
+.repair-audit-language-count {
+	margin-left: auto;
+	color: var(--text-2);
+}
+
+.repair-audit-language-count + .repair-audit-language-count {
+	margin-left: 0;
+}
+
+.repair-audit-language-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.repair-audit-language-actions .repair-audit-save-mode {
+	margin-top: 0;
+}
+
 .repair-audit-group-fields {
 	border: 0;
 	padding: 0;

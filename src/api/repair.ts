@@ -6,12 +6,14 @@ import {
 	MEDIA_EXTENSIONS,
 	type AppConfig,
 	type RepairAuditGroupEdit,
+	type RepairAuditLanguageRemoval,
 	type RepairInspectionFile,
 	type RepairPlan,
 	type RepairSourceLayout,
 } from "../core/types";
 import {
 	buildRepairAuditGroupPlans,
+	buildRepairLanguageRemovalPlans,
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
 	inspectRepairAuditFile,
@@ -103,6 +105,14 @@ function outputPathForJob(jobId: string, config: AppConfig): { targetPath: strin
 		targetPath = job.inputPath;
 	}
 	return { targetPath, sourcePath: existsSync(job.inputPath) && resolve(job.inputPath) !== resolve(targetPath) ? job.inputPath : undefined };
+}
+
+/** Repairs rewrite the file, so nothing else may still be queued or running on it. */
+function assertNoPendingJobs(paths: string[], action: string): void {
+	const busy = getAllJobs().find((job) => paths.includes(job.inputPath) && !["done", "error", "cancelled"].includes(job.status));
+	if (busy) throw new Error(`${basename(busy.inputPath)} already has an unfinished job. Finish or remove it before ${action}.`);
+	const cancelledRepair = getAllJobs().find((job) => job.kind === "repair" && paths.includes(job.inputPath) && job.status === "cancelled");
+	if (cancelledRepair) throw new Error(`${basename(cancelledRepair.inputPath)} has a cancelled repair. Remove it before ${action}.`);
 }
 
 async function inspectAuditPaths(inputs: { path: string; sourcePath?: string }[], folderPath: string | undefined, signal?: AbortSignal) {
@@ -249,11 +259,32 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 				c.req.signal,
 			);
 			const plans = buildRepairAuditGroupPlans(inspected.files, raw);
-			const busy = getAllJobs().find((job) => paths.includes(job.inputPath) && !["done", "error", "cancelled"].includes(job.status));
-			if (busy) throw new Error(`${basename(busy.inputPath)} already has an unfinished job. Finish or remove it before editing this group.`);
-			const cancelledRepair = getAllJobs().find((job) => job.kind === "repair" && paths.includes(job.inputPath) && job.status === "cancelled");
-			if (cancelledRepair) throw new Error(`${basename(cancelledRepair.inputPath)} has a cancelled repair. Remove it before editing this group.`);
+			assertNoPendingJobs(paths, "editing this group");
 			if (c.req.signal.aborted) throw new Error("Group edit request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** Removes every subtitle track in the chosen languages from the audited files, one repair job per file. */
+	app.post("/api/repair/audit/remove-languages", async (c) => {
+		try {
+			const raw = (await c.req.json()) as RepairAuditLanguageRemoval;
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(path, config, "Audit file")))];
+			const inspected = await inspectAuditPaths(
+				paths.map((path) => ({ path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairLanguageRemovalPlans(inspected.files, raw);
+			assertNoPendingJobs(
+				plans.map((plan) => plan.targetPath),
+				"removing languages",
+			);
+			if (c.req.signal.aborted) throw new Error("Language removal request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {

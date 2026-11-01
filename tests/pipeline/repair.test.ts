@@ -4,6 +4,7 @@ import {
 	buildRepairMkvmergeArgs,
 	buildRepairMkvpropeditArgs,
 	buildRepairAuditGroupPlans,
+	buildRepairLanguageRemovalPlans,
 	groupRepairAuditFiles,
 	isMetadataOnlyRepair,
 	repairAuditGroupLabel,
@@ -82,6 +83,51 @@ describe("subtitle repair plans", () => {
 		]);
 		expect(audit.files[4]!.differences).toEqual(["Subtitle 2 is Subtitle 1 in group A: en (Full Subtitles)"]);
 		expect(audit.files[5]!.differences).toEqual(["Extra Subtitle 9: ko (Full Subtitles)"]);
+	});
+
+	test("lists each subtitle language with the files it is missing from", () => {
+		const audit = groupRepairAuditFiles([
+			{
+				path: "/show/e01.mkv",
+				filename: "e01.mkv",
+				tracks: [
+					auditTrack("audio", "ja", "Japanese"),
+					auditTrack("subtitles", "en", "Full"),
+					auditTrack("subtitles", "en", "Signs"),
+					auditTrack("subtitles", "bn", "Full"),
+				],
+			},
+			{ path: "/show/e02.mkv", filename: "e02.mkv", tracks: [auditTrack("subtitles", "en", "Full"), auditTrack("subtitles", "fr", "Full")] },
+			{ path: "/show/e03.mkv", filename: "e03.mkv", tracks: [auditTrack("subtitles", "en", "Full"), auditTrack("subtitles", "fr", "Full")] },
+		]);
+		expect(audit.languages).toEqual([
+			{ language: "en", fileCount: 3, trackCount: 4, missingFrom: [] },
+			{ language: "fr", fileCount: 2, trackCount: 2, missingFrom: ["e01.mkv"] },
+			{ language: "bn", fileCount: 1, trackCount: 1, missingFrom: ["e02.mkv", "e03.mkv"] },
+		]);
+	});
+
+	test("removes chosen languages and keeps every other track as it is", () => {
+		const files = [
+			{
+				path: "/show/e01.mkv",
+				tracks: [
+					auditTrack("audio", "ja", "Japanese", { id: 1 }),
+					auditTrack("subtitles", "en", "Full", { id: 2, isDefault: true }),
+					auditTrack("subtitles", "bn", "Full [CR]", { id: 3 }),
+					auditTrack("subtitles", "fr", "Full [CR]", { id: 4, isDefault: true }),
+				],
+			},
+			{ path: "/show/e02.mkv", tracks: [auditTrack("subtitles", "en", "Full", { id: 5, isDefault: true })] },
+		];
+		const plans = buildRepairLanguageRemovalPlans(files, { paths: [], languages: ["bn"], replaceTarget: true });
+		expect(plans.map((plan) => plan.targetPath)).toEqual(["/show/e01.mkv"]);
+		expect(plans[0]!.tracks.map((track) => [track.trackId, track.language, track.title, track.isDefault, track.order, track.compression])).toEqual([
+			[2, "en", "Full", true, 0, "preserve"],
+			[4, "fr", "Full [CR]", true, 1, "preserve"],
+		]);
+		expect(plans[0]!.replaceTarget).toBe(true);
+		expect(() => buildRepairLanguageRemovalPlans(files, { paths: [], languages: ["cs"], replaceTarget: true })).toThrow("None of the files");
 	});
 
 	test("uses spreadsheet-style audit group labels", () => {
