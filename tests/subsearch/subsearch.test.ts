@@ -6,7 +6,8 @@ import { alignToReference } from "../../src/subsearch/align";
 import { dialogueCues, mapCue, retimeDocument, type Interval } from "../../src/subsearch/cues";
 import { decodeSubtitleBytes, toSubDocument } from "../../src/subsearch/formats";
 import { measureSync, rateCandidate, releaseMatch } from "../../src/subsearch/score";
-import { evaluateDownload, type EvaluatedCandidate } from "../../src/subsearch/search";
+import { evaluateDownload, mergeEpisodeListings, type EvaluatedCandidate } from "../../src/subsearch/search";
+import type { SubtitleListing } from "../../src/subsearch/opensubtitles";
 import { speechFromLoudness } from "../../src/subsearch/reference";
 
 function srt(cues: Interval[], text = (i: number) => `Line ${i}`): string {
@@ -206,5 +207,39 @@ describe("evaluateDownload", () => {
 			(f) => join(dir, `b.${f}`),
 		);
 		expect(candidate.rating!).toBeLessThan(40);
+	});
+});
+
+describe("mergeEpisodeListings", () => {
+	const listing = (id: number, release: string): SubtitleListing => ({
+		provider: "opensubtitles",
+		key: `os-${id}`,
+		fileId: id,
+		fileName: `${release}.srt`,
+		language: "en",
+		release,
+		downloads: 0,
+		hearingImpaired: false,
+		machineTranslated: false,
+		foreignPartsOnly: false,
+		trustedUploader: false,
+		hashMatch: false,
+		fps: 0,
+		uploader: "",
+		url: "",
+		featureTitle: "",
+	});
+
+	it("keeps what the series search found and only correctly named neighbours", () => {
+		const main = [listing(1, "[Erai-raws] Solo Leveling - 12 END")];
+		const series = [listing(1, "[Erai-raws] Solo Leveling - 12 END"), listing(2, "Solo.Leveling.S01E11.1080p.WEB")];
+		const neighbours = [
+			listing(3, "[Crunchyroll] Ore dake Level Up na Ken - 11"),
+			listing(4, "[Crunchyroll] Ore dake Level Up na Ken - 10"),
+			listing(5, "Solo.Leveling.1080p.WEB"),
+			listing(6, "Solo.Leveling.S02E11.1080p.WEB"),
+			listing(2, "Solo.Leveling.S01E11.1080p.WEB"),
+		];
+		expect(mergeEpisodeListings(main, series, neighbours, 1, 11).map((l) => l.key)).toEqual(["os-2", "os-3"]);
 	});
 });

@@ -217,8 +217,8 @@ function srt(cues: Interval[], text: string, shiftMs = 0): string {
 		offerExtras = false;
 		expect(job.status).toBe("done");
 		// The file already has English, so it is not among the extras.
-		// One search lists the target and the extra languages together.
-		expect(searchedLanguages).toEqual(["ar,de,es,fr,id,it,pt-br,ru,sl,zh-cn"]);
+		// Each search lists the target and the extra languages together. The second one looks at episode 2.
+		expect(searchedLanguages).toEqual(["ar,de,es,fr,id,it,pt-br,ru,sl,zh-cn", "ar,de,es,fr,id,it,pt-br,ru,sl,zh-cn"]);
 		expect((await tracks(job.inputPath)).map((t) => t.language).sort()).toEqual(["eng", "fre", "slv", "spa"]);
 		expect(await defaults(job.inputPath)).toMatchObject({ slv: true, spa: true, fre: true });
 	}, 60_000);

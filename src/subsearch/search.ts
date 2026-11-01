@@ -24,7 +24,7 @@ import {
 import { buildReference, type ReferenceTimeline } from "./reference";
 import { EXTRA_LANGUAGE_RESERVE } from "./languages";
 import { cleanPreferredSources, preferredSourceRank } from "./naming";
-import { measureSync, otherEpisode, priorPoints, rateCandidate, releaseMatch, type CandidateTraits, type SyncQuality } from "./score";
+import { measureSync, otherEpisode, priorPoints, rateCandidate, releaseEpisode, releaseMatch, type CandidateTraits, type SyncQuality } from "./score";
 
 /** A rating this high ends the search for a language early. */
 const EXCELLENT_RATING = 88;
@@ -321,6 +321,60 @@ export async function tryCandidate(result: SubtitleSearchResult, language: strin
 }
 
 /**
+ * More searches for an episode. A search by the episode's own IMDb ID misses
+ * subtitles filed only under the series, so the series is searched by season
+ * and episode too. The episodes before and after are searched for subtitles
+ * filed under the wrong number. A failed extra search is only logged.
+ */
+async function episodeSearches(
+	identity: MediaIdentity,
+	search: (identity: MediaIdentity) => Promise<SubtitleListing[]>,
+	signal?: AbortSignal,
+): Promise<{ series: SubtitleListing[]; neighbours: SubtitleListing[] }> {
+	const { imdbId: _, ...byNumber } = identity;
+	const attempt = async (id: MediaIdentity): Promise<SubtitleListing[]> => {
+		try {
+			return await search(id);
+		} catch (error) {
+			if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
+			Logger.warn(`[subsearch] Extra search for episode ${id.episode} failed: ${error instanceof Error ? error.message : String(error)}`);
+			return [];
+		}
+	};
+	const series = identity.imdbId ? await attempt(byNumber) : [];
+	const neighbours: SubtitleListing[] = [];
+	for (const episode of [identity.episode! - 1, identity.episode! + 1]) if (episode >= 1) neighbours.push(...(await attempt({ ...byNumber, episode })));
+	return { series, neighbours };
+}
+
+/**
+ * Listings the extra episode searches add to the main one. Those found under
+ * the series are kept like the main ones. Those found under the episodes next
+ * to it are kept only when their release name says this episode.
+ */
+export function mergeEpisodeListings(
+	main: SubtitleListing[],
+	series: SubtitleListing[],
+	neighbours: SubtitleListing[],
+	season: number | undefined,
+	episode: number,
+): SubtitleListing[] {
+	const seen = new Set(main.map((l) => l.key));
+	const out: SubtitleListing[] = [];
+	const add = (l: SubtitleListing) => {
+		if (seen.has(l.key)) return;
+		seen.add(l.key);
+		out.push(l);
+	};
+	series.forEach(add);
+	for (const l of neighbours) {
+		const named = releaseEpisode(l.release || l.fileName);
+		if (named && !otherEpisode(l.release || l.fileName, season, episode)) add(l);
+	}
+	return out;
+}
+
+/**
  * Finds subtitles for every language, downloads the most promising ones,
  * syncs each to the video and rates it. Per language the most preferred
  * source rated at or above the minimum score is chosen, then the best rating.
@@ -352,13 +406,12 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 	if (!wanted.length) throw new Error("Choose at least one language OpenSubtitles knows");
 
 	progress("Searching OpenSubtitles");
-	const listings = await searchOpenSubtitles(
-		account,
-		identity,
-		wanted.map((w) => w.os!),
-		hash,
-		signal,
-	);
+	const osLanguages = wanted.map((w) => w.os!);
+	const listings = await searchOpenSubtitles(account, identity, osLanguages, hash, signal);
+	if (identity.kind === "episode" && identity.episode !== undefined) {
+		const more = await episodeSearches(identity, (id) => searchOpenSubtitles(account, id, osLanguages, hash, signal), signal);
+		listings.push(...mergeEpisodeListings(listings, more.series, more.neighbours, identity.season, identity.episode));
+	}
 
 	const session: SearchSession = { opts, account, reference: null, listings: new Map(), durationMs, videoFps, hi, minScore };
 	let remaining: number | undefined;
