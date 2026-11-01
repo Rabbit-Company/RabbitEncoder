@@ -3,6 +3,22 @@ import { API } from "../config/api-base";
 import { byId, buttonById, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openPreviewReferencePicker } from "./repair";
+import {
+	chartGeometry,
+	chartSvg,
+	formatScore,
+	frameAt,
+	frameExtent,
+	METRIC_LABELS,
+	METRICS,
+	scoreSummary,
+	seriesColor,
+	tooltipHtml,
+	type ChartGeometry,
+	type FrameScores,
+	type MeasureState,
+	type MetricName,
+} from "./compare-measure";
 
 interface SourceRow {
 	path: string;
@@ -38,7 +54,9 @@ interface Session {
 	detail?: string;
 	error?: string;
 	sources: SessionSource[];
-	frames: Array<{ timeSec: number; images: boolean[] }>;
+	frames: Array<{ timeSec: number; images: boolean[]; scores?: Array<FrameScores | null> }>;
+	scoreError?: string;
+	measure?: MeasureState;
 }
 
 let rows: SourceRow[] = [];
@@ -47,6 +65,19 @@ let frame = 0;
 let source = 0;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 const imageUrls = new Map<string, Promise<string>>();
+/** Measure choices, kept between comparisons. */
+let measureInterval = "1";
+const measureMetrics = new Set<MetricName>(METRICS);
+let chartMetric: MetricName = "ssimulacra2";
+let chartHover: number | null = null;
+let chartGeo: ChartGeometry | null = null;
+/** Frames in view when the graph is zoomed, null for all of it. */
+let chartView: [number, number] | null = null;
+/** Pointer position and view when a drag on the graph began, and whether it has moved enough to pan. */
+let chartDrag: { x: number; view: [number, number]; moved: boolean } | null = null;
+/** When the last drag ended, so the click that follows it does not capture a frame. */
+let dragEndedAt = 0;
+let capturing = false;
 
 function setError(message: string): void {
 	const el = byId("compare-error");
@@ -297,6 +328,8 @@ function loadSession(next: Session): void {
 		imageUrls.clear();
 		frame = 0;
 		source = 0;
+		chartHover = null;
+		chartView = null;
 	}
 	session = next;
 	byId("compare-setup").style.display = "none";
@@ -308,9 +341,12 @@ function loadSession(next: Session): void {
 	if (next.status === "error") setError(next.error || "Comparison failed");
 	if (next.status === "cancelled") setError("Comparison cancelled");
 	byId("compare-viewer").style.display = next.status === "done" ? "" : "none";
-	if (next.status === "done") renderViewer();
+	if (next.status === "done") {
+		renderViewer();
+		renderMeasure();
+	}
 	stopPolling();
-	if (running) pollTimer = setTimeout(() => void poll(next.id), 1000);
+	if (running || next.measure?.status === "running") pollTimer = setTimeout(() => void poll(next.id), running ? 1000 : 1500);
 }
 
 async function poll(id: string): Promise<void> {
@@ -360,10 +396,11 @@ function renderViewer(): void {
 	if (!session) return;
 	const current = session.frames[frame]!;
 	byId("compare-tabs").innerHTML = session.sources
-		.map(
-			(src, i) =>
-				`<button class="btn btn-sm ${i === source ? "btn-primary" : "btn-ghost"}" type="button" data-compare-source="${i}" ${current.images[i] ? "" : "disabled"}>${i + 1} · ${escapeHtml(src.label)}</button>`,
-		)
+		.map((src, i) => {
+			const score = current.scores?.[i]?.ssimulacra2;
+			const badge = score !== undefined ? ` <span class="compare-tab-score" title="SSIMULACRA2 against 1">${score.toFixed(1)}</span>` : "";
+			return `<button class="btn btn-sm ${i === source ? "btn-primary" : "btn-ghost"}" type="button" data-compare-source="${i}" ${current.images[i] ? "" : "disabled"}>${i + 1} · ${escapeHtml(src.label)}${badge}</button>`;
+		})
 		.join("");
 	const src = session.sources[source]!;
 	byId("compare-frame-label").textContent = `Frame ${frame + 1} of ${session.frames.length} · ${formatTime(current.timeSec)}`;
@@ -380,7 +417,17 @@ function renderViewer(): void {
 		.filter(Boolean)
 		.join(" · ");
 	byId("compare-source-info").textContent = info;
+	const scores = current.scores?.[source];
+	byId("compare-scores").textContent =
+		source === 0
+			? "Reference for the scores"
+			: scores
+				? `Against 1: ${scoreSummary(scores)}`
+				: current.scores
+					? "No score, the image differs in size from video 1"
+					: "";
 	const warnings = session.sources.map((s) => (s.warning ? `${s.label}: ${s.warning}` : "")).filter(Boolean);
+	if (session.scoreError) warnings.push(`Scores: ${session.scoreError}`);
 	byId("compare-warnings").textContent = warnings.join("\n");
 	byId("compare-warnings").style.display = warnings.length ? "" : "none";
 
@@ -460,4 +507,310 @@ export function handleCompareKey(event: KeyboardEvent): void {
 	else if (event.key === "ArrowLeft") selectFrame(frame - 1);
 	else return;
 	event.preventDefault();
+}
+
+/** How to read each metric, shown under the chart for the one picked. */
+const METRIC_GUIDES: Record<MetricName, string> = {
+	ssimulacra2:
+		"SSIMULACRA2 follows what people see, from 100 for identical pictures down. Above 90 is visually lossless, 80 very good, 70 good, below 50 clearly degraded.",
+	xpsnr:
+		"XPSNR is a PSNR in dB weighted by how visible each error is, 100 for identical pictures. As a rough guide, above 45 dB is near transparent, 40 to 45 very good, 35 to 40 good, below 30 clearly degraded. It is best for ranking encodes of the same source.",
+	vmaf: "VMAF predicts how a viewer rates the video at TV distance, up to about 100. Above 95 is indistinguishable for most viewers, 90 high quality, 80 good, below 70 visibly worse. It can miss banding and fine detail loss that SSIMULACRA2 catches.",
+};
+
+const INTERVALS: Array<[string, string]> = [
+	["frame", "Every frame"],
+	["0.25", "4 per second"],
+	["0.5", "2 per second"],
+	["1", "1 per second"],
+	["2", "Every 2 seconds"],
+	["5", "Every 5 seconds"],
+	["10", "Every 10 seconds"],
+];
+
+function intervalText(interval: "frame" | number): string {
+	return INTERVALS.find(([v]) => v === String(interval))?.[1].toLowerCase() ?? `every ${interval} s`;
+}
+
+/** The Measure panel: options, progress, the chart with one line per encode, and the summary table. */
+function renderMeasure(): void {
+	const host = byId("compare-measure");
+	if (!session) return void (host.innerHTML = "");
+	const m = session.measure;
+	const running = m?.status === "running";
+	const labels = session.sources.map((s, i) => `${i + 1} · ${s.label}`);
+	const controls = `<div class="compare-measure-controls">
+		<label>Sample <select class="select-input" id="compare-measure-interval" ${running ? "disabled" : ""}>${INTERVALS.map(([v, t]) => `<option value="${v}" ${v === measureInterval ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+		${METRICS.map((metric) => `<label class="compare-measure-metric"><input type="checkbox" data-measure-metric="${metric}" ${measureMetrics.has(metric) ? "checked" : ""} ${running ? "disabled" : ""}> ${METRIC_LABELS[metric]}</label>`).join("")}
+		${
+			running
+				? '<button class="btn btn-ghost btn-sm" type="button" data-measure-cancel>Cancel</button>'
+				: `<button class="btn btn-primary btn-sm" type="button" data-measure-start ${measureMetrics.size ? "" : "disabled"}>${m ? "Measure again" : "Measure"}</button>`
+		}
+	</div>`;
+	const head = `<div class="compare-measure-head"><strong>Measure the whole video</strong><span class="hdr-note">Scores every other video against video 1 over the stretch they share. Higher is better. Click the graph to capture that frame.</span></div>`;
+	let body = "";
+	if (m && running)
+		body = `<div class="compare-progress-bar"><div style="width:${m.progress}%"></div></div><div class="repair-subtitle">${escapeHtml(m.detail || "Measuring")}... ${m.progress}%</div>`;
+	if (m?.status === "error") body += `<div class="sub-preview-error">${escapeHtml(m.error || "Measuring failed")}</div>`;
+	if (m?.status === "cancelled") body += '<div class="repair-subtitle">Measuring was cancelled.</div>';
+	if (m) body += measureResult(m, labels);
+	host.innerHTML = `${head}${controls}${body}`;
+}
+
+function measureResult(m: MeasureState, labels: string[]): string {
+	const skipped = m.series
+		.filter((s) => s.skipped)
+		.map((s) => `<div class="compare-warnings">${escapeHtml(labels[s.source] ?? "")}: ${escapeHtml(s.skipped!)}</div>`)
+		.join("");
+	const measured = m.series.filter((s) => !s.skipped && Object.keys(s.values).length);
+	if (!measured.length) return skipped;
+	if (!m.metrics.includes(chartMetric)) chartMetric = m.metrics[0]!;
+	const tabs = m.metrics
+		.map(
+			(metric) =>
+				`<button class="btn btn-sm ${metric === chartMetric ? "btn-primary" : "btn-ghost"}" type="button" data-measure-chart="${metric}">${METRIC_LABELS[metric]}</button>`,
+		)
+		.join("");
+	const zoom = `<span class="compare-measure-zoom">
+		<button class="btn btn-ghost btn-sm" type="button" data-measure-zoom="out" title="Zoom out">&minus;</button>
+		<button class="btn btn-ghost btn-sm" type="button" data-measure-zoom="in" title="Zoom in">+</button>
+		<button class="btn btn-ghost btn-sm" type="button" data-measure-zoom="reset" title="Show the whole video" ${chartView ? "" : "disabled"}>Reset zoom</button>
+	</span>`;
+	const legend = measured
+		.map(
+			(s) =>
+				`<span class="cm-legend-item"><span class="cm-key" style="background:${seriesColor(s.source)}"></span>${escapeHtml(labels[s.source] ?? "")}</span>`,
+		)
+		.join("");
+	const width = Math.max(320, byId("compare-measure").clientWidth || 900);
+	chartGeo = chartGeometry(m, chartMetric, width, chartView);
+	const chart = chartGeo ? chartSvg(m, chartMetric, chartGeo, chartHover, labels) : "";
+	const rows = measured
+		.map((s) => {
+			const cells = m.metrics.map((metric) => {
+				const sum = s.summary[metric];
+				if (!sum) return '<td class="cm-group-start">–</td><td>–</td><td>–</td>';
+				const at = m.videoStart + sum.minFrame / m.fps;
+				return `<td class="cm-group-start">${formatScore(metric, sum.mean)}</td><td>${formatScore(metric, sum.p5)}</td><td><button class="btn btn-ghost btn-sm" type="button" data-measure-capture="${at}" title="Capture this frame">${formatScore(metric, sum.min)} at ${formatTime(at)}</button></td>`;
+			});
+			return `<tr><th><span class="cm-key" style="background:${seriesColor(s.source)}"></span>${escapeHtml(labels[s.source] ?? "")}</th>${cells.join("")}</tr>`;
+		})
+		.join("");
+	const samples = Math.max(...measured.map((s) => Math.max(...Object.values(s.values).map((v) => v?.length ?? 0))));
+	return `${skipped}
+		<div class="compare-measure-tabs">${tabs}<span class="hdr-note">${samples.toLocaleString()} frames, ${intervalText(m.interval)}</span>${zoom}</div>
+		<div class="hdr-note">Scroll on the graph to zoom, drag to move along it.</div>
+		<div class="cm-legend">${legend}</div>
+		<div class="cm-chart-wrap" id="compare-chart">${chart}<div class="cm-tip" id="compare-chart-tip" hidden></div></div>
+		<table class="cm-table">
+			<thead><tr><th rowspan="2">Video</th>${m.metrics.map((metric) => `<th colspan="3" class="cm-group cm-group-start">${METRIC_LABELS[metric]}</th>`).join("")}</tr>
+			<tr>${m.metrics.map(() => '<th class="cm-group-start">Mean</th><th>5% low</th><th>Worst</th>').join("")}</tr></thead>
+			<tbody>${rows}</tbody>
+		</table>
+		<div class="hdr-note">${METRIC_GUIDES[chartMetric]} 5% low is the score the worst 5% of measured frames fall below, which shows dips better than the mean.</div>`;
+}
+
+export async function startMeasureRun(): Promise<void> {
+	if (!session) return;
+	setError("");
+	try {
+		const res = await authFetch(`${API}/api/compare/${session.id}/measure`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				interval: measureInterval === "frame" ? "frame" : Number(measureInterval),
+				metrics: METRICS.filter((m) => measureMetrics.has(m)),
+			}),
+		});
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.error || "Measuring failed to start");
+		chartHover = null;
+		chartView = null;
+		loadSession(data);
+	} catch (error) {
+		setError(errorMessage(error));
+	}
+}
+
+async function cancelMeasureRun(): Promise<void> {
+	if (!session) return;
+	await authFetch(`${API}/api/compare/${session.id}/measure`, { method: "DELETE" }).catch(() => {});
+	await poll(session.id);
+}
+
+/** Captures the moment from every video and shows it, or shows the frame already captured there. */
+async function captureAt(timeSec: number): Promise<void> {
+	if (!session || capturing) return;
+	capturing = true;
+	setError("");
+	byId("compare-frame-label").textContent = `Capturing ${formatTime(timeSec)}...`;
+	try {
+		const res = await authFetch(`${API}/api/compare/${session.id}/frames`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ timeSec }),
+		});
+		const data = await res.json();
+		if (!res.ok) throw new Error(data.error || "Capture failed");
+		session = data.session;
+		frame = data.frame;
+		const shown = session!.frames[frame]!.images;
+		if (!shown[source]) source = Math.max(0, shown.indexOf(true));
+		renderViewer();
+		renderMeasure();
+		byId("compare-image").scrollIntoView({ behavior: "smooth", block: "center" });
+	} catch (error) {
+		setError(errorMessage(error));
+		renderViewer();
+	} finally {
+		capturing = false;
+	}
+}
+
+export function handleCompareMeasureClick(event: MouseEvent): void {
+	const target = event.target instanceof Element ? event.target : null;
+	if (!target || !session) return;
+	if (target.closest("[data-measure-start]")) return void startMeasureRun();
+	if (target.closest("[data-measure-cancel]")) return void cancelMeasureRun();
+	const tab = target.closest<HTMLElement>("[data-measure-chart]");
+	if (tab) {
+		chartMetric = tab.dataset.measureChart as MetricName;
+		chartHover = null;
+		return renderMeasure();
+	}
+	const zoom = target.closest<HTMLElement>("[data-measure-zoom]");
+	if (zoom) {
+		const how = zoom.dataset.measureZoom;
+		if (how === "reset") setChartView(null);
+		else zoomChart(how === "in" ? 0.6 : 1 / 0.6, 0.5);
+		return;
+	}
+	const capture = target.closest<HTMLElement>("[data-measure-capture]");
+	if (capture) return void captureAt(Number(capture.dataset.measureCapture));
+	if (target.closest(".cm-chart") && chartHover !== null && session.measure && Date.now() - dragEndedAt > 300)
+		void captureAt(session.measure.videoStart + chartHover / session.measure.fps);
+}
+
+/** Shortest stretch the graph zooms to: ten samples, and at least two seconds. */
+function minimumSpan(m: MeasureState): number {
+	return Math.max(10 * m.step, Math.round(2 * m.fps));
+}
+
+/** Shows `view` of the graph, kept inside the measured frames, or all of it. */
+function setChartView(view: [number, number] | null): void {
+	const m = session?.measure;
+	const extent = m ? frameExtent(m, chartMetric) : null;
+	if (!m || !extent) return;
+	if (view) {
+		const span = Math.min(extent[1] - extent[0], Math.max(minimumSpan(m), view[1] - view[0]));
+		const start = Math.min(Math.max(extent[0], view[0]), extent[1] - span);
+		view = [start, start + span];
+		if (view[0] <= extent[0] && view[1] >= extent[1]) view = null;
+	}
+	chartView = view;
+	chartHover = null;
+	renderMeasure();
+}
+
+/** Zooms by `factor` around a point given as a share of the plot width. */
+function zoomChart(factor: number, at: number): void {
+	const m = session?.measure;
+	const extent = m ? frameExtent(m, chartMetric) : null;
+	if (!m || !extent) return;
+	const [lo, hi] = chartView ?? extent;
+	const span = (hi - lo) * factor;
+	const center = lo + (hi - lo) * at;
+	setChartView([center - span * at, center + span * (1 - at)]);
+}
+
+/** Share of the plot width under the pointer. */
+function plotShare(svg: Element, clientX: number): number {
+	if (!chartGeo) return 0.5;
+	const box = svg.getBoundingClientRect();
+	const x = ((clientX - box.left) / box.width) * chartGeo.width;
+	return Math.min(1, Math.max(0, (x - chartGeo.left) / (chartGeo.right - chartGeo.left)));
+}
+
+export function handleCompareMeasureWheel(event: WheelEvent): void {
+	const svg = event.target instanceof Element ? event.target.closest(".cm-chart") : null;
+	if (!svg || !session?.measure) return;
+	event.preventDefault();
+	zoomChart(event.deltaY > 0 ? 1.2 : 1 / 1.2, plotShare(svg, event.clientX));
+}
+
+export function handleCompareMeasureDown(event: MouseEvent): void {
+	const svg = event.target instanceof Element ? event.target.closest(".cm-chart") : null;
+	const m = session?.measure;
+	const extent = m ? frameExtent(m, chartMetric) : null;
+	if (!svg || !extent || event.button !== 0) return;
+	chartDrag = { x: event.clientX, view: chartView ?? extent, moved: false };
+	event.preventDefault();
+}
+
+/** Drags the zoomed graph along. A drag that barely moved is a click, which captures the frame. */
+export function handleCompareMeasureDrag(event: MouseEvent): void {
+	if (!chartDrag || !chartGeo) return;
+	const dx = event.clientX - chartDrag.x;
+	if (!chartDrag.moved && Math.abs(dx) < 4) return;
+	chartDrag.moved = true;
+	const svg = byId("compare-measure").querySelector(".cm-chart");
+	if (!svg) return;
+	const plotPixels = ((chartGeo.right - chartGeo.left) / chartGeo.width) * svg.getBoundingClientRect().width;
+	const [lo, hi] = chartDrag.view;
+	const shift = (dx / plotPixels) * (hi - lo);
+	setChartView([lo - shift, hi - shift]);
+}
+
+export function handleCompareMeasureUp(): void {
+	if (!chartDrag) return;
+	if (chartDrag.moved) dragEndedAt = Date.now();
+	chartDrag = null;
+}
+
+export function handleCompareMeasureChange(event: Event): void {
+	const input = event.target as HTMLInputElement;
+	if (input.id === "compare-measure-interval") measureInterval = input.value;
+	const metric = input.dataset.measureMetric as MetricName | undefined;
+	if (metric) {
+		if (input.checked) measureMetrics.add(metric);
+		else measureMetrics.delete(metric);
+		renderMeasure();
+	}
+}
+
+/** Crosshair and tooltip follow the pointer, snapped to the nearest measured frame. */
+export function handleCompareMeasureMove(event: MouseEvent): void {
+	if (chartDrag?.moved) return;
+	const m = session?.measure;
+	const svg = event.target instanceof Element ? event.target.closest<SVGSVGElement>(".cm-chart") : null;
+	if (!m || !chartGeo || !svg) return void (chartHover !== null && handleCompareMeasureLeave());
+	const box = svg.getBoundingClientRect();
+	const x = ((event.clientX - box.left) / box.width) * chartGeo.width;
+	if (x < chartGeo.left - 4 || x > chartGeo.right + 4) return;
+	const hovered = frameAt(chartGeo, m, x);
+	if (hovered === chartHover) return;
+	chartHover = hovered;
+	const labels = session!.sources.map((s, i) => `${i + 1} · ${s.label}`);
+	const wrap = byId("compare-chart");
+	const tip = byId("compare-chart-tip");
+	wrap.querySelector("svg")!.outerHTML = chartSvg(m, chartMetric, chartGeo, chartHover, labels);
+	tip.innerHTML = tooltipHtml(m, chartMetric, chartHover, labels);
+	tip.hidden = false;
+	const px =
+		((chartGeo.left + ((chartHover - chartGeo.minFrame) / (chartGeo.maxFrame - chartGeo.minFrame)) * (chartGeo.right - chartGeo.left)) / chartGeo.width) *
+		box.width;
+	const flip = px > box.width * 0.65;
+	tip.style.left = flip ? "" : `${px + 12}px`;
+	tip.style.right = flip ? `${box.width - px + 12}px` : "";
+}
+
+export function handleCompareMeasureLeave(): void {
+	if (chartHover === null || !session?.measure || !chartGeo) return;
+	chartHover = null;
+	const labels = session.sources.map((s, i) => `${i + 1} · ${s.label}`);
+	const svg = byId("compare-measure").querySelector(".cm-chart");
+	if (svg) svg.outerHTML = chartSvg(session.measure, chartMetric, chartGeo, null, labels);
+	const tip = document.getElementById("compare-chart-tip");
+	if (tip) tip.hidden = true;
 }

@@ -3,18 +3,23 @@ import type { AppConfig } from "../core/types";
 import { resolveAllowedMediaFile } from "./repair";
 import { buildZip } from "../core/zip";
 import {
+	addFrame,
+	cancelMeasure,
 	cancelSession,
 	clearSessions,
 	comparisonArchiveEntries,
 	compareRoot,
 	deleteSession,
+	getSession,
 	listSessions,
-	loadSession,
 	readImage,
 	startCompare,
+	startMeasure,
 	type CompareFrameMode,
 	type CompareSourceInput,
+	type MeasureInterval,
 } from "../compare/compare";
+import { METRIC_NAMES, type MetricName } from "../compare/metrics";
 
 const MAX_SOURCES = 8;
 const MAX_FRAMES = 50;
@@ -80,8 +85,37 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.get("/api/compare/:id", (c) => {
-		const session = loadSession(root, c.params.id!);
+		const session = getSession(root, c.params.id!);
 		return session ? c.json(session) : c.json({ error: "Comparison not found" }, 404);
+	});
+
+	app.post("/api/compare/:id/measure", async (c) => {
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as { interval?: unknown; metrics?: unknown };
+			const interval = body.interval === "frame" ? "frame" : Number(body.interval);
+			if (interval !== "frame" && (!Number.isFinite(interval) || interval < 0.1 || interval > 60))
+				throw new Error("Measure every frame, or every 0.1 to 60 seconds");
+			const metrics = Array.isArray(body.metrics) ? METRIC_NAMES.filter((m) => (body.metrics as unknown[]).includes(m)) : [];
+			if (!metrics.length) throw new Error(`Choose at least one of ${METRIC_NAMES.join(", ")}`);
+			return c.json(startMeasure(root, c.params.id!, { interval: interval as MeasureInterval, metrics: metrics as MetricName[] }));
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
+	});
+
+	app.delete("/api/compare/:id/measure", (c) => (cancelMeasure(c.params.id!) ? c.json({ ok: true }) : c.json({ error: "Nothing is being measured" }, 404)));
+
+	/** Captures one more moment, given in seconds of the first source. */
+	app.post("/api/compare/:id/frames", async (c) => {
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as { timeSec?: unknown };
+			const timeSec = Number(body.timeSec);
+			if (!Number.isFinite(timeSec) || timeSec < 0) throw new Error("timeSec must be positive seconds");
+			const frame = await addFrame(root, c.params.id!, timeSec, c.req.signal);
+			return c.json({ frame, session: getSession(root, c.params.id!) });
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
 	});
 
 	app.get("/api/compare/:id/image/:frame/:source", (c) => {
@@ -94,7 +128,7 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.get("/api/compare/:id/download", (c) => {
-		const session = loadSession(root, c.params.id!);
+		const session = getSession(root, c.params.id!);
 		if (!session || session.status !== "done") return c.json({ error: "Comparison not found or not finished" }, 404);
 		const zip = buildZip(comparisonArchiveEntries(root, session), new Date(session.createdAt));
 		const name = `compare_${session.sources.map((s) => s.label.replace(/[^\p{L}\p{N}._-]+/gu, "_")).join("_vs_")}.zip`;
@@ -107,6 +141,7 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 
 	app.delete("/api/compare/:id", (c) => {
 		if (cancelSession(c.params.id!)) return c.json({ ok: true, cancelled: true });
+		cancelMeasure(c.params.id!);
 		return deleteSession(root, c.params.id!) ? c.json({ ok: true }) : c.json({ error: "Comparison not found" }, 404);
 	});
 }

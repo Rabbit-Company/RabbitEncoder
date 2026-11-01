@@ -1,5 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { bestLag, comparisonFileName, nearestFrame, pickShift, planFrameTimes, planOutputSizes, seekForFrame, shiftErrors } from "../../src/compare/compare";
+import {
+	bestLag,
+	comparisonFileName,
+	measureBlocker,
+	measurementCsv,
+	measureStarts,
+	nearestFrame,
+	pickShift,
+	planFrameTimes,
+	planOutputSizes,
+	seekForFrame,
+	shiftErrors,
+} from "../../src/compare/compare";
+import { parseVmafLog, summarize } from "../../src/compare/metrics";
 import { buildZip } from "../../src/core/zip";
 
 /** Envelope-like noise with a fixed seed, so the test is repeatable. */
@@ -143,5 +156,62 @@ describe("picture check", () => {
 	it("keeps no shift when nothing fits clearly better", () => {
 		expect(pickShift([1, 1, 0.95, 1, 1], 2)).toBe(0);
 		expect(pickShift([1, 0.5, 1, 1, 1], 2)).toBe(-1);
+	});
+});
+
+describe("measuring", () => {
+	it("lines up the first measured frames on a sample", () => {
+		// The encode starts 12 frames into the reference.
+		expect(measureStarts(-12, 24)).toEqual({ refStart: 24, distStart: 12 });
+		expect(measureStarts(-12, 1)).toEqual({ refStart: 12, distStart: 0 });
+		// The encode has 30 extra frames at its start.
+		expect(measureStarts(30, 24)).toEqual({ refStart: 0, distStart: 30 });
+	});
+
+	it("refuses sources that cannot be paired frame for frame", () => {
+		const ref = { fps: 23.976, width: 1920, height: 1080, sar: 1, transfer: "bt709" };
+		expect(measureBlocker(ref, { ...ref, width: 1280, height: 720 })).toBeUndefined();
+		expect(measureBlocker(ref, { ...ref, fps: 25 })).toContain("frame rate");
+		expect(measureBlocker(ref, { ...ref, height: 800 })).toContain("shape");
+		expect(measureBlocker(ref, { ...ref, transfer: "smpte2084" })).toContain("HDR");
+	});
+
+	it("summarizes a metric with its worst frame", () => {
+		const values = [80, 90, null, 40, ...Array.from({ length: 16 }, () => 85)];
+		expect(summarize(values, 24, 24)).toEqual({ mean: 82.63, p5: 40, min: 40, minFrame: 96, count: 19 });
+		expect(summarize([null, null], 0, 1)).toBeUndefined();
+	});
+
+	it("reads libvmaf logs numbered by input frame or one after another", () => {
+		const log = (nums: number[]) => JSON.stringify({ frames: nums.map((frameNum, i) => ({ frameNum, metrics: { vmaf: 90 + i } })) });
+		expect(parseVmafLog(log([0, 24, 48]), 24)).toEqual([90, 91, 92]);
+		expect(parseVmafLog(log([0, 1, 2]), 24)).toEqual([90, 91, 92]);
+		expect(parseVmafLog(log([0, 1, 2]), 1)).toEqual([90, 91, 92]);
+	});
+
+	it("writes one CSV row per measured frame", () => {
+		const csv = measurementCsv({
+			id: "x",
+			createdAt: 0,
+			status: "done",
+			progress: 100,
+			sources: [
+				{ path: "/a.mkv", label: "Source", offsetMs: 0, offsetFrom: "first" },
+				{ path: "/b.mkv", label: 'Enc "A"', offsetMs: 0, offsetFrom: "auto" },
+			],
+			frames: [],
+			measure: {
+				status: "done",
+				progress: 100,
+				interval: 1,
+				metrics: ["ssimulacra2", "vmaf"],
+				step: 24,
+				fps: 24,
+				videoStart: 0,
+				startedAt: 0,
+				series: [{ source: 1, firstFrame: 24, values: { ssimulacra2: [81.5, null], vmaf: [95, 96] }, summary: {} }],
+			},
+		});
+		expect(csv.split("\n")).toEqual(['frame,time,"Enc ""A"" SSIMULACRA2","Enc ""A"" VMAF"', "24,0:00:01.000,81.5,95", "48,0:00:02.000,,96", ""]);
 	});
 });

@@ -4441,7 +4441,7 @@ a.btn {
 }
 
 .compare-modal {
-	width: min(1400px, 96vw);
+	width: min(1800px, 98vw);
 	max-width: none;
 }
 
@@ -4559,7 +4559,8 @@ a.btn {
 	margin-bottom: 8px;
 }
 
-#compare-progress-fill {
+#compare-progress-fill,
+.compare-measure .compare-progress-bar > div {
 	height: 100%;
 	width: 0;
 	background: var(--accent, var(--green));
@@ -4614,6 +4615,208 @@ a.btn {
 	margin-top: 8px;
 	font-size: 0.8rem;
 	color: var(--text-1);
+}
+
+.compare-scores {
+	margin-top: 6px;
+	font-size: 0.8rem;
+	color: var(--text-0);
+	font-variant-numeric: tabular-nums;
+}
+
+.compare-scores:empty {
+	display: none;
+}
+
+.compare-tab-score {
+	margin-left: 4px;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: var(--bg-3);
+	color: var(--text-1);
+	font-size: 0.7rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.compare-measure {
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid var(--border-subtle);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.compare-measure-head {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.compare-measure-controls,
+.compare-measure-tabs {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	font-size: 0.8rem;
+}
+
+.compare-measure-metric {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.compare-measure-tabs .hdr-note {
+	margin-left: auto;
+}
+
+.compare-measure-zoom {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.cm-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 14px;
+	font-size: 0.75rem;
+	color: var(--text-1);
+}
+
+.cm-legend-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.cm-key {
+	display: inline-block;
+	width: 12px;
+	height: 3px;
+	border-radius: 2px;
+	margin-right: 6px;
+	vertical-align: middle;
+}
+
+.cm-legend-item .cm-key {
+	margin-right: 0;
+}
+
+.cm-chart-wrap {
+	position: relative;
+}
+
+.cm-chart {
+	display: block;
+	max-width: 100%;
+	cursor: crosshair;
+}
+
+.cm-grid {
+	stroke: var(--border-subtle);
+	stroke-width: 1;
+}
+
+.cm-baseline {
+	stroke: var(--border);
+	stroke-width: 1;
+}
+
+.cm-axis {
+	fill: var(--text-2);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.cm-line {
+	fill: none;
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.cm-crosshair {
+	stroke: var(--text-2);
+	stroke-width: 1;
+}
+
+.cm-dot {
+	stroke: var(--bg-1);
+	stroke-width: 2;
+}
+
+.cm-hit {
+	fill: transparent;
+}
+
+.cm-tip {
+	position: absolute;
+	top: 8px;
+	min-width: 170px;
+	padding: 8px 10px;
+	background: var(--bg-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	font-size: 0.75rem;
+	color: var(--text-0);
+	pointer-events: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.cm-tip-head {
+	color: var(--text-1);
+	margin-bottom: 4px;
+}
+
+.cm-tip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.cm-tip-row strong {
+	margin-left: auto;
+}
+
+.cm-tip-hint {
+	margin-top: 4px;
+	color: var(--text-2);
+}
+
+.cm-table {
+	border-collapse: collapse;
+	font-size: 0.75rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.cm-table th,
+.cm-table td {
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--border-subtle);
+	text-align: right;
+	white-space: nowrap;
+}
+
+.cm-table th[rowspan],
+.cm-table tbody th {
+	text-align: left;
+	font-weight: 500;
+}
+
+.cm-table thead th {
+	color: var(--text-1);
+	font-weight: 500;
+}
+
+.cm-table th.cm-group {
+	text-align: center;
+	color: var(--text-0);
+}
+
+.cm-table .cm-group-start {
+	border-left: 1px solid var(--border);
 }
 
 .compare-warnings {

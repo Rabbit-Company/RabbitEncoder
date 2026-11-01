@@ -101,6 +101,14 @@ import {
 	deleteCurrentCompare,
 	downloadAllCompare,
 	handleCompareKey,
+	handleCompareMeasureChange,
+	handleCompareMeasureClick,
+	handleCompareMeasureDown,
+	handleCompareMeasureDrag,
+	handleCompareMeasureLeave,
+	handleCompareMeasureMove,
+	handleCompareMeasureUp,
+	handleCompareMeasureWheel,
 	handleCompareModeChange,
 	handleCompareSourcesClick,
 	handleCompareSourcesInput,
@@ -371,6 +379,14 @@ export function initEventListeners() {
 	byId("compare-prev").addEventListener("click", comparePrevFrame);
 	byId("compare-next").addEventListener("click", compareNextFrame);
 	byId("compare-download-all").addEventListener("click", () => void downloadAllCompare());
+	byId("compare-measure").addEventListener("click", handleCompareMeasureClick);
+	byId("compare-measure").addEventListener("change", handleCompareMeasureChange);
+	byId("compare-measure").addEventListener("mousemove", handleCompareMeasureMove);
+	byId("compare-measure").addEventListener("mouseleave", handleCompareMeasureLeave);
+	byId("compare-measure").addEventListener("wheel", handleCompareMeasureWheel, { passive: false });
+	byId("compare-measure").addEventListener("mousedown", handleCompareMeasureDown);
+	window.addEventListener("mousemove", handleCompareMeasureDrag);
+	window.addEventListener("mouseup", handleCompareMeasureUp);
 	document.addEventListener("keydown", handleCompareKey);
 
 	byId("vs-reload-btn").onclick = async () => {

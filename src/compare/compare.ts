@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
 import { createSemaphore } from "../core/concurrency";
+import { measureImagePairs, measureVideoPair, summarize, METRIC_NAMES, type FrameScores, type MetricName, type MetricSummary, type VsMatrix } from "./metrics";
 
 /** Envelope rate for the fine alignment pass: one value per 10 ms. */
 const FINE_RATE = 100;
@@ -70,6 +71,9 @@ export interface CompareSourceState {
 	pictureShiftFrames?: number;
 	/** Colour tags set by hand, such as "full range, BT.601". */
 	colourOverride?: string;
+	/** The overrides themselves, for measuring later. */
+	range?: CompareSourceInput["range"];
+	matrix?: CompareSourceInput["matrix"];
 	warning?: string;
 }
 
@@ -78,6 +82,38 @@ export interface CompareFrameState {
 	timeSec: number;
 	/** Per source: whether the PNG exists. A source that ends earlier has no image. */
 	images: boolean[];
+	/** Per source: scores of its image against the first source's. None for the first source and for images that cannot be scored. */
+	scores?: Array<FrameScores | null>;
+}
+
+/** Every frame, or a frame about every so many seconds. */
+export type MeasureInterval = "frame" | number;
+
+export interface MeasureSeries {
+	source: number;
+	/** First measured frame of the first source. Samples follow every `step` frames. */
+	firstFrame: number;
+	values: Partial<Record<MetricName, Array<number | null>>>;
+	summary: Partial<Record<MetricName, MetricSummary>>;
+	/** Why this source was not measured. */
+	skipped?: string;
+}
+
+export interface MeasureState {
+	status: "running" | "done" | "error" | "cancelled";
+	progress: number;
+	detail?: string;
+	error?: string;
+	interval: MeasureInterval;
+	metrics: MetricName[];
+	/** Frames of the first source between samples. */
+	step: number;
+	/** The first source's frame rate and first frame position, to turn frames into times. */
+	fps: number;
+	videoStart: number;
+	startedAt: number;
+	finishedAt?: number;
+	series: MeasureSeries[];
 }
 
 export interface CompareSession {
@@ -89,6 +125,9 @@ export interface CompareSession {
 	error?: string;
 	sources: CompareSourceState[];
 	frames: CompareFrameState[];
+	/** Why the captured frames have no scores. */
+	scoreError?: string;
+	measure?: MeasureState;
 }
 
 interface VideoInfo {
@@ -154,7 +193,7 @@ export function deleteSession(root: string, id: string): boolean {
 export function clearSessions(root: string): number {
 	let removed = 0;
 	for (const s of listSessions(root)) {
-		if (running.has(s.id)) continue;
+		if (running.has(s.id) || live.has(s.id)) continue;
 		rmSync(sessionDir(root, s.id), { recursive: true, force: true });
 		removed++;
 	}
@@ -162,7 +201,7 @@ export function clearSessions(root: string): number {
 }
 
 function pruneSessions(root: string): void {
-	for (const old of listSessions(root).slice(MAX_SESSIONS)) rmSync(sessionDir(root, old.id), { recursive: true, force: true });
+	for (const old of listSessions(root).slice(MAX_SESSIONS)) if (!live.has(old.id)) rmSync(sessionDir(root, old.id), { recursive: true, force: true });
 }
 
 function parseRate(rate: unknown): number {
@@ -575,6 +614,33 @@ async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath
 }
 
 const running = new Map<string, AbortController>();
+const measuring = new Map<string, AbortController>();
+
+/**
+ * Sessions being worked on, held in memory, so a frame added while a
+ * measurement runs and the measurement itself change the same copy.
+ */
+const live = new Map<string, { session: CompareSession; holds: number }>();
+
+function hold(session: CompareSession): CompareSession {
+	const entry = live.get(session.id);
+	if (entry) {
+		entry.holds++;
+		return entry.session;
+	}
+	live.set(session.id, { session, holds: 1 });
+	return session;
+}
+
+function release(id: string): void {
+	const entry = live.get(id);
+	if (entry && --entry.holds <= 0) live.delete(id);
+}
+
+/** The session as it is now, the one in memory while something works on it. */
+export function getSession(root: string, id: string): CompareSession | null {
+	return live.get(id)?.session ?? loadSession(root, id);
+}
 
 export function cancelSession(id: string): boolean {
 	const ctrl = running.get(id);
@@ -590,7 +656,14 @@ export function startCompare(root: string, req: CompareRequest): CompareSession 
 		createdAt: Date.now(),
 		status: "aligning",
 		progress: 0,
-		sources: req.sources.map((s, i) => ({ path: s.path, label: s.label, offsetMs: i === 0 ? 0 : (s.offsetMs ?? 0), offsetFrom: i === 0 ? "first" : "none" })),
+		sources: req.sources.map((s, i) => ({
+			path: s.path,
+			label: s.label,
+			offsetMs: i === 0 ? 0 : (s.offsetMs ?? 0),
+			offsetFrom: i === 0 ? "first" : "none",
+			...(s.range ? { range: s.range } : {}),
+			...(s.matrix ? { matrix: s.matrix } : {}),
+		})),
 		frames: [],
 	};
 	mkdirSync(sessionDir(root, session.id), { recursive: true });
@@ -599,7 +672,11 @@ export function startCompare(root: string, req: CompareRequest): CompareSession 
 
 	const ctrl = new AbortController();
 	running.set(session.id, ctrl);
-	void runCompare(root, session, req, ctrl.signal).finally(() => running.delete(session.id));
+	hold(session);
+	void runCompare(root, session, req, ctrl.signal).finally(() => {
+		running.delete(session.id);
+		release(session.id);
+	});
 	return session;
 }
 
@@ -704,23 +781,23 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 		let done = 0;
 		const sem = createSemaphore(CAPTURE_CONCURRENCY);
 		await Promise.all(
-			times.flatMap((timeSec, f) =>
-				req.sources.map((src, s) =>
+			times.flatMap((_, f) =>
+				req.sources.map((_, s) =>
 					sem.run(async () => {
-						const info = infos[s]!;
-						const state = session.sources[s]!;
-						const pos = timeSec + state.offsetMs / 1000;
-						if (pos >= 0 && pos < info.duration) {
-							const { index } = nearestFrame(pos, info.videoStart, info.fps);
-							const at = seekForFrame(index, info.videoStart, info.fps);
-							const size = state.outputWidth ? sizes[s] : undefined;
-							session.frames[f]!.images[s] = await captureAt(src.path, info, at, imagePath(root, session.id, f, s), signal, size);
-						}
+						await captureSource(root, session, infos, sizes, f, s, signal);
 						done++;
-						update({ progress: 45 + Math.round((done / total) * 55), detail: `Captured ${done} of ${total} images` });
+						update({ progress: 45 + Math.round((done / total) * 50), detail: `Captured ${done} of ${total} images` });
 					}),
 				),
 			),
+		);
+		update({ progress: 95, detail: "Scoring the frames" });
+		await scoreFrames(
+			root,
+			session,
+			sizes,
+			session.frames.map((_, f) => f),
+			signal,
 		);
 		update({ status: "done", progress: 100, detail: undefined });
 	} catch (err) {
@@ -729,6 +806,219 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 			Logger.error(`[compare] ${(err as Error).message}`);
 			update({ status: "error", error: (err as Error).message, detail: undefined });
 		}
+	}
+}
+
+/** Most frames a comparison can hold, with the ones added from a measurement. */
+export const MAX_SESSION_FRAMES = 100;
+
+async function captureSource(
+	root: string,
+	session: CompareSession,
+	infos: VideoInfo[],
+	sizes: OutputSize[],
+	f: number,
+	s: number,
+	signal: AbortSignal,
+): Promise<void> {
+	const info = infos[s]!;
+	const state = session.sources[s]!;
+	const pos = session.frames[f]!.timeSec + state.offsetMs / 1000;
+	if (pos < 0 || pos >= info.duration) return;
+	const { index } = nearestFrame(pos, info.videoStart, info.fps);
+	const at = seekForFrame(index, info.videoStart, info.fps);
+	const size = state.outputWidth ? sizes[s] : undefined;
+	session.frames[f]!.images[s] = await captureAt(state.path, info, at, imagePath(root, session.id, f, s), signal, size);
+}
+
+/**
+ * Scores each captured image against the first source's at the same frame.
+ * Images of another size than the first source's are left out, as they show
+ * a different shape. A failure is noted on the session and does not fail it.
+ */
+async function scoreFrames(root: string, session: CompareSession, sizes: OutputSize[], frames: number[], signal: AbortSignal): Promise<void> {
+	const pairs: Array<[string, string]> = [];
+	const where: Array<[number, number]> = [];
+	const sameSize = (s: number) => sizes[s]!.width === sizes[0]!.width && sizes[s]!.height === sizes[0]!.height;
+	for (const f of frames) {
+		const frame = session.frames[f]!;
+		frame.scores = session.sources.map(() => null);
+		if (!frame.images[0]) continue;
+		for (let s = 1; s < session.sources.length; s++) {
+			if (!frame.images[s] || !sameSize(s)) continue;
+			pairs.push([imagePath(root, session.id, f, 0), imagePath(root, session.id, f, s)]);
+			where.push([f, s]);
+		}
+	}
+	if (!pairs.length) return;
+	try {
+		const scores = await measureImagePairs(pairs, [...METRIC_NAMES], signal);
+		scores.forEach((score, i) => {
+			const [f, s] = where[i]!;
+			if (Object.keys(score).length) session.frames[f]!.scores![s] = score;
+		});
+		delete session.scoreError;
+	} catch (err) {
+		if (signal.aborted) throw err;
+		session.scoreError = (err as Error).message;
+		Logger.warn(`[compare] Scoring frames failed: ${session.scoreError}`);
+	}
+}
+
+async function sourceInfos(session: CompareSession, signal: AbortSignal): Promise<VideoInfo[]> {
+	const infos: VideoInfo[] = [];
+	for (const src of session.sources) infos.push(withOverrides(await probeVideo(src.path, signal), src));
+	return infos;
+}
+
+/**
+ * Captures one more moment of the first source from every source and scores
+ * it, such as a dip found by measuring. Returns its frame number, or that of
+ * the frame already captured there.
+ */
+export async function addFrame(root: string, id: string, timeSec: number, signal: AbortSignal): Promise<number> {
+	const current = getSession(root, id);
+	if (!current) throw new Error("Comparison not found");
+	if (current.status !== "done") throw new Error("The comparison is not finished");
+	const session = hold(current);
+	try {
+		const infos = await sourceInfos(session, signal);
+		const first = infos[0]!;
+		const time = Math.round(nearestFrame(timeSec, first.videoStart, first.fps).time * 1000000) / 1000000;
+		const existing = session.frames.findIndex((frame) => Math.abs(frame.timeSec - time) < 0.0005);
+		if (existing >= 0) return existing;
+		if (session.frames.length >= MAX_SESSION_FRAMES) throw new Error(`A comparison holds at most ${MAX_SESSION_FRAMES} frames`);
+		const { sizes } = planOutputSizes(infos);
+		const f = session.frames.push({ timeSec: time, images: session.sources.map(() => false) }) - 1;
+		await Promise.all(session.sources.map((_, s) => captureSource(root, session, infos, sizes, f, s, signal)));
+		await scoreFrames(root, session, sizes, [f], signal);
+		saveSession(root, session);
+		return f;
+	} finally {
+		release(id);
+	}
+}
+
+const VS_MATRIX: Record<string, VsMatrix> = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020nc: 9 };
+
+function vsColour(info: VideoInfo): { matrix?: VsMatrix; range?: "limited" | "full" } {
+	const matrix = info.space ? VS_MATRIX[info.space] : undefined;
+	return { ...(matrix ? { matrix } : {}), ...(info.range ? { range: info.range === "pc" ? "full" : "limited" } : {}) };
+}
+
+/** Why a source cannot be scored against the first one, frame for frame. */
+export function measureBlocker(
+	ref: Pick<VideoInfo, "fps" | "width" | "height" | "sar" | "transfer">,
+	src: Pick<VideoInfo, "fps" | "width" | "height" | "sar" | "transfer">,
+): string | undefined {
+	if (!(ref.fps > 0) || Math.abs(src.fps - ref.fps) > 0.01) return "Its frame rate differs from the first video, so its frames cannot be paired with it";
+	const aspect = (v: typeof ref) => (v.width * (v.sar || 1)) / v.height;
+	if (Math.abs(aspect(src) - aspect(ref)) / aspect(ref) > 0.01)
+		return "Its shape differs from the first video, likely a different crop, so it cannot be scored against it";
+	const hdr = (v: typeof ref) => v.transfer === "smpte2084" || v.transfer === "arib-std-b67";
+	if (hdr(src) !== hdr(ref)) return "One of the two is HDR and the other is not, so their pictures cannot be scored against each other";
+	return undefined;
+}
+
+/** First frames of the first source and of a source that line up, the first one on a sample. */
+export function measureStarts(delta: number, step: number): { refStart: number; distStart: number } {
+	const refStart = Math.ceil(Math.max(0, -delta) / step) * step;
+	return { refStart, distStart: refStart + delta };
+}
+
+export interface MeasureRequest {
+	interval: MeasureInterval;
+	metrics: MetricName[];
+}
+
+/** Scores every other source against the first one over the whole stretch they share, in the background. */
+export function startMeasure(root: string, id: string, req: MeasureRequest): CompareSession {
+	const current = getSession(root, id);
+	if (!current) throw new Error("Comparison not found");
+	if (current.status !== "done") throw new Error("The comparison is not finished");
+	if (measuring.has(id)) throw new Error("This comparison is already being measured");
+	const session = hold(current);
+	session.measure = {
+		status: "running",
+		progress: 0,
+		detail: "Reading the videos",
+		interval: req.interval,
+		metrics: req.metrics,
+		step: 1,
+		fps: 0,
+		videoStart: 0,
+		startedAt: Date.now(),
+		series: [],
+	};
+	saveSession(root, session);
+	const ctrl = new AbortController();
+	measuring.set(id, ctrl);
+	void runMeasure(root, session, ctrl.signal).finally(() => {
+		measuring.delete(id);
+		release(id);
+	});
+	return session;
+}
+
+export function cancelMeasure(id: string): boolean {
+	const ctrl = measuring.get(id);
+	if (!ctrl) return false;
+	ctrl.abort();
+	return true;
+}
+
+async function runMeasure(root: string, session: CompareSession, signal: AbortSignal): Promise<void> {
+	const m = session.measure!;
+	const dir = sessionDir(root, session.id);
+	try {
+		const infos = await sourceInfos(session, signal);
+		const first = infos[0]!;
+		const step = m.interval === "frame" ? 1 : Math.max(1, Math.round(m.interval * first.fps));
+		Object.assign(m, { step, fps: first.fps, videoStart: first.videoStart });
+		const others = session.sources.map((_, s) => s).slice(1);
+		for (const [k, s] of others.entries()) {
+			const info = infos[s]!;
+			const state = session.sources[s]!;
+			const series: MeasureSeries = { source: s, firstFrame: 0, values: {}, summary: {} };
+			m.series.push(series);
+			series.skipped = measureBlocker(first, info);
+			if (series.skipped) continue;
+			const delta = Math.round((first.videoStart + state.offsetMs / 1000 - info.videoStart) * first.fps);
+			const { refStart, distStart } = measureStarts(delta, step);
+			series.firstFrame = refStart;
+			const scores = await measureVideoPair({
+				ref: { path: session.sources[0]!.path, start: refStart, index: join(dir, "s0.ffindex"), ...vsColour(first) },
+				dist: { path: state.path, start: distStart, index: join(dir, `s${s}.ffindex`), ...vsColour(info) },
+				step,
+				width: first.width,
+				height: first.height,
+				metrics: m.metrics,
+				vmafLog: join(dir, `vmaf_s${s}.json`),
+				signal,
+				onProgress: (done, total) =>
+					Object.assign(m, {
+						progress: Math.min(99, Math.round(((k + (total ? done / total : 0)) / others.length) * 100)),
+						detail: `Measuring ${state.label}: ${done.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}`,
+					}),
+			});
+			for (const metric of m.metrics) {
+				series.values[metric] = scores.map((score) => score[metric] ?? null);
+				const summary = summarize(series.values[metric]!, refStart, step);
+				if (summary) series.summary[metric] = summary;
+			}
+			saveSession(root, session);
+		}
+		Object.assign(m, { status: "done", progress: 100, detail: undefined, finishedAt: Date.now() });
+	} catch (err) {
+		if (signal.aborted) Object.assign(m, { status: "cancelled", detail: undefined });
+		else {
+			Logger.error(`[compare] Measuring failed: ${(err as Error).message}`);
+			Object.assign(m, { status: "error", error: (err as Error).message, detail: undefined });
+		}
+	} finally {
+		try {
+			if (existsSync(dir)) saveSession(root, session);
+		} catch {}
 	}
 }
 
@@ -769,11 +1059,48 @@ export function comparisonArchiveEntries(root: string, session: CompareSession):
 		),
 		"",
 		"Frames (time in the first source):",
-		...session.frames.map((frame, f) => `${String(f + 1).padStart(Math.max(2, String(session.frames.length).length), "0")}. ${formatTimestamp(frame.timeSec)}`),
+		...session.frames.map((frame, f) => {
+			const scores = (frame.scores ?? [])
+				.map((score, s) => (score ? `${session.sources[s]!.label} ${scoreText(score)}` : ""))
+				.filter(Boolean)
+				.join(" | ");
+			return `${String(f + 1).padStart(Math.max(2, String(session.frames.length).length), "0")}. ${formatTimestamp(frame.timeSec)}${scores ? `  ${scores}` : ""}`;
+		}),
 		"",
 	];
 	entries.push({ name: "comparison.txt", data: new TextEncoder().encode(lines.join("\n")) });
+	const csv = session.measure?.status === "done" ? measurementCsv(session) : "";
+	if (csv) entries.push({ name: "measurement.csv", data: new TextEncoder().encode(csv) });
 	return entries;
+}
+
+const METRIC_LABELS: Record<MetricName, string> = { ssimulacra2: "SSIMULACRA2", xpsnr: "XPSNR", vmaf: "VMAF" };
+
+function scoreText(score: FrameScores): string {
+	return METRIC_NAMES.filter((m) => score[m] !== undefined)
+		.map((m) => `${METRIC_LABELS[m]} ${score[m]!.toFixed(2)}`)
+		.join(", ");
+}
+
+/** One row per measured frame of the first source, one column per source and metric. */
+export function measurementCsv(session: CompareSession): string {
+	const m = session.measure;
+	if (!m) return "";
+	const series = m.series.filter((s) => !s.skipped);
+	if (!series.length) return "";
+	const columns = series.flatMap((s) => m.metrics.map((metric) => ({ s, metric })));
+	const quote = (text: string) => `"${text.replace(/"/g, '""')}"`;
+	const header = ["frame", "time", ...columns.map(({ s, metric }) => quote(`${session.sources[s.source]!.label} ${METRIC_LABELS[metric]}`))];
+	const frames = [...new Set(series.flatMap((s) => (s.values[m.metrics[0]!] ?? []).map((_, n) => s.firstFrame + n * m.step)))].sort((a, b) => a - b);
+	const rows = frames.map((frame) => {
+		const cells = columns.map(({ s, metric }) => {
+			const n = (frame - s.firstFrame) / m.step;
+			const value = Number.isInteger(n) ? s.values[metric]?.[n] : undefined;
+			return typeof value === "number" ? String(value) : "";
+		});
+		return [String(frame), formatTimestamp(m.videoStart + frame / m.fps), ...cells].join(",");
+	});
+	return [header.join(","), ...rows, ""].join("\n");
 }
 
 /** Bytes of one captured image, or null. */
