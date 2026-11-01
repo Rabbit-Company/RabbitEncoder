@@ -4877,6 +4877,11 @@ a.btn {
 	margin-top: 8px;
 }
 
+.subsearch-preferred-label {
+	display: block;
+	margin-top: 14px;
+}
+
 .subocr-track {
 	display: flex;
 	align-items: baseline;
