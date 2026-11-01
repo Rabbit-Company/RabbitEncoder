@@ -322,6 +322,8 @@ export interface JobSettings {
 	subtitleDownloadMaxTries?: number;
 	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */
 	subtitleDownloadMinScore?: number;
+	/** Sources or groups tried and picked first, in order. */
+	subtitleDownloadPreferredSources?: string[];
 	subtitleDownloadHearingImpaired?: "avoid" | "prefer" | "any";
 	subtitleDownloadAllowMachine?: boolean;
 	/** When translating, first download the missing languages from OpenSubtitles. Default true. */
@@ -715,6 +717,10 @@ export interface SubtitleSearchCandidate {
 	hearingImpaired: boolean;
 	machineTranslated: boolean;
 	trustedUploader: boolean;
+	/** Place in the preferred sources, 0 for the first. */
+	preferred?: number;
+	/** The release name gives another episode than the video's. */
+	otherEpisode?: boolean;
 	hashMatch: boolean;
 	fps: number;
 	prior: number;

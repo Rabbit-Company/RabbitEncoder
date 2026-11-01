@@ -516,6 +516,7 @@
 											<div id="default-subdl-extra" class="toggle-group"></div>
 											<div id="default-subdl-tries" class="toggle-group"></div>
 											<div id="default-subdl-min-score" class="toggle-group"></div>
+											<div id="default-subdl-preferred" class="toggle-group"></div>
 											<div id="default-subdl-hi" class="toggle-group"></div>
 											<div id="default-subdl-machine" class="toggle-group"></div>
 										</div>
@@ -866,6 +867,7 @@
 											<div id="job-subdl-extra" class="toggle-group"></div>
 											<div id="job-subdl-tries" class="toggle-group"></div>
 											<div id="job-subdl-min-score" class="toggle-group"></div>
+											<div id="job-subdl-preferred" class="toggle-group"></div>
 											<div id="job-subdl-hi" class="toggle-group"></div>
 											<div id="job-subdl-machine" class="toggle-group"></div>
 										</div>
@@ -1799,6 +1801,12 @@
 								The most promising subtitles of each language are downloaded and synced to the video's own subtitles, or to the speech in its audio when it has
 								none. Downloads count against your OpenSubtitles quota. Files downloaded before are reused for free. The most used languages get one download
 								each, and only while more than 20 downloads are left today.
+							</div>
+							<label for="subsearch-preferred">Preferred sources</label>
+							<input type="text" class="lang-filter-input" id="subsearch-preferred" placeholder="CR, NF" />
+							<div class="lang-filter-hint">
+								Streaming sources or groups, best first. Their subtitles are downloaded first, and the first one that reaches the minimum rating is picked.
+								Release names with another episode number, such as 07.5 for episode 7, are tried last.
 							</div>
 						</div>
 						<details class="settings-subsection">

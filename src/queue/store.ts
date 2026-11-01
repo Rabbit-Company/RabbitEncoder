@@ -47,6 +47,7 @@ import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-too
 import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/grain-tool";
 import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
+import { cleanPreferredSources } from "../subsearch/naming";
 import { compareQueuedJobs, queuePriority } from "./priority";
 import { ensureFilmGrainTable, generateFilmGrainTable, type FilmGrainRun } from "../video/film-grain-generator";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
@@ -368,6 +369,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	openSubtitlesPassword: str(256),
 	subtitleDownloadMaxTries: intIn(1, 10),
 	subtitleDownloadMinScore: intIn(0, 100),
+	subtitleDownloadPreferredSources: (v) => (Array.isArray(v) ? cleanPreferredSources(v) : undefined),
 	subtitleDownloadHearingImpaired: enumOf(SUBTITLE_HEARING_IMPAIRED_PREFERENCES),
 	subtitleDownloadAllowMachine: bool,
 	subtitleDownloadBeforeTranslate: bool,

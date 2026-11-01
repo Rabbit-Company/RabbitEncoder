@@ -7,10 +7,10 @@ import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
-import { candidateCredit, downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
+import { candidateCredit, cleanPreferredSources, downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
 import type { MediaIdentity } from "../subsearch/identify";
 import { checkOpenSubtitles } from "../subsearch/opensubtitles";
-import { accountFrom, LOGIN_NEEDED, searchSubtitles, type SubtitleSearchResult } from "../subsearch/search";
+import { accountFrom, LOGIN_NEEDED, searchSubtitles, tryCandidate, type SubtitleSearchResult } from "../subsearch/search";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { resolveAllowedMediaFile } from "./repair";
 
@@ -24,6 +24,8 @@ interface StoredSearch {
 	state: "running" | "done" | "error";
 	message: string;
 	controller: AbortController;
+	/** A candidate being downloaded on request, one at a time. */
+	trying?: string;
 	result?: SubtitleSearchResult;
 	error?: string;
 }
@@ -64,10 +66,11 @@ function extraLanguagesFor(count: number, chosen: string[], probe: ProbeResult):
 function publicSearch(id: string, s: StoredSearch) {
 	const base = { searchId: id, path: s.path, state: s.state, message: s.message, error: s.error };
 	if (!s.result) return base;
+	const { session: _, ...result } = s.result;
 	return {
 		...base,
-		...s.result,
-		languages: s.result.languages.map((l) => ({
+		...result,
+		languages: result.languages.map((l) => ({
 			...l,
 			candidates: l.candidates.map(({ syncedPath: _, ...c }) => ({ ...c, credit: candidateCredit(c.release, c.uploader, c.fileName) })),
 		})),
@@ -105,7 +108,13 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 
 	/** Starts a search in the background. It reads the whole video and downloads files, which can take minutes. */
 	app.post("/api/subsearch/search", async (c) => {
-		const body = (await c.req.json().catch(() => ({}))) as { path?: unknown; languages?: unknown; identity?: unknown; extraLanguages?: unknown };
+		const body = (await c.req.json().catch(() => ({}))) as {
+			path?: unknown;
+			languages?: unknown;
+			identity?: unknown;
+			extraLanguages?: unknown;
+			preferredSources?: unknown;
+		};
 		pruneSearches(config);
 		try {
 			const path = resolveAllowedMediaFile(body.path, config, "Video");
@@ -131,6 +140,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 						probe,
 						languages,
 						extraLanguages: extraLanguagesFor(extraCount, languages, probe),
+						...(Array.isArray(body.preferredSources) ? { preferredSources: cleanPreferredSources(body.preferredSources) } : {}),
 						settings,
 						cacheDir: config.tempDir,
 						workDir,
@@ -156,6 +166,27 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 	app.get("/api/subsearch/search/:id", (c) => {
 		const search = searches.get(c.params.id!);
 		return search ? c.json(publicSearch(c.params.id!, search)) : c.json({ error: "The search has expired. Search again." }, 404);
+	});
+
+	/** Downloads and rates a candidate the search did not get to. */
+	app.post("/api/subsearch/search/:id/try", async (c) => {
+		const body = (await c.req.json().catch(() => ({}))) as { language?: unknown; key?: unknown };
+		const search = searches.get(c.params.id!);
+		try {
+			if (!search?.result) throw new Error("The search has expired. Search again.");
+			if (search.trying) throw new Error("Another subtitle is downloading. Wait for it to finish.");
+			if (typeof body.language !== "string" || typeof body.key !== "string") throw new Error("Choose a subtitle to try");
+			search.trying = body.key;
+			try {
+				await tryCandidate(search.result, body.language, body.key, search.controller.signal);
+			} finally {
+				search.trying = undefined;
+				search.message = "";
+			}
+			return c.json(publicSearch(c.params.id!, search));
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
 	});
 
 	app.delete("/api/subsearch/search/:id", (c) => {

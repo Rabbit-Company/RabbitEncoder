@@ -842,11 +842,12 @@ export async function startSubtitleSearch(
 	languages: string[],
 	identity: Partial<SubtitleSearchIdentity>,
 	extraLanguages: number,
+	preferredSources: string[],
 ): Promise<SubtitleSearchState> {
 	const response = await authFetch(`${API}/api/subsearch/search`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path, languages, identity, extraLanguages }),
+		body: JSON.stringify({ path, languages, identity, extraLanguages, preferredSources }),
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Subtitle search failed");
@@ -857,6 +858,18 @@ export async function fetchSubtitleSearch(searchId: string): Promise<SubtitleSea
 	const response = await authFetch(`${API}/api/subsearch/search/${encodeURIComponent(searchId)}`);
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Subtitle search failed");
+	return data;
+}
+
+/** Downloads and rates one more candidate of a finished search. */
+export async function trySubtitleSearchCandidate(searchId: string, language: string, key: string): Promise<SubtitleSearchState> {
+	const response = await authFetch(`${API}/api/subsearch/search/${encodeURIComponent(searchId)}/try`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ language, key }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not try the subtitle");
 	return data;
 }
 

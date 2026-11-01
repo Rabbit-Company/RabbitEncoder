@@ -1,5 +1,12 @@
 import type { SubtitleSearchCandidate, SubtitleSearchIdentity, SubtitleSearchLanguage } from "../types";
-import { applyVideoSubtitles, cancelSubtitleSearch, fetchSubtitleSearch, startSubtitleSearch, type SubtitleSearchState } from "../api/client";
+import {
+	applyVideoSubtitles,
+	cancelSubtitleSearch,
+	fetchSubtitleSearch,
+	startSubtitleSearch,
+	trySubtitleSearchCandidate,
+	type SubtitleSearchState,
+} from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
@@ -18,6 +25,8 @@ const choices = new Map<string, string>();
 const credits = new Map<string, string>();
 /** Candidates whose sample lines are shown. */
 const expanded = new Set<string>();
+/** Candidate being downloaded on request. */
+let trying: string | null = null;
 /** Bumped on every search, so polling for an earlier one stops. */
 let run = 0;
 let startedAt = 0;
@@ -122,11 +131,19 @@ function ratingClass(rating: number): string {
 
 function flags(c: SubtitleSearchCandidate): string {
 	const out: string[] = [];
+	if (c.preferred !== undefined) out.push('<span class="subsearch-flag good" title="From one of the preferred sources">preferred</span>');
+	if (c.otherEpisode) out.push('<span class="subsearch-flag poor" title="The release name gives another episode, so it is tried last">other episode</span>');
 	if (c.hashMatch) out.push('<span class="subsearch-flag good" title="Made for this exact file">exact file</span>');
 	if (c.hearingImpaired) out.push('<span class="subsearch-flag" title="Hearing impaired">SDH</span>');
 	if (c.machineTranslated) out.push('<span class="subsearch-flag poor" title="Machine or AI translated">MT</span>');
 	if (c.trustedUploader) out.push('<span class="subsearch-flag" title="Trusted uploader">trusted</span>');
 	return out.join("");
+}
+
+function tryButton(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
+	if (c.status !== "untested") return "";
+	const label = trying === c.key ? "Trying..." : "Try";
+	return `<button class="btn btn-ghost btn-sm" type="button" data-subsearch-try="${escapeHtml(c.key)}" data-language="${escapeHtml(lang.language)}" title="Download, sync and rate this one"${trying ? " disabled" : ""}>${label}</button>`;
 }
 
 function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
@@ -149,7 +166,7 @@ function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate):
 		<td class="subsearch-name"><span title="${escapeHtml(c.fileName)}">${escapeHtml(name)}</span>${link}<div class="subsearch-flags">${flags(c)}</div></td>
 		<td class="subsearch-num">${c.downloads.toLocaleString()}</td>
 		<td class="subsearch-detail">${detail}</td>
-		<td>${rated && c.samples?.length ? `<button class="btn btn-ghost btn-sm" type="button" data-subsearch-samples="${escapeHtml(c.key)}">${expanded.has(c.key) ? "Hide" : "Lines"}</button>` : ""}</td>
+		<td>${rated && c.samples?.length ? `<button class="btn btn-ghost btn-sm" type="button" data-subsearch-samples="${escapeHtml(c.key)}">${expanded.has(c.key) ? "Hide" : "Lines"}</button>` : ""}${tryButton(lang, c)}</td>
 	</tr>`;
 	if (expanded.has(c.key) && c.samples?.length) {
 		const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
@@ -219,10 +236,10 @@ function renderResults(): void {
 }
 
 function updateButtons(): void {
-	const running = search?.state === "running";
+	const running = search?.state === "running" || trying !== null;
 	const searchBtn = buttonById("subsearch-search");
-	searchBtn.textContent = running ? "Cancel" : "Search";
-	searchBtn.disabled = !videoPath;
+	searchBtn.textContent = search?.state === "running" ? "Cancel" : "Search";
+	searchBtn.disabled = !videoPath || trying !== null;
 	const ready = !running && choices.size > 0;
 	buttonById("subsearch-apply").disabled = !ready;
 	buttonById("subsearch-sidecar").disabled = !ready;
@@ -239,6 +256,7 @@ function resetResults(): void {
 	if (search?.state === "running") void cancelSubtitleSearch(search.searchId);
 	run++;
 	search = null;
+	trying = null;
 	choices.clear();
 	credits.clear();
 	expanded.clear();
@@ -281,6 +299,11 @@ export function openSubtitleSearch(): void {
 	byId("subsearch-modal").style.display = "";
 	const input = inputById("subsearch-languages");
 	if (!input.value) input.value = defaultLanguages();
+	const preferred = inputById("subsearch-preferred");
+	if (!preferred.dataset.ready) {
+		preferred.value = (appState.defaults?.subtitleDownloadPreferredSources ?? []).join(", ");
+		preferred.dataset.ready = "1";
+	}
 	const extra = byId<HTMLSelectElement>("subsearch-extra");
 	if (!extra.dataset.ready) {
 		extra.value = localStorage.getItem(EXTRA_STORAGE_KEY) ?? String(appState.defaults?.subtitleDownloadExtraLanguages ?? 0);
@@ -329,7 +352,7 @@ export async function runSubtitleSearch(): Promise<void> {
 	startedAt = Date.now();
 	setStatus("Starting...");
 	try {
-		search = await startSubtitleSearch(videoPath, languages, readIdentity(), extraLanguages);
+		search = await startSubtitleSearch(videoPath, languages, readIdentity(), extraLanguages, parseLanguages(inputById("subsearch-preferred").value));
 	} catch (error) {
 		setStatus("");
 		setError(errorMessage(error));
@@ -349,6 +372,35 @@ export function handleSubtitleSearchResultsClick(event: MouseEvent): void {
 		else expanded.add(key);
 		renderResults();
 	}
+	const tryBtn = target?.closest<HTMLElement>("[data-subsearch-try]");
+	if (tryBtn?.dataset.language) void tryCandidate(tryBtn.dataset.language, tryBtn.dataset.subsearchTry!);
+}
+
+async function tryCandidate(language: string, key: string): Promise<void> {
+	if (!search || trying) return;
+	const current = run;
+	trying = key;
+	setError("");
+	setStatus("Downloading and syncing...");
+	renderResults();
+	try {
+		const updated = await trySubtitleSearchCandidate(search.searchId, language, key);
+		if (current !== run) return;
+		search = updated;
+		const lang = updated.languages?.find((l) => l.language === language);
+		const tried = lang?.candidates.find((c) => c.key === key);
+		const chosen = lang?.candidates.find((c) => c.key === choices.get(language));
+		// A subtitle asked for by hand is picked when it beats the current pick.
+		if (tried?.status === "rated" && (!chosen || tried.rating! > chosen.rating!)) choices.set(language, key);
+		setStatus(tried?.status === "rated" ? `Rated ${tried.rating}` : (tried?.reason ?? ""));
+	} catch (error) {
+		if (current !== run) return;
+		setStatus("");
+		setError(errorMessage(error));
+	} finally {
+		if (current === run) trying = null;
+	}
+	renderResults();
 }
 
 export function handleSubtitleSearchResultsChange(event: Event): void {

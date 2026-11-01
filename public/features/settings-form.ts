@@ -664,6 +664,12 @@ const HEARING_IMPAIRED_LABELS: Record<NonNullable<JobSettings["subtitleDownloadH
 	any: "Either",
 };
 
+const parsePreferredSources = (value: string): string[] =>
+	value
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+
 function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: JobSettings): void {
 	const el = (suffix: string): HTMLElement => byId(`${prefix}-subdl-${suffix}`);
 	const account = el("account");
@@ -728,6 +734,15 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 		{ min: 0, max: 100, step: 5 },
 		(v) => (settings.subtitleDownloadMinScore = v),
 	);
+	renderTextControl(el("preferred"), "Preferred sources", (settings.subtitleDownloadPreferredSources ?? []).join(", "), "CR, NF", (v) => {
+		settings.subtitleDownloadPreferredSources = parsePreferredSources(v);
+	});
+	const preferredHint = document.createElement("div");
+	preferredHint.className = "lang-filter-hint";
+	preferredHint.textContent =
+		"Streaming sources or groups, best first. Their subtitles are downloaded before the rest, and the first one in the list that reaches the minimum rating is used, " +
+		"even when another subtitle rated higher. CR also finds Crunchyroll, NF Netflix, AMZN Amazon. The Subtitle search window starts with this list.";
+	el("preferred").appendChild(preferredHint);
 	renderSelectControl(
 		el("hi"),
 		"Hearing impaired",

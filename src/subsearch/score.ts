@@ -136,6 +136,27 @@ export function rateCandidate(quality: SyncQuality, traits: CandidateTraits, hi:
 	return Math.round(Math.max(0, Math.min(100, rating)));
 }
 
+const SEASON_EPISODE = /\bS(\d{1,2})[ ._-]?E(\d{1,4}(?:\.\d)?)(?!\d)/i;
+/** The anime style " - 07" or " - 07.5", before a bracket, a space, an extension or the end. */
+const DASH_EPISODE = /\s-\s(\d{1,4}(?:\.\d)?)(?:v\d)?(?=\s|\[|\(|\.[a-z]|$)/i;
+const WORD_EPISODE = /\b(?:EP?|Episode)[ ._]?(\d{1,4}(?:\.\d)?)(?![\d.])/i;
+
+/** The season and episode a release name says it is for, such as 7.5 in "Show - 07.5 [CR]". */
+export function releaseEpisode(name: string): { season?: number; episode: number } | null {
+	const se = name.match(SEASON_EPISODE);
+	if (se) return { season: parseInt(se[1]!, 10), episode: parseFloat(se[2]!) };
+	const m = name.match(DASH_EPISODE) ?? name.match(WORD_EPISODE);
+	return m ? { episode: parseFloat(m[1]!) } : null;
+}
+
+/** The release name gives a season or an episode other than the video's. */
+export function otherEpisode(name: string, season: number | undefined, episode: number | undefined): boolean {
+	if (episode === undefined) return false;
+	const found = releaseEpisode(name);
+	if (!found) return false;
+	return found.episode !== episode || (found.season !== undefined && season !== undefined && found.season !== season);
+}
+
 const RELEASE_TOKENS = /[a-z0-9]+/g;
 const NOISE_TOKENS = new Set(["mkv", "mp4", "avi", "srt", "sub", "subs", "the", "and", "a", "of", "x264", "x265", "h264", "h265", "hevc", "avc", "aac", "ac3"]);
 const SOURCE_TOKENS: Record<string, string> = {

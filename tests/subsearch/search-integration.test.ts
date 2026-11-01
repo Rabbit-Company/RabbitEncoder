@@ -7,7 +7,7 @@ import { probeFile } from "../../src/pipeline/probe";
 import { getDefaultJobSettings } from "../../src/core/config";
 import { dialogueCues, type Interval } from "../../src/subsearch/cues";
 import { buildReference } from "../../src/subsearch/reference";
-import { searchSubtitles } from "../../src/subsearch/search";
+import { searchSubtitles, tryCandidate } from "../../src/subsearch/search";
 
 const hasTools = ["ffmpeg", "ffprobe", "mkvmerge"].every((tool) => Bun.which(tool));
 
@@ -208,6 +208,71 @@ function srt(cues: Interval[], shiftMs = 0): string {
 			workDir,
 		});
 		expect(downloads.length).toBe(before);
+	}, 60_000);
+
+	it("tries a candidate the search did not get to and picks it when it rates best", async () => {
+		const workDir = join(root, "search-try");
+		mkdirSync(workDir, { recursive: true });
+		const result = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...getDefaultJobSettings(), openSubtitlesUsername: "rabbit", openSubtitlesPassword: "secret", subtitleDownloadMaxTries: 1 },
+			cacheDir: workDir,
+			workDir,
+		});
+		const sl = result.languages[0]!;
+		expect(sl.bestKey).toBeUndefined();
+		expect(sl.note).toContain("below the minimum");
+		const other = sl.candidates.find((c) => c.key === "os-102")!;
+		expect(other.status).toBe("untested");
+
+		const tried = await tryCandidate(result, "slv", "os-102");
+		expect(tried.status).toBe("rated");
+		expect(sl.bestKey).toBe("os-102");
+		expect(sl.note).toBeUndefined();
+		await expect(tryCandidate(result, "slv", "os-102")).rejects.toThrow("already tried");
+	}, 60_000);
+
+	it("downloads preferred sources first and picks them once they pass the minimum", async () => {
+		const workDir = join(root, "search-preferred");
+		mkdirSync(workDir, { recursive: true });
+		const settings = { ...getDefaultJobSettings(), openSubtitlesUsername: "rabbit", openSubtitlesPassword: "secret" };
+		const first = downloads.length;
+		const result = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...settings, subtitleDownloadMaxTries: 1, subtitleDownloadPreferredSources: ["GROUP"] },
+			preferredSources: ["OTHER"],
+			cacheDir: workDir,
+			workDir,
+		});
+		expect(downloads.slice(first)).toEqual([102]);
+		const sl = result.languages[0]!;
+		expect(sl.candidates[0]!.key).toBe("os-102");
+		expect(sl.candidates[0]!.preferred).toBe(0);
+		expect(sl.bestKey).toBe("os-102");
+
+		// A preferred source wins over a better rating, as long as it reaches the minimum.
+		const picked = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...settings, subtitleDownloadMaxTries: 2, subtitleDownloadMinScore: 0, subtitleDownloadPreferredSources: ["GROUP"] },
+			cacheDir: workDir,
+			workDir,
+		});
+		expect(picked.languages[0]!.bestKey).toBe("os-101");
+		const strict = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...settings, subtitleDownloadMaxTries: 2, subtitleDownloadPreferredSources: ["GROUP"] },
+			cacheDir: workDir,
+			workDir,
+		});
+		expect(strict.languages[0]!.bestKey).toBe("os-102");
 	}, 60_000);
 
 	it("adds extra languages after the chosen ones once the quota allows it", async () => {

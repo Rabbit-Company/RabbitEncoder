@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { candidateCredit, downloadedLanguageTag, downloadedTrackName, sceneGroup } from "../../src/subsearch/naming";
+import {
+	candidateCredit,
+	cleanPreferredSources,
+	downloadedLanguageTag,
+	downloadedTrackName,
+	preferredSourceRank,
+	sceneGroup,
+} from "../../src/subsearch/naming";
+import { otherEpisode, releaseEpisode } from "../../src/subsearch/score";
 
 describe("downloaded subtitle track names", () => {
 	it("credit the source or group in the release name, as native tracks do", () => {
@@ -36,5 +44,45 @@ describe("downloaded subtitle language tags", () => {
 		expect(downloadedLanguageTag("zh-hant")).toBe("zh-Hant");
 		expect(downloadedLanguageTag("pt-br")).toBe("pt-BR");
 		expect(downloadedLanguageTag("slv")).toBe("sl");
+	});
+});
+
+describe("preferred sources", () => {
+	const rank = (release: string, preferred: string[]) => preferredSourceRank(release, "os-auto", "", preferred);
+
+	it("matches streaming sources by any of their names, in list order", () => {
+		expect(rank("[Crunchyroll] Ore dake Level Up na Ken - 07", ["CR", "NF"])).toBe(0);
+		expect(rank("Solo.Leveling.S01E07.JAPANESE.WEBRip.NF", ["CR", "NF"])).toBe(1);
+		expect(rank("Solo.Leveling.S01E07.JAPANESE.WEBRip.Netflix", ["Crunchyroll", "netflix"])).toBe(1);
+		expect(rank("Solo.Leveling.S01E07.1080p.BluRay-GROUP", ["CR", "NF"])).toBe(2);
+	});
+
+	it("matches groups named anywhere in the release name", () => {
+		expect(rank("[Mugi] Solo Leveling - 07 [CR]", ["mugi"])).toBe(0);
+		expect(rank("[Erai-raws] Solo Leveling - 07 [1080p]", ["NF", "Erai-raws"])).toBe(1);
+		expect(rank("[Mugiwara] Solo Leveling - 07", ["Mugi"])).toBe(1);
+	});
+
+	it("cleans typed lists", () => {
+		expect(cleanPreferredSources([" CR ", "", "NF", "CR", 3])).toEqual(["CR", "NF"]);
+		expect(cleanPreferredSources("CR")).toEqual([]);
+	});
+});
+
+describe("episode numbers in release names", () => {
+	it("reads the common forms", () => {
+		expect(releaseEpisode("Ore dake Level Up na Ken - 07.5 [Crunchyroll]")).toEqual({ episode: 7.5 });
+		expect(releaseEpisode("[Mugi] Solo Leveling - 07 [CR]")).toEqual({ episode: 7 });
+		expect(releaseEpisode("Solo.Leveling.S01E07.1080p.WEB")).toEqual({ season: 1, episode: 7 });
+		expect(releaseEpisode("Solo Leveling Episode 7")).toEqual({ episode: 7 });
+		expect(releaseEpisode("The.Matrix.1999.1080p.BluRay")).toBeNull();
+	});
+
+	it("tells another episode or season from the video's", () => {
+		expect(otherEpisode("Ore dake Level Up na Ken - 07.5 [Crunchyroll]", 1, 7)).toBe(true);
+		expect(otherEpisode("[Crunchyroll] Ore dake Level Up na Ken - 07", 1, 7)).toBe(false);
+		expect(otherEpisode("Solo.Leveling.S02E07.1080p", 1, 7)).toBe(true);
+		expect(otherEpisode("Solo Leveling - 07 [CR]", undefined, 7)).toBe(false);
+		expect(otherEpisode("Solo Leveling - 08", 1, undefined)).toBe(false);
 	});
 });

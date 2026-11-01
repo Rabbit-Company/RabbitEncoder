@@ -17,12 +17,14 @@ import {
 	openSubtitlesApiKey,
 	openSubtitlesLanguage,
 	searchOpenSubtitles,
+	type DownloadedFile,
 	type OpenSubtitlesAccount,
 	type SubtitleListing,
 } from "./opensubtitles";
 import { buildReference, type ReferenceTimeline } from "./reference";
 import { EXTRA_LANGUAGE_RESERVE } from "./languages";
-import { measureSync, priorPoints, rateCandidate, releaseMatch, type CandidateTraits, type SyncQuality } from "./score";
+import { cleanPreferredSources, preferredSourceRank } from "./naming";
+import { measureSync, otherEpisode, priorPoints, rateCandidate, releaseMatch, type CandidateTraits, type SyncQuality } from "./score";
 
 /** A rating this high ends the search for a language early. */
 const EXCELLENT_RATING = 88;
@@ -51,6 +53,10 @@ export interface EvaluatedCandidate {
 	hashMatch: boolean;
 	fps: number;
 	prior: number;
+	/** Place in the preferred sources when it is from one of them, 0 for the first. */
+	preferred?: number;
+	/** The release name gives another season or episode than the video's. */
+	otherEpisode?: boolean;
 	status: "rated" | "untested" | "excluded" | "failed";
 	reason?: string;
 	rating?: number;
@@ -85,6 +91,25 @@ export interface SubtitleSearchResult {
 	/** Downloads OpenSubtitles said are left today. */
 	remainingDownloads?: number;
 	notes: string[];
+	/** What is kept to try more candidates later. Not sent to the browser. */
+	session?: SearchSession;
+}
+
+interface RankedListing {
+	l: SubtitleListing;
+	traits: CandidateTraits;
+	candidate: EvaluatedCandidate;
+}
+
+export interface SearchSession {
+	opts: SubtitleSearchOptions;
+	account: OpenSubtitlesAccount;
+	reference: ReferenceTimeline | null;
+	listings: Map<string, RankedListing>;
+	durationMs: number;
+	videoFps: number;
+	hi: SubtitleHearingImpairedPreference;
+	minScore: number;
 }
 
 export interface SubtitleSearchOptions {
@@ -106,6 +131,8 @@ export interface SubtitleSearchOptions {
 	maxTries?: number;
 	/** Most new downloads for the whole search. Cached files are free. */
 	downloadBudget?: number;
+	/** Sources or groups to try and pick first, in order, instead of the setting. */
+	preferredSources?: string[];
 	/**
 	 * Most used languages to try on top of `languages`: one download each, and
 	 * only while more than EXTRA_LANGUAGE_RESERVE downloads are left today.
@@ -226,10 +253,77 @@ function describeSync(c: EvaluatedCandidate): string {
 	return parts.join(", ");
 }
 
+async function referenceOf(session: SearchSession): Promise<ReferenceTimeline> {
+	const { opts } = session;
+	session.reference ??= await (async () => {
+		opts.onProgress?.("Reading the video's timing");
+		const ref = await buildReference(opts.inputPath, opts.probe, opts.workDir, opts.signal);
+		if (!ref) throw new Error("The video has no subtitles or audio to sync downloaded subtitles to");
+		return ref;
+	})();
+	return session.reference;
+}
+
+/** Downloads one candidate, syncs it and rates it. Says whether the download was new. */
+async function downloadAndRate(session: SearchSession, r: RankedListing, languageName: string, signal?: AbortSignal): Promise<DownloadedFile> {
+	const reference = await referenceOf(session);
+	const progress = session.opts.onProgress ?? (() => {});
+	progress(`Downloading ${languageName}: ${r.l.release || r.l.fileName}`);
+	const file = await downloadOpenSubtitles(session.account, r.l, session.opts.cacheDir, signal);
+	progress(`Syncing ${languageName}: ${r.l.release || r.l.fileName}`);
+	evaluateDownload(r.candidate, file.bytes, file.fileName, r.l.language, reference, session.durationMs, session.videoFps, r.traits, session.hi, (format) =>
+		join(session.opts.workDir, `${r.l.key}.${format}`),
+	);
+	if (r.candidate.status === "rated") {
+		const q = r.candidate.quality!;
+		Logger.info(
+			`[subsearch] ${languageName} ${r.l.release || r.l.fileName}: rating ${r.candidate.rating}, agreement ${q.agreement.toFixed(2)}, missing ${Math.round(q.missingShare * 100)}%, ${describeSync(r.candidate)}`,
+		);
+	}
+	return file;
+}
+
+const rankOf = (c: EvaluatedCandidate) => c.preferred ?? Number.MAX_SAFE_INTEGER;
+
+/** Of the subtitles rated at or above the minimum, the most preferred source wins, then the best rating. */
+function pickBest(result: LanguageResult, minScore: number): void {
+	const rated = result.candidates.filter((c) => c.status === "rated");
+	const passing = rated.filter((c) => c.rating! >= minScore).sort((a, b) => rankOf(a) - rankOf(b) || b.rating! - a.rating!);
+	delete result.bestKey;
+	delete result.note;
+	if (passing[0]) result.bestKey = passing[0].key;
+	else if (rated.length) result.note = `The best subtitle rated ${Math.max(...rated.map((c) => c.rating!))}, below the minimum of ${minScore}`;
+}
+
+/**
+ * Downloads and rates a candidate the search left out, such as one it did not
+ * get to. The language's best pick is chosen again with it included.
+ */
+export async function tryCandidate(result: SubtitleSearchResult, language: string, key: string, signal?: AbortSignal): Promise<EvaluatedCandidate> {
+	const session = result.session;
+	const lang = result.languages.find((l) => l.language === language);
+	const r = session?.listings.get(key);
+	if (!session || !lang || !r || !lang.candidates.includes(r.candidate)) throw new Error("That subtitle is not part of this search. Search again.");
+	if (r.candidate.status !== "untested") throw new Error("That subtitle was already tried");
+	try {
+		const file = await downloadAndRate(session, r, lang.name, signal);
+		if (file.remaining !== undefined) result.remainingDownloads = file.remaining;
+		result.reference ??= { kind: session.reference!.kind, label: session.reference!.label };
+	} catch (error) {
+		if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
+		if (isQuotaError(error)) {
+			result.remainingDownloads = 0;
+			r.candidate.reason = error.message;
+		} else Object.assign(r.candidate, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
+	}
+	pickBest(lang, session.minScore);
+	return r.candidate;
+}
+
 /**
  * Finds subtitles for every language, downloads the most promising ones,
- * syncs each to the video and rates it. The best rating at or above the
- * minimum score is chosen per language.
+ * syncs each to the video and rates it. Per language the most preferred
+ * source rated at or above the minimum score is chosen, then the best rating.
  */
 export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<SubtitleSearchResult> {
 	const { settings, signal } = opts;
@@ -248,6 +342,7 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 	const maxTries = opts.maxTries ?? settings.subtitleDownloadMaxTries ?? 2;
 	let spent = 0;
 	const minScore = settings.subtitleDownloadMinScore ?? 60;
+	const preferred = cleanPreferredSources(opts.preferredSources ?? settings.subtitleDownloadPreferredSources);
 	const durationMs = Math.round((opts.probe.duration || 0) * 1000);
 	const videoFps = opts.probe.videoDisplayFps || opts.probe.videoStreamFps || 0;
 
@@ -265,7 +360,7 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 		signal,
 	);
 
-	let reference: ReferenceTimeline | null = null;
+	const session: SearchSession = { opts, account, reference: null, listings: new Map(), durationMs, videoFps, hi, minScore };
 	let remaining: number | undefined;
 	let quotaHit = false;
 	const languages: LanguageResult[] = [];
@@ -289,13 +384,24 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 			}
 		}
 		const languageTries = w.extra ? 1 : maxTries;
+		// Other episodes go last and preferred sources first, so they are downloaded before the rest.
 		const ranked = listings
 			.filter((l) => l.language === w.os)
 			.map((l) => ({ l, traits: traitsOf(l, fileName) }))
 			.map((x) => ({ ...x, prior: priorPoints(x.traits, hi, videoFps), candidate: candidateOf(x.l, priorPoints(x.traits, hi, videoFps)) }))
-			.sort((a, b) => b.prior - a.prior);
+			.map((x) => {
+				const rank = preferredSourceRank(x.l.release, x.l.uploader, x.l.fileName, preferred);
+				if (rank < preferred.length) x.candidate.preferred = rank;
+				if (otherEpisode(x.l.release || x.l.fileName, identity.season, identity.kind === "episode" ? identity.episode : undefined))
+					x.candidate.otherEpisode = true;
+				return x;
+			})
+			.sort(
+				(a, b) => Number(!!a.candidate.otherEpisode) - Number(!!b.candidate.otherEpisode) || rankOf(a.candidate) - rankOf(b.candidate) || b.prior - a.prior,
+			);
 		result.candidates = ranked.map((r) => r.candidate);
 		for (const r of ranked) {
+			session.listings.set(r.l.key, r);
 			if (r.l.foreignPartsOnly) Object.assign(r.candidate, { status: "excluded", reason: "Foreign parts only" });
 			else if (r.l.machineTranslated && !allowMachine) Object.assign(r.candidate, { status: "excluded", reason: "Machine translated" });
 		}
@@ -317,31 +423,15 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 				r.candidate.reason = "Not downloaded, keeping downloads for other files";
 				continue;
 			}
-			reference ??= await (async () => {
-				progress("Reading the video's timing");
-				const ref = await buildReference(opts.inputPath, opts.probe, opts.workDir, signal);
-				if (!ref) throw new Error("The video has no subtitles or audio to sync downloaded subtitles to");
-				return ref;
-			})();
-			progress(`Downloading ${result.name}: ${r.l.release || r.l.fileName}`);
+			await referenceOf(session);
 			try {
-				const file = await downloadOpenSubtitles(account, r.l, opts.cacheDir, signal);
+				const file = await downloadAndRate(session, r, result.name, signal);
 				if (!file.cached) {
 					tries++;
 					if (w.extra) extraSpent++;
 					else spent++;
 				}
 				if (file.remaining !== undefined) remaining = file.remaining;
-				progress(`Syncing ${result.name}: ${r.l.release || r.l.fileName}`);
-				evaluateDownload(r.candidate, file.bytes, file.fileName, w.os!, reference, durationMs, videoFps, r.traits, hi, (format) =>
-					join(opts.workDir, `${r.l.key}.${format}`),
-				);
-				if (r.candidate.status === "rated") {
-					const q = r.candidate.quality!;
-					Logger.info(
-						`[subsearch] ${result.name} ${r.l.release || r.l.fileName}: rating ${r.candidate.rating}, agreement ${q.agreement.toFixed(2)}, missing ${Math.round(q.missingShare * 100)}%, ${describeSync(r.candidate)}`,
-					);
-				}
 			} catch (error) {
 				if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 				// Past the quota only cached files can still be tried, and refusals cost no request.
@@ -356,10 +446,17 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 			if ((r.candidate.rating ?? 0) >= EXCELLENT_RATING) break;
 		}
 
-		const best = result.candidates.filter((c) => c.status === "rated").sort((a, b) => b.rating! - a.rating!)[0];
-		if (best && best.rating! >= minScore) result.bestKey = best.key;
-		else if (best) result.note = `The best subtitle rated ${best.rating}, below the minimum of ${minScore}`;
+		pickBest(result, minScore);
 	}
 
-	return { identity, hash, reference: reference ? { kind: reference.kind, label: reference.label } : null, languages, remainingDownloads: remaining, notes };
+	const reference = session.reference;
+	return {
+		identity,
+		hash,
+		reference: reference ? { kind: reference.kind, label: reference.label } : null,
+		languages,
+		remainingDownloads: remaining,
+		notes,
+		session,
+	};
 }

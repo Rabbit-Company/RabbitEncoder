@@ -390,6 +390,8 @@ export interface JobSettings {
 	subtitleDownloadMaxTries?: number;
 	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */
 	subtitleDownloadMinScore?: number;
+	/** Sources or groups, such as CR then NF, tried and picked first when they rate above the minimum. */
+	subtitleDownloadPreferredSources?: string[];
 	/** Hearing impaired subtitles: "avoid" (default), "prefer" or "any". */
 	subtitleDownloadHearingImpaired?: SubtitleHearingImpairedPreference;
 	/** Also consider machine and AI translated subtitles. Default false. */

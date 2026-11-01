@@ -52,6 +52,42 @@ export function candidateCredit(release: string, uploader: string, fileName = ""
 }
 
 /**
+ * Place of a candidate in the preferred sources, such as ["CR", "NF"], or
+ * the list's length when none matches. A source matches by its known names,
+ * so CR also finds "Crunchyroll". Any other entry matches a group named
+ * anywhere in the release name, or the credit.
+ */
+export function preferredSourceRank(release: string, uploader: string, fileName: string, preferred: string[]): number {
+	if (!preferred.length) return 0;
+	const name = releaseName(release, fileName);
+	const source = extractSourceTag(name)?.toLowerCase();
+	const credit = candidateCredit(release, uploader, fileName).toLowerCase();
+	const words = new Set(
+		name
+			.toLowerCase()
+			.split(/[^a-z0-9]+/)
+			.filter(Boolean),
+	);
+	const i = preferred.findIndex((entry) => {
+		const known = extractSourceTag(entry)?.toLowerCase();
+		if (known) return known === source;
+		const wanted = entry.trim().toLowerCase();
+		return wanted === credit || (/^[a-z0-9]+$/.test(wanted) ? words.has(wanted) : name.toLowerCase().includes(wanted));
+	});
+	return i >= 0 ? i : preferred.length;
+}
+
+/** Cleans a typed or stored list of preferred sources. */
+export function cleanPreferredSources(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	const out = value
+		.filter((s): s is string => typeof s === "string")
+		.map((s) => s.trim().slice(0, 40))
+		.filter(Boolean);
+	return [...new Set(out)].slice(0, 10);
+}
+
+/**
  * Track name of a downloaded subtitle, with its credit and, from the release
  * name, whether it is a dubtitle. Without a release name the file name is used.
  * A credit entered by hand replaces the one read from the names.

@@ -129,6 +129,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	openSubtitlesPassword: "",
 	subtitleDownloadMaxTries: 2,
 	subtitleDownloadMinScore: 60,
+	subtitleDownloadPreferredSources: [],
 	subtitleDownloadHearingImpaired: "avoid",
 	subtitleDownloadAllowMachine: false,
 	subtitleDownloadBeforeTranslate: true,
