@@ -173,7 +173,7 @@ export async function captureFrame(
 
 	const select = `select=eq(n\\,${targetFrame})`;
 	const resetVideoPts = "setpts=PTS-STARTPTS";
-	const colorChain = `scale=in_range=${inRange}:out_range=pc:in_color_matrix=${matrix}:out_color_matrix=bt709,format=rgb24,setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`;
+	const colorChain = `scale=in_range=${inRange}:out_range=pc:in_color_matrix=${matrix}:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int,format=rgb24,setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`;
 
 	let args: string[];
 	if (burnSubs === "text") {
