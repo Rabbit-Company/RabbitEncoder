@@ -2053,6 +2053,11 @@ a.btn {
 	z-index: 220;
 }
 
+/* Opened from the library Translate Subtitles window, so it sits above it. */
+.series-notes-overlay {
+	z-index: 225;
+}
+
 .library-queue-fgs {
 	display: flex;
 	flex-wrap: wrap;
