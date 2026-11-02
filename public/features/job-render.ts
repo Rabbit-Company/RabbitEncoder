@@ -409,9 +409,13 @@ export function renderJobCard(job: Job): string {
 				meta += `<span title="The table is measured as a step of the encode">FGS: ${job.settings.filmGrainRange === "representative" ? "Quick" : "Full video"} / ${({ all: "Every frame", half: "Half", quarter: "Quarter", eighth: "Eighth" } as const)[job.settings.filmGrainSampling] ?? "Every frame"}</span>`;
 		}
 	} else if (!isToolJob(job) && job.settings.videoEncode === "av1" && job.settings.subtitleProcessing !== "translate" && !job.settings.filmGrainTablePath) {
-		if (job.settings.filmGrainRestore && job.settings.denoise !== "off")
-			meta += `<span title="The grain the denoiser removes is measured after Prepare and written back">FGS: restore${job.settings.filmGrainJustEnough ? " (just enough)" : ""}</span>`;
-		else if (syntheticGrainActive(job.settings))
+		if (job.settings.filmGrainRestore) {
+			const title =
+				job.settings.denoise !== "off"
+					? "The grain the denoiser removes is measured after Prepare and written back"
+					: "The grain the encoder smoothed away is measured after the encode and written back";
+			meta += `<span title="${title}">FGS: restore${job.settings.filmGrainJustEnough ? " (just enough)" : ""}</span>`;
+		} else if (syntheticGrainActive(job.settings))
 			meta += `<span>Grain: ${syntheticGrainMode(job.settings) === "iso" ? `ISO ${job.settings.filmGrainSyntheticIso}` : job.settings.filmGrainSyntheticStrength}</span>`;
 	}
 

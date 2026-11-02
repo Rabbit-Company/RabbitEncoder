@@ -373,9 +373,11 @@ export async function encodeJob(
 	const ownFilmGrain =
 		job.settings.videoEncode === "av1" && job.settings.subtitleProcessing !== "translate" && !generateFilmGrain && !job.settings.filmGrainTablePath?.trim();
 	const restoreFilmGrain = ownFilmGrain && job.settings.filmGrainRestore === true && job.settings.denoise !== "off";
+	// Without a denoise the encode is the clean side, so the grain the encoder smoothed away is measured after it.
+	const restoreFromEncode = ownFilmGrain && job.settings.filmGrainRestore === true && job.settings.denoise === "off";
 	const syntheticGrain = ownFilmGrain && syntheticGrainActive(job.settings);
 	if (
-		(generateFilmGrain || job.settings.filmGrainTablePath?.trim() || restoreFilmGrain || syntheticGrain) &&
+		(generateFilmGrain || job.settings.filmGrainTablePath?.trim() || restoreFilmGrain || restoreFromEncode || syntheticGrain) &&
 		job.settings.videoEncode !== "off" &&
 		/--(?:photon-noise|film-grain|fgs-table)(?:\s|=|$)/.test(job.settings.customEncoderParams || "")
 	)
@@ -386,9 +388,11 @@ export async function encodeJob(
 	const baseTitle = extractBaseTitle(stem);
 
 	const steps = makeSteps();
-	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise.
-	const filmGrainStep: JobStep | null = generateFilmGrain || restoreFilmGrain ? { label: "Film Grain", status: "pending", progress: 0 } : null;
-	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : S_READ;
+	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise,
+	// after the final encode when the encode itself is measured.
+	const filmGrainStep: JobStep | null =
+		generateFilmGrain || restoreFilmGrain || restoreFromEncode ? { label: "Film Grain", status: "pending", progress: 0 } : null;
+	const filmGrainStepAt = restoreFilmGrain ? S_PREPARE + 1 : restoreFromEncode ? S_FINAL + 1 : S_READ;
 	// Shown once the probe finds a PQ source, right after Prepare and the Film Grain step that follows it.
 	let hdr10PlusStep: JobStep | null = null;
 	const shownSteps = (): JobStep[] => {
@@ -1601,6 +1605,37 @@ export async function encodeJob(
 
 				if (!existsSync(ivfFile)) {
 					throw new Error("Encoder did not produce output .ivf file");
+				}
+
+				// The encoder's input against its output. Measured before HDR10+ goes in, so that step knows a table follows.
+				if (filmGrainStep && restoreFromEncode) {
+					checkCancelled();
+					setStep(filmGrainStep, { status: "active", progress: 0, detail: "Measuring the grain the encode smoothed away" });
+					const measuredTable = join(tempDir, "film-grain-measured.tbl");
+					let segments: number;
+					try {
+						segments = await measureFilmGrain({
+							sourcePath: preparedVideo,
+							denoisedPath: ivfFile,
+							tablePath: measuredTable,
+							sampling: job.settings.filmGrainSampling,
+							range: job.settings.filmGrainRange ?? "full",
+							justEnough: job.settings.filmGrainJustEnough === true,
+							signal: stageSignal,
+							onProgress: (progress) => setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
+						});
+					} catch (error) {
+						if (error instanceof CancelledError || stageSignal.aborted) throw error;
+						throw new Error(`Film grain measurement failed: ${error instanceof Error ? error.message : String(error)}`);
+					}
+					checkCancelled();
+					const applied = segments > 0 && writeEncoderFilmGrainTable(measuredTable, join(tempDir, "film-grain.tbl")) > 0;
+					if (applied) filmGrainTablePath = measuredTable;
+					setStep(filmGrainStep, {
+						status: "done",
+						progress: 100,
+						detail: applied ? `${segments} ${segments === 1 ? "segment" : "segments"}` : "The encode lost no measurable grain",
+					});
 				}
 
 				// HDR10+ goes in before the grain, so regrain's verify decodes the stream with both.

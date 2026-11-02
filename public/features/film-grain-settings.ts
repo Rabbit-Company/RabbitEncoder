@@ -80,7 +80,7 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 	renderLabeledToggle(
 		byId("advanced-film-grain-restore"),
 		settings.filmGrainRestore === true,
-		"Measure and restore the grain Rabbit's denoiser removes",
+		"Measure and restore the grain the denoiser or encoder removes",
 		(v) => (settings.filmGrainRestore = v),
 	);
 	renderLabeledToggle(

@@ -1026,11 +1026,13 @@
 							</div>
 							<div class="nested-settings">
 								<div class="setting-group">
-									<label>Restore denoised grain</label>
+									<label>Restore lost grain</label>
 									<div id="advanced-film-grain-restore"></div>
 									<div class="lang-filter-hint">
 										When Rabbit denoises the video itself, it measures the grain the denoiser removed as a Film Grain step after Prepare and writes it back into
-										the encode. Crop and downscale are applied to both sides first. A table from an original or a table path takes precedence.
+										the encode. Crop and downscale are applied to both sides first. With denoise off, it measures the grain the encoder smoothed away, as a Film
+										Grain step after the encode, and writes that back without encoding again. That fills flat areas and hides banding but does not make the file
+										smaller, and in hard scenes it can count blur and ringing as grain. A table from an original or a table path takes precedence.
 									</div>
 								</div>
 								<div class="setting-group">
