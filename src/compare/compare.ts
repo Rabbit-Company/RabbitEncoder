@@ -22,6 +22,10 @@ const CHECK_RADIUS = 4;
 const CHECK_MIN_GAIN = 0.85;
 const THUMB_W = 64;
 const THUMB_H = 36;
+/** Frames either way each captured image may move to the one that looks most like the first source's. */
+const MATCH_RADIUS = 3;
+const MATCH_W = 160;
+const MATCH_H = 90;
 
 export interface CompareSourceInput {
 	path: string;
@@ -78,6 +82,8 @@ export interface CompareFrameState {
 	images: boolean[];
 	/** Per source: scores of its image against the first source's. None for the first source and for images that cannot be scored. */
 	scores?: Array<FrameScores | null>;
+	/** Per source: frames its image was moved from the offset to match the first source's picture. Left out when none moved. */
+	shifts?: number[];
 }
 
 /** Every frame, or a frame about every so many seconds. */
@@ -351,16 +357,26 @@ export function shiftErrors(ref: Uint8Array[], cand: Uint8Array[], radius: numbe
 	return errors;
 }
 
-/** Shift with the lowest summed error, or 0 when it is not clearly better than no shift. */
+/** Shift with the lowest error, the smallest of equal ones, or 0 when it is not clearly better than no shift. */
 export function pickShift(errors: number[], radius: number, minGain = CHECK_MIN_GAIN): number {
-	let best = 0;
-	for (let k = 0; k < errors.length; k++) if (errors[k]! < errors[best]!) best = k;
+	let best = radius;
+	for (let k = 0; k < errors.length; k++) {
+		if (errors[k]! < errors[best]! || (errors[k] === errors[best] && Math.abs(k - radius) < Math.abs(best - radius))) best = k;
+	}
 	const zero = errors[radius]!;
 	return errors[best]! < zero * minGain ? best - radius : 0;
 }
 
-/** Small greyscale frames from frame `start` on, for the picture check. */
-async function thumbFrames(path: string, info: VideoInfo, start: number, count: number, signal: AbortSignal): Promise<Uint8Array[]> {
+/** Small greyscale frames from frame `start` on, for matching pictures. */
+async function thumbFrames(
+	path: string,
+	info: VideoInfo,
+	start: number,
+	count: number,
+	signal: AbortSignal,
+	width = THUMB_W,
+	height = THUMB_H,
+): Promise<Uint8Array[]> {
 	const proc = Bun.spawn(
 		[
 			"ffmpeg",
@@ -376,7 +392,9 @@ async function thumbFrames(path: string, info: VideoInfo, start: number, count: 
 			"-frames:v",
 			String(count),
 			"-vf",
-			`scale=${THUMB_W}:${THUMB_H}:flags=area,format=gray`,
+			`scale=${width}:${height}:flags=area,format=gray`,
+			"-fps_mode",
+			"passthrough",
 			"-f",
 			"rawvideo",
 			"-",
@@ -389,7 +407,7 @@ async function thumbFrames(path: string, info: VideoInfo, start: number, count: 
 		const buf = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
 		await proc.exited;
 		if (signal.aborted) throw new Error("Comparison cancelled");
-		const size = THUMB_W * THUMB_H;
+		const size = width * height;
 		const frames: Uint8Array[] = [];
 		for (let at = 0; at + size <= buf.length; at += size) frames.push(buf.subarray(at, at + size));
 		return frames;
@@ -422,6 +440,27 @@ async function pictureShift(
 		used++;
 	}
 	return used ? pickShift(total, CHECK_RADIUS) : 0;
+}
+
+/**
+ * Frames to move a source's image from frame `index` so it shows the picture
+ * of the first source's frame. Releases from different masters can drift a
+ * frame apart within an episode, which one offset cannot follow. Null when
+ * the frames around it could not be read.
+ */
+async function matchShift(
+	ref: { path: string; info: VideoInfo; index: number },
+	cand: { path: string; info: VideoInfo; index: number },
+	signal: AbortSignal,
+): Promise<number | null> {
+	if (cand.index < MATCH_RADIUS) return null;
+	const [refFrame] = await thumbFrames(ref.path, ref.info, ref.index, 1, signal, MATCH_W, MATCH_H);
+	const candFrames = await thumbFrames(cand.path, cand.info, cand.index - MATCH_RADIUS, 2 * MATCH_RADIUS + 1, signal, MATCH_W, MATCH_H);
+	if (!refFrame || candFrames.length < 2 * MATCH_RADIUS + 1) return null;
+	return pickShift(
+		candFrames.map((c) => frameDistance(refFrame, c)),
+		MATCH_RADIUS,
+	);
 }
 
 const ZIMG_MATRIX: Record<string, string> = {
@@ -460,8 +499,8 @@ function withOverrides(info: VideoInfo, src: CompareSourceInput): VideoInfo {
 	};
 }
 
-/** sRGB PNG of the first frame at or after `seekSec`, scaled to `size` when given, tone mapped when the source is HDR. */
-async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath: string, signal: AbortSignal, size?: OutputSize): Promise<boolean> {
+/** sRGB PNG of the frame `skip` frames after the first one at or after `seekSec`, scaled to `size` when given, tone mapped when the source is HDR. */
+async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath: string, signal: AbortSignal, size?: OutputSize, skip = 0): Promise<boolean> {
 	const toRgb = isHdr(info)
 		? `${size ? `zscale=w=${size.width}:h=${size.height}:filter=spline36,` : ""}zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc:dither=error_diffusion,format=rgb24`
 		: sdrToRgbFilter(info, size);
@@ -479,7 +518,7 @@ async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath
 			"-map",
 			"0:V:0",
 			"-vf",
-			`${toRgb},setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`,
+			`${skip > 0 ? `select=eq(n\\,${skip}),` : ""}${toRgb},setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`,
 			"-frames:v",
 			"1",
 			"-an",
@@ -708,10 +747,23 @@ async function captureSource(
 	const state = session.sources[s]!;
 	const pos = session.frames[f]!.timeSec + state.offsetMs / 1000;
 	if (pos < 0 || pos >= info.duration) return;
+	const frame = session.frames[f]!;
 	const { index } = nearestFrame(pos, info.videoStart, info.fps);
-	const at = seekForFrame(index, info.videoStart, info.fps);
+	const first = infos[0]!;
+	let at = seekForFrame(index, info.videoStart, info.fps);
+	let skip = 0;
+	if (s > 0 && state.offsetFrom === "auto" && first.fps > 0 && Math.abs(info.fps - first.fps) <= 0.01) {
+		const refIndex = nearestFrame(frame.timeSec, first.videoStart, first.fps).index;
+		const shift = await matchShift({ path: session.sources[0]!.path, info: first, index: refIndex }, { path: state.path, info, index }, signal);
+		if (shift !== null) {
+			// Taken from the same run of frames that was matched, as a seek elsewhere can land a frame apart.
+			at = seekForFrame(index - MATCH_RADIUS, info.videoStart, info.fps);
+			skip = MATCH_RADIUS + shift;
+			if (shift !== 0) (frame.shifts ??= session.sources.map(() => 0))[s] = shift;
+		}
+	}
 	const size = state.outputWidth ? sizes[s] : undefined;
-	session.frames[f]!.images[s] = await captureAt(state.path, info, at, imagePath(root, session.id, f, s), signal, size);
+	frame.images[s] = await captureAt(state.path, info, at, imagePath(root, session.id, f, s), signal, size, skip);
 }
 
 /**

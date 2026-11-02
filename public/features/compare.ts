@@ -54,7 +54,7 @@ interface Session {
 	detail?: string;
 	error?: string;
 	sources: SessionSource[];
-	frames: Array<{ timeSec: number; images: boolean[]; scores?: Array<FrameScores | null> }>;
+	frames: Array<{ timeSec: number; images: boolean[]; scores?: Array<FrameScores | null>; shifts?: number[] }>;
 	scoreError?: string;
 	measure?: MeasureState;
 }
@@ -392,6 +392,11 @@ function offsetText(src: SessionSource): string {
 	return "not aligned";
 }
 
+function shiftText(shift: number): string {
+	if (!shift) return "";
+	return `moved ${shift > 0 ? "+" : ""}${shift} frame${Math.abs(shift) === 1 ? "" : "s"} here to match video 1`;
+}
+
 function renderViewer(): void {
 	if (!session) return;
 	const current = session.frames[frame]!;
@@ -413,6 +418,7 @@ function renderViewer(): void {
 		src.hdr ? "HDR, tone mapped" : "",
 		src.colourOverride ? `set to ${src.colourOverride}` : "",
 		`offset ${offsetText(src)}`,
+		shiftText(current.shifts?.[source] ?? 0),
 	]
 		.filter(Boolean)
 		.join(" · ");

@@ -122,6 +122,11 @@ describe("picture check", () => {
 		expect(pickShift([1, 1, 0.95, 1, 1], 2)).toBe(0);
 		expect(pickShift([1, 0.5, 1, 1, 1], 2)).toBe(-1);
 	});
+
+	it("takes the smallest of equally good shifts, as a held drawing matches several frames", () => {
+		expect(pickShift([0.4, 0.4, 0.9, 0.4, 0.4], 2)).toBe(-1);
+		expect(pickShift([0.9, 0.9, 0.9, 0.4, 0.4], 2)).toBe(1);
+	});
 });
 
 describe("measuring", () => {
