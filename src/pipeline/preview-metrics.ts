@@ -3,7 +3,7 @@ import { join } from "path";
 import type { PreviewCrop, PreviewMetricName, PreviewMetricSummary } from "../core/types";
 import { run } from "../core/process";
 import { FFV1_ENCODE_ARGS } from "../video/auto-denoise";
-import { METRIC_NAMES, measureVideoPair, summarize, type MetricName, type VsMatrix } from "../compare/metrics";
+import { METRIC_NAMES, measureVideoPair, NO_GRAIN_DECODE, summarize, type MetricName, type VsMatrix } from "../compare/metrics";
 
 export interface PreviewMeasureOptions {
 	metrics: PreviewMetricName[];
@@ -97,8 +97,7 @@ export async function measurePreviewSample(
 	try {
 		await writeFfv1(["-i", source], crop ? `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}` : null, refPath, signal);
 		const encodedInfo = await probeVideo(encoded, signal);
-		// Exporting the grain parameters is what tells dav1d to leave them unapplied.
-		const decoder = encodedInfo.codec === "av1" ? ["-c:v", "libdav1d", ...(opts.withGrain ? [] : ["-export_side_data", "film_grain"])] : [];
+		const decoder = encodedInfo.codec === "av1" ? (opts.withGrain ? ["-c:v", "libdav1d"] : NO_GRAIN_DECODE) : [];
 		await writeFfv1([...decoder, "-i", encoded], null, distPath, signal);
 		onProgress(0.1);
 

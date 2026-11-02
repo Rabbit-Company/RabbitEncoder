@@ -69,6 +69,7 @@ const imageUrls = new Map<string, Promise<string>>();
 /** Measure choices, kept between comparisons. */
 let measureInterval = "1";
 const measureMetrics = new Set<MetricName>(METRICS);
+let measureWithGrain = true;
 let chartMetric: MetricName = "ssimulacra2";
 let chartHover: number | null = null;
 let chartGeo: ChartGeometry | null = null;
@@ -540,6 +541,7 @@ function renderMeasure(): void {
 	const controls = `<div class="compare-measure-controls">
 		<label>Sample <select class="select-input" id="compare-measure-interval" ${running ? "disabled" : ""}>${INTERVALS.map(([v, t]) => `<option value="${v}" ${v === measureInterval ? "selected" : ""}>${t}</option>`).join("")}</select></label>
 		${METRICS.map((metric) => `<label class="compare-measure-metric"><input type="checkbox" data-measure-metric="${metric}" ${measureMetrics.has(metric) ? "checked" : ""} ${running ? "disabled" : ""}> ${METRIC_LABELS[metric]}</label>`).join("")}
+		<label class="compare-measure-metric" title="On, AV1 videos are scored as a player shows them, with their film grain. Off, the grain is left out so the scores show only what compression lost."><input type="checkbox" id="compare-measure-grain" ${measureWithGrain ? "checked" : ""} ${running ? "disabled" : ""}> Score with film grain</label>
 		${
 			running
 				? '<button class="btn btn-ghost btn-sm" type="button" data-measure-cancel>Cancel</button>'
@@ -597,7 +599,7 @@ function measureResult(m: MeasureState, labels: string[]): string {
 		.join("");
 	const samples = Math.max(...measured.map((s) => Math.max(...Object.values(s.values).map((v) => v?.length ?? 0))));
 	return `${skipped}
-		<div class="compare-measure-tabs">${tabs}<span class="hdr-note">${samples.toLocaleString()} frames, ${intervalText(m.interval)}</span>${zoom}</div>
+		<div class="compare-measure-tabs">${tabs}<span class="hdr-note">${samples.toLocaleString()} frames, ${intervalText(m.interval)}, ${m.withGrain === false ? "without film grain" : "with film grain"}</span>${zoom}</div>
 		<div class="hdr-note">Scroll on the graph to zoom, drag to move along it.</div>
 		<div class="cm-legend">${legend}</div>
 		<div class="cm-chart-wrap" id="compare-chart">${chart}<div class="cm-tip" id="compare-chart-tip" hidden></div></div>
@@ -619,6 +621,7 @@ export async function startMeasureRun(): Promise<void> {
 			body: JSON.stringify({
 				interval: measureInterval === "frame" ? "frame" : Number(measureInterval),
 				metrics: METRICS.filter((m) => measureMetrics.has(m)),
+				withGrain: measureWithGrain,
 			}),
 		});
 		const data = await res.json();
@@ -769,6 +772,7 @@ export function handleCompareMeasureUp(): void {
 export function handleCompareMeasureChange(event: Event): void {
 	const input = event.target as HTMLInputElement;
 	if (input.id === "compare-measure-interval") measureInterval = input.value;
+	if (input.id === "compare-measure-grain") measureWithGrain = input.checked;
 	const metric = input.dataset.measureMetric as MetricName | undefined;
 	if (metric) {
 		if (input.checked) measureMetrics.add(metric);

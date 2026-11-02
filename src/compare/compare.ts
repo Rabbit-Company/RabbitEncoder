@@ -106,6 +106,8 @@ export interface MeasureState {
 	error?: string;
 	interval: MeasureInterval;
 	metrics: MetricName[];
+	/** Off, AV1 videos are scored without their film grain. Older measurements have none and were scored with it. */
+	withGrain?: boolean;
 	/** Frames of the first source between samples. */
 	step: number;
 	/** The first source's frame rate and first frame position, to turn frames into times. */
@@ -140,6 +142,7 @@ interface VideoInfo {
 	/** Sample aspect ratio, width over height of one pixel. */
 	sar: number;
 	fps: number;
+	codec: string;
 	range: "tv" | "pc" | null;
 	space: string | null;
 	transfer: string | null;
@@ -230,7 +233,7 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 			"-v",
 			"error",
 			"-show_entries",
-			"format=start_time,duration:stream=index,codec_type,start_time,width,height,sample_aspect_ratio,avg_frame_rate,r_frame_rate,color_range,color_space,color_transfer,chroma_location:stream_disposition=attached_pic:stream_tags=language",
+			"format=start_time,duration:stream=index,codec_type,codec_name,start_time,width,height,sample_aspect_ratio,avg_frame_rate,r_frame_rate,color_range,color_space,color_transfer,chroma_location:stream_disposition=attached_pic:stream_tags=language",
 			"-of",
 			"json",
 			path,
@@ -250,6 +253,7 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 		height: Number(video.height) || 0,
 		sar: parseRatio(video.sample_aspect_ratio),
 		fps: parseRate(video.avg_frame_rate) || parseRate(video.r_frame_rate),
+		codec: String(video.codec_name ?? ""),
 		range: video.color_range === "pc" ? "pc" : video.color_range === "tv" ? "tv" : null,
 		space: cleanTag(video.color_space),
 		transfer: cleanTag(video.color_transfer),
@@ -864,6 +868,7 @@ export function measureStarts(delta: number, step: number): { refStart: number; 
 export interface MeasureRequest {
 	interval: MeasureInterval;
 	metrics: MetricName[];
+	withGrain: boolean;
 }
 
 /** Scores every other source against the first one over the whole stretch they share, in the background. */
@@ -879,6 +884,7 @@ export function startMeasure(root: string, id: string, req: MeasureRequest): Com
 		detail: "Reading the videos",
 		interval: req.interval,
 		metrics: req.metrics,
+		withGrain: req.withGrain,
 		step: 1,
 		fps: 0,
 		videoStart: 0,
@@ -909,6 +915,7 @@ async function runMeasure(root: string, session: CompareSession, signal: AbortSi
 		const infos = await sourceInfos(session, signal);
 		const first = infos[0]!;
 		const step = m.interval === "frame" ? 1 : Math.max(1, Math.round(m.interval * first.fps));
+		const noGrain = (info: VideoInfo) => m.withGrain === false && info.codec === "av1";
 		Object.assign(m, { step, fps: first.fps, videoStart: first.videoStart });
 		const others = session.sources.map((_, s) => s).slice(1);
 		for (const [k, s] of others.entries()) {
@@ -922,8 +929,8 @@ async function runMeasure(root: string, session: CompareSession, signal: AbortSi
 			const { refStart, distStart } = measureStarts(delta, step);
 			series.firstFrame = refStart;
 			const scores = await measureVideoPair({
-				ref: { path: session.sources[0]!.path, start: refStart, index: join(dir, "s0.ffindex"), ...vsColour(first) },
-				dist: { path: state.path, start: distStart, index: join(dir, `s${s}.ffindex`), ...vsColour(info) },
+				ref: { path: session.sources[0]!.path, start: refStart, index: join(dir, "s0.ffindex"), noGrain: noGrain(first), ...vsColour(first) },
+				dist: { path: state.path, start: distStart, index: join(dir, `s${s}.ffindex`), noGrain: noGrain(info), ...vsColour(info) },
 				step,
 				width: first.width,
 				height: first.height,

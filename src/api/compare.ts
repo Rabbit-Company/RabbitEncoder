@@ -91,13 +91,16 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 
 	app.post("/api/compare/:id/measure", async (c) => {
 		try {
-			const body = (await c.req.json().catch(() => ({}))) as { interval?: unknown; metrics?: unknown };
+			const body = (await c.req.json().catch(() => ({}))) as { interval?: unknown; metrics?: unknown; withGrain?: unknown };
 			const interval = body.interval === "frame" ? "frame" : Number(body.interval);
 			if (interval !== "frame" && (!Number.isFinite(interval) || interval < 0.1 || interval > 60))
 				throw new Error("Measure every frame, or every 0.1 to 60 seconds");
 			const metrics = Array.isArray(body.metrics) ? METRIC_NAMES.filter((m) => (body.metrics as unknown[]).includes(m)) : [];
 			if (!metrics.length) throw new Error(`Choose at least one of ${METRIC_NAMES.join(", ")}`);
-			return c.json(startMeasure(root, c.params.id!, { interval: interval as MeasureInterval, metrics: metrics as MetricName[] }));
+			if (body.withGrain !== undefined && typeof body.withGrain !== "boolean") throw new Error("withGrain must be true or false");
+			return c.json(
+				startMeasure(root, c.params.id!, { interval: interval as MeasureInterval, metrics: metrics as MetricName[], withGrain: body.withGrain ?? true }),
+			);
 		} catch (error) {
 			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
 		}

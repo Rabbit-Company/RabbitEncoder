@@ -25,6 +25,7 @@ export interface MeasureState {
 	error?: string;
 	interval: "frame" | number;
 	metrics: MetricName[];
+	withGrain?: boolean;
 	step: number;
 	fps: number;
 	videoStart: number;

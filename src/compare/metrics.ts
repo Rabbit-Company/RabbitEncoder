@@ -31,20 +31,90 @@ export interface MetricVideo {
 	range?: "limited" | "full";
 	/** ffms2 index file, kept with the comparison so measuring again is quicker. */
 	index: string;
+	/** An AV1 video decoded with dav1d and its film grain left out, since the metrics count grain as error. */
+	noGrain?: boolean;
 }
+
+/** Exporting the grain parameters is what tells dav1d to leave them unapplied. */
+export const NO_GRAIN_DECODE = ["-c:v", "libdav1d", "-export_side_data", "film_grain"];
 
 /**
  * SSIMULACRA2 and XPSNR with vszip. In "video" mode it reads both videos with
  * ffms2 from their start frames and scores every step-th frame pair, the
  * distorted one scaled to the reference first. In "images" mode it scores
  * pairs of PNGs. One JSON line is printed per pair, and "total" first.
+ * ffms2 cannot leave film grain out, so a "noGrain" video is read from
+ * ffmpeg in order instead, with ffms2's clip giving its format and length.
  */
 const METRICS_PY = String.raw`
-import json, math, sys
+import atexit, ctypes, json, math, subprocess, sys, threading
 import vapoursynth as vs
 core = vs.core
 a = json.loads(sys.argv[1])
 want = set(a["metrics"])
+
+def read_exact(stream, size):
+    buf = bytearray(size)
+    view = memoryview(buf)
+    got = 0
+    while got < size:
+        k = stream.readinto(view[got:])
+        if not k:
+            return None
+        got += k
+    return buf
+
+def without_grain(src, path, first, step):
+    fmt = src.format
+    sub = {(0, 0): "444", (1, 0): "422", (1, 1): "420"}[(fmt.subsampling_w, fmt.subsampling_h)]
+    pix = ("gray" if fmt.color_family == vs.GRAY else "yuv" + sub + "p") + ("" if fmt.bits_per_sample == 8 else str(fmt.bits_per_sample) + "le")
+    planes = [(src.width >> (fmt.subsampling_w if p else 0), src.height >> (fmt.subsampling_h if p else 0)) for p in range(fmt.num_planes)]
+    size = sum(w * h for w, h in planes) * fmt.bytes_per_sample
+    proc = subprocess.Popen(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", ${NO_GRAIN_DECODE.map((s) => JSON.stringify(s)).join(", ")}, "-i", path,
+         "-map", "0:V:0", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", pix, "-"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    atexit.register(proc.kill)
+    lock = threading.Lock()
+    frames, state = {}, {"next": 0}
+    keep = core.num_threads * 2 + 8
+    def read(n):
+        with lock:
+            while state["next"] <= n:
+                i = state["next"]
+                data = read_exact(proc.stdout, size)
+                if data is None:
+                    raise vs.Error("The decode without film grain ended at frame %d" % i)
+                state["next"] += 1
+                if i == n or (i >= first and (i - first) % step == 0):
+                    frames[i] = data
+                    while len(frames) > keep:
+                        del frames[min(frames)]
+            if n not in frames:
+                raise vs.Error("Frame %d of the decode without film grain was asked for after it was dropped" % n)
+            return frames[n]
+    def fill(n, f):
+        data = read(n)
+        out = f.copy()
+        base = ctypes.addressof((ctypes.c_char * size).from_buffer(data))
+        for p, (w, h) in enumerate(planes):
+            row, stride, ptr = w * fmt.bytes_per_sample, out.get_stride(p), out.get_write_ptr(p).value
+            if stride == row:
+                ctypes.memmove(ptr, base, row * h)
+            else:
+                for y in range(h):
+                    ctypes.memmove(ptr + y * stride, base + y * row, row)
+            base += row * h
+        return out
+    props = {k: v for k, v in src.get_frame(0).props.items() if k in ("_Matrix", "_Primaries", "_Transfer", "_ChromaLocation", RANGE_KEY)}
+    blank = core.std.BlankClip(src, keep=True)
+    if props:
+        blank = core.std.SetFrameProps(blank, **props)
+    return core.std.ModifyFrame(blank, blank, fill)
+
+def source(s, start, step):
+    clip = core.ffms2.Source(s["path"], cachefile=s["index"])
+    return without_grain(clip, s["path"], start, step) if s.get("noGrain") else clip
 
 if hasattr(vs, "Range"):
     RANGE_KEY, RANGES = "_Range", {"full": int(vs.Range.RANGE_FULL), "limited": int(vs.Range.RANGE_LIMITED)}
@@ -73,9 +143,9 @@ def same_format(r, d):
     return r, d
 
 if a["mode"] == "video":
-    ref = tagged(core.ffms2.Source(a["ref"]["path"], cachefile=a["ref"]["index"]), a["ref"])
-    dis = tagged(core.ffms2.Source(a["dist"]["path"], cachefile=a["dist"]["index"]), a["dist"])
     rs, ds, step = a["ref"]["start"], a["dist"]["start"], a["step"]
+    ref = tagged(source(a["ref"], rs, step), a["ref"])
+    dis = tagged(source(a["dist"], ds, step), a["dist"])
     count = max(0, min(ref.num_frames - rs, dis.num_frames - ds) + step - 1) // step
     if a.get("count") is not None:
         count = min(count, a["count"])
@@ -201,8 +271,10 @@ async function vmafVideo(o: VideoPairOptions, total: number, onProgress: (done: 
 			"-nostats",
 			"-loglevel",
 			"error",
+			...(o.ref.noGrain ? NO_GRAIN_DECODE : []),
 			"-i",
 			o.ref.path,
+			...(o.dist.noGrain ? NO_GRAIN_DECODE : []),
 			"-i",
 			o.dist.path,
 			"-filter_complex",
