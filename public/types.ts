@@ -1,3 +1,5 @@
+import type { MetricName, MetricSummary } from "./features/compare-measure";
+
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
 export type EncoderQuality = "lower" | "low" | "medium" | "high" | "higher";
 export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
@@ -1081,6 +1083,11 @@ export interface PreviewSample {
 	prepareFrames: PreviewSamplePrepareFrame[];
 	/** Indices into PreviewState.references whose still was captured for this sample. */
 	refFrames: number[];
+	/** Encode scored against the source clip, by metric. */
+	scores?: Partial<Record<MetricName, MetricSummary>>;
+	/** Score of every frame of the clip, by metric. */
+	scoreValues?: Partial<Record<MetricName, Array<number | null>>>;
+	scoreError?: string;
 }
 
 /** A film grain table generation started by hand from a job's advanced settings. */
@@ -1104,6 +1111,11 @@ export interface PreviewState {
 	currentDetail: string;
 	samples: PreviewSample[];
 	references: PreviewReference[];
+	/** Metrics the samples were scored with, and whether the encode was decoded with its film grain. */
+	metrics?: MetricName[];
+	metricsWithGrain?: boolean;
+	/** Frame rate of the source, to place each scored frame in time. */
+	fps?: number;
 	error?: string;
 	startedAt?: number;
 	finishedAt?: number;

@@ -3286,7 +3286,7 @@ a.btn {
 }
 
 .preview-modal {
-	width: min(960px, calc(100vw - 32px));
+	width: min(1280px, calc(100vw - 32px));
 }
 
 .preview-intro {
@@ -3672,6 +3672,30 @@ a.btn {
 	color: var(--text-0);
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
+}
+.preview-chart {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 14px;
+	padding: 12px 14px;
+	background: var(--bg-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+.preview-chart-clip {
+	margin-left: auto;
+	width: auto;
+}
+.preview-summary-subhead {
+	margin-top: 4px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+}
+.preview-metric-checks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
 }
 
 .preview-fullscreen-btn {

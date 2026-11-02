@@ -29,8 +29,10 @@ import { encodeJob, CancelledError } from "../pipeline/encoder";
 import { isAlreadyEncoded } from "./library";
 import { Logger } from "../core/logger";
 import { normalizeNlmeansLevelParams, normalizeGradfunLevelParams } from "../video/filters";
+import type { PreviewMeasureOptions } from "../pipeline/preview-metrics";
 import {
 	runPreviewEncode,
+	runPreviewMeasure,
 	deletePreviewDir,
 	previewSettingsFingerprint,
 	buildPreviewReferences,
@@ -996,6 +998,7 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 		settingsFingerprint: previewSettingsFingerprint(job.settings),
 		sampleCount: opts.sampleCount,
 		windowSeconds: opts.windowSeconds,
+		...(opts.metrics.length > 0 ? { metrics: opts.metrics, metricsWithGrain: opts.metricsWithGrain } : {}),
 		startedAt: Date.now(),
 	};
 	previews.set(jobId, state);
@@ -1045,6 +1048,59 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 				cur.finishedAt = Date.now();
 			}
 			Logger.warn(`[preview] Job ${jobId} preview ended: ${err instanceof Error ? err.message : err}`);
+		} finally {
+			if (activePreviewJobId === jobId) {
+				activePreviewJobId = null;
+				activePreviewAbort = null;
+			}
+		}
+	})();
+
+	return { ok: true, state };
+}
+
+/** Scores the clips of a finished preview again. Shares the one preview slot, so Cancel stops it the same way. */
+export function startPreviewMeasure(jobId: string, options: PreviewMeasureOptions): StartPreviewResult {
+	if (activePreviewJobId !== null) {
+		return { ok: false, error: `Another preview is already running (job ${activePreviewJobId})`, status: 409 };
+	}
+	const job = jobs.get(jobId);
+	if (!job) return { ok: false, error: "Job not found", status: 404 };
+	const state = previews.get(jobId);
+	const samples = (state?.samples ?? []).filter((s) => s.encodedSizeBytes > 0);
+	if (!state || samples.length === 0) return { ok: false, error: "Run the preview first, there are no clips to measure", status: 400 };
+
+	const controller = new AbortController();
+	activePreviewJobId = jobId;
+	activePreviewAbort = controller;
+	const before = { status: state.status, currentDetail: state.currentDetail, error: state.error };
+	Object.assign(state, {
+		status: "running",
+		progress: 0,
+		currentDetail: "Starting measuring...",
+		error: undefined,
+		metrics: options.metrics,
+		metricsWithGrain: options.withGrain,
+		startedAt: Date.now(),
+		finishedAt: undefined,
+	});
+
+	(async () => {
+		try {
+			await runPreviewMeasure({
+				job,
+				config: appConfig,
+				samples,
+				options,
+				signal: controller.signal,
+				onUpdate: (partial) => Object.assign(state, partial),
+			});
+			// Measuring keeps the outcome of the preview run, only the scores change.
+			Object.assign(state, before, { progress: 100, finishedAt: Date.now() });
+		} catch (err) {
+			if (err instanceof CancelledError) Object.assign(state, before, { progress: 100, finishedAt: Date.now() });
+			else Object.assign(state, { status: "error", error: err instanceof Error ? err.message : String(err), currentDetail: "Failed", finishedAt: Date.now() });
+			Logger.warn(`[preview] Job ${jobId} measuring ended: ${err instanceof Error ? err.message : err}`);
 		} finally {
 			if (activePreviewJobId === jobId) {
 				activePreviewJobId = null;

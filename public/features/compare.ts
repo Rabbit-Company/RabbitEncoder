@@ -9,6 +9,7 @@ import {
 	formatScore,
 	frameAt,
 	frameExtent,
+	METRIC_GUIDES,
 	METRIC_LABELS,
 	METRICS,
 	scoreSummary,
@@ -514,15 +515,6 @@ export function handleCompareKey(event: KeyboardEvent): void {
 	else return;
 	event.preventDefault();
 }
-
-/** How to read each metric, shown under the chart for the one picked. */
-const METRIC_GUIDES: Record<MetricName, string> = {
-	ssimulacra2:
-		"SSIMULACRA2 follows what people see, from 100 for identical pictures down. Above 90 is visually lossless, 80 very good, 70 good, below 50 clearly degraded.",
-	xpsnr:
-		"XPSNR is a PSNR in dB weighted by how visible each error is, 100 for identical pictures. As a rough guide, above 45 dB is near transparent, 40 to 45 very good, 35 to 40 good, below 30 clearly degraded. It is best for ranking encodes of the same source.",
-	vmaf: "VMAF predicts how a viewer rates the video at TV distance, up to about 100. Above 95 is indistinguishable for most viewers, 90 high quality, 80 good, below 70 visibly worse. It can miss banding and fine detail loss that SSIMULACRA2 catches.",
-};
 
 const INTERVALS: Array<[string, string]> = [
 	["frame", "Every frame"],

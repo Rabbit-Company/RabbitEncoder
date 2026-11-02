@@ -62,6 +62,7 @@ import {
 	handlePreviewAddReference,
 	handlePreviewCancel,
 	handlePreviewClear,
+	handlePreviewMeasure,
 	handlePreviewReferenceListClick,
 	handlePreviewReferenceListInput,
 	handlePreviewRun,
@@ -70,6 +71,7 @@ import {
 	openPreviewModal,
 	togglePreviewSampleView,
 } from "../features/preview";
+import { handlePreviewChartChange, handlePreviewChartClick, handlePreviewChartLeave, handlePreviewChartMove } from "../features/preview-chart";
 import { handleMove } from "../features/queue-order";
 import {
 	closeAdvancedModal,
@@ -442,6 +444,11 @@ export function initEventListeners() {
 	byId("preview-run-btn").addEventListener("click", handlePreviewRun);
 	byId("preview-cancel-btn").addEventListener("click", handlePreviewCancel);
 	byId("preview-clear-btn").addEventListener("click", handlePreviewClear);
+	byId("preview-measure-btn").addEventListener("click", handlePreviewMeasure);
+	byId("preview-chart").addEventListener("click", handlePreviewChartClick);
+	byId("preview-chart").addEventListener("change", handlePreviewChartChange);
+	byId("preview-chart").addEventListener("mousemove", handlePreviewChartMove);
+	byId("preview-chart").addEventListener("mouseleave", handlePreviewChartLeave);
 	byId("preview-add-reference-btn").addEventListener("click", handlePreviewAddReference);
 	byId("preview-reference-list").addEventListener("click", handlePreviewReferenceListClick);
 	byId("preview-reference-list").addEventListener("input", handlePreviewReferenceListInput);

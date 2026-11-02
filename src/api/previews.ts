@@ -1,8 +1,16 @@
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
-import { cancelPreview, clearPreviewFor, getPreviewState, startPreview } from "../queue/store";
+import { cancelPreview, clearPreviewFor, getPreviewState, startPreview, startPreviewMeasure } from "../queue/store";
 import { MAX_PREVIEW_REFERENCES, resolvePreviewArtifact, type PreviewEncodeOptions, type PreviewReferenceInput } from "../pipeline/preview-encoder";
+import { isPreviewMetric, type PreviewMeasureOptions } from "../pipeline/preview-metrics";
 import { resolveAllowedMediaFile } from "./repair";
+
+function parseMeasureOptions(metrics: unknown, withGrain: unknown, allowNone: boolean): PreviewMeasureOptions | string {
+	if (!Array.isArray(metrics) || !metrics.every(isPreviewMetric)) return "metrics must be a list of ssimulacra2, xpsnr and vmaf";
+	if (!allowNone && metrics.length === 0) return "Pick at least one metric";
+	if (withGrain !== undefined && typeof withGrain !== "boolean") return "withGrain must be true or false";
+	return { metrics: [...new Set(metrics)], withGrain: withGrain ?? true };
+}
 
 export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/jobs/:id/preview", (c) => {
@@ -12,7 +20,7 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.post("/api/jobs/:id/preview", async (c) => {
-		let body: { clipCount?: number; clipDuration?: number; references?: unknown } = {};
+		let body: { clipCount?: number; clipDuration?: number; references?: unknown; metrics?: unknown; metricsWithGrain?: unknown } = {};
 		try {
 			body = (await c.req.json()) as typeof body;
 		} catch {
@@ -56,7 +64,26 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 			options.references = references;
 		}
 
+		if (body.metrics !== undefined) {
+			const measure = parseMeasureOptions(body.metrics, body.metricsWithGrain, true);
+			if (typeof measure === "string") return c.json({ error: measure }, 400);
+			options.metrics = measure.metrics;
+			options.metricsWithGrain = measure.withGrain;
+		}
+
 		const result = startPreview(c.params.id!, options);
+		if (!result.ok) return c.json({ error: result.error }, result.status);
+		return c.json(result.state);
+	});
+
+	app.post("/api/jobs/:id/preview/measure", async (c) => {
+		let body: { metrics?: unknown; withGrain?: unknown } = {};
+		try {
+			body = (await c.req.json()) as typeof body;
+		} catch {}
+		const measure = parseMeasureOptions(body.metrics, body.withGrain, false);
+		if (typeof measure === "string") return c.json({ error: measure }, 400);
+		const result = startPreviewMeasure(c.params.id!, measure);
 		if (!result.ok) return c.json({ error: result.error }, result.status);
 		return c.json(result.state);
 	});

@@ -5,6 +5,7 @@ import type {
 	Job,
 	JobSettings,
 	PreviewFrameSink,
+	PreviewMetricName,
 	SubtitleBurnMode,
 	PreviewReference,
 	PreviewSample,
@@ -19,6 +20,7 @@ import { encodeJob } from "./encoder";
 import { analyzeSourceTracks } from "./source-analysis";
 import { FFV1_ENCODE_ARGS } from "../video/auto-denoise";
 import { vsRegistry } from "../video/vs-filters";
+import { measurePreviewSample, type PreviewMeasureOptions } from "./preview-metrics";
 
 /** Extra video (e.g. the pre-denoise original) whose frames are shown next to the job's own source and encode. */
 export interface PreviewReferenceInput {
@@ -32,9 +34,12 @@ export interface PreviewEncodeOptions {
 	sampleCount: number;
 	windowSeconds: number;
 	references: PreviewReferenceInput[];
+	/** Metrics each encoded clip is scored with against its source clip, none to skip scoring. */
+	metrics: PreviewMetricName[];
+	metricsWithGrain: boolean;
 }
 
-export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = { sampleCount: 6, windowSeconds: 5, references: [] };
+export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = { sampleCount: 6, windowSeconds: 5, references: [], metrics: [], metricsWithGrain: true };
 
 export function buildPreviewReferences(inputs: PreviewReferenceInput[]): PreviewReference[] {
 	return inputs.map((ref, index) => ({ index, path: ref.path, name: basename(ref.path), label: ref.label }));
@@ -318,6 +323,10 @@ async function cutSourceClip(inputPath: string, startSec: number, windowSec: num
 			"-c",
 			"copy",
 			...FFV1_ENCODE_ARGS,
+			// In the encoder's default 1/fps time base the shifted millisecond timestamps can round
+			// onto the same tick, which leaves frames with equal timestamps that later steps drop.
+			"-enc_time_base:v:0",
+			"demux",
 			"-fps_mode:v:0",
 			"passthrough",
 			"-avoid_negative_ts",
@@ -390,6 +399,7 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 	const vsFrames = buildVsFrames(job.settings);
 	Logger.info(`[preview] Plan: ${plan.subtitleStreams.length} subtitle, ${plan.audioStreams.length} audio track(s)`);
 
+	onUpdate({ fps: probe.videoStreamFps });
 	const stamps = pickSampleTimestamps(probe.duration, opts.sampleCount, opts.windowSeconds);
 	const comparisonFrame = Math.max(0, Math.round((opts.windowSeconds / 2) * probe.videoStreamFps));
 	const references = await prepareReferences(opts.references, probe, comparisonFrame);
@@ -436,6 +446,14 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 			const streamBytes = Math.max(0, sizeBytes - attachmentBytes);
 			const projectedTotalBytes = Math.round(attachmentBytes + (streamBytes / clipDurationSec) * probe.duration);
 
+			let scored: Pick<PreviewSample, "scores" | "scoreValues" | "scoreError"> = {};
+			if (opts.metrics.length > 0 && sizeBytes > 0) {
+				report("Measuring quality");
+				scored = await scoreSample(sampleDir, sink.crop, colorInfo, { metrics: opts.metrics, withGrain: opts.metricsWithGrain }, signal, (f) =>
+					report(`Measuring quality ${Math.round(f * 100)}%`),
+				);
+			}
+
 			completed.push({
 				index: i,
 				timestampSec: stamps[i]!,
@@ -448,6 +466,8 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 				vsFrames,
 				prepareFrames: [],
 				refFrames,
+				...(sink.crop ? { crop: sink.crop } : {}),
+				...scored,
 			});
 			onUpdate({ samples: [...completed] });
 		} catch (err) {
@@ -457,6 +477,53 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 	}
 
 	return completed;
+}
+
+function sampleDirFor(config: AppConfig, jobId: string, index: number): string {
+	return join(previewDirFor(config, jobId), `sample_${String(index).padStart(2, "0")}`);
+}
+
+/** A sample that cannot be scored keeps its error, so the other samples still get theirs. */
+async function scoreSample(
+	dir: string,
+	crop: PreviewSample["crop"],
+	color: PreviewColorInfo,
+	opts: PreviewMeasureOptions,
+	signal: AbortSignal,
+	onProgress: (fraction: number) => void,
+): Promise<Pick<PreviewSample, "scores" | "scoreValues" | "scoreError">> {
+	try {
+		return await measurePreviewSample(dir, crop, color, opts, signal, onProgress);
+	} catch (err) {
+		if (signal.aborted) throw new CancelledError();
+		const message = err instanceof Error ? err.message : String(err);
+		Logger.warn(`[preview] Measuring ${dir} failed: ${message}`);
+		return { scoreError: message };
+	}
+}
+
+export interface RunPreviewMeasureArgs {
+	job: Job;
+	config: AppConfig;
+	samples: PreviewSample[];
+	options: PreviewMeasureOptions;
+	signal: AbortSignal;
+	onUpdate: (partial: Partial<PreviewState>) => void;
+}
+
+/** Scores the clips of a finished preview again, with other metrics or the grain left out, without encoding them again. */
+export async function runPreviewMeasure(args: RunPreviewMeasureArgs): Promise<void> {
+	const { job, config, samples, options, signal, onUpdate } = args;
+	const color = await probeColorInfo(job.inputPath);
+	for (const [i, sample] of samples.entries()) {
+		if (signal.aborted) throw new CancelledError();
+		const report = (f: number) =>
+			onUpdate({ progress: Math.round(((i + f) / samples.length) * 1000) / 10, currentDetail: `Sample ${i + 1}/${samples.length}: Measuring quality` });
+		report(0);
+		const { scores, scoreValues, scoreError } = await scoreSample(sampleDirFor(config, job.id, sample.index), sample.crop, color, options, signal, report);
+		// The samples belong to the preview state, so the new scores show on the next poll.
+		Object.assign(sample, { scores, scoreValues, scoreError });
+	}
 }
 
 export function resolvePreviewArtifact(config: AppConfig, jobId: string, sampleIndex: number, kind: string): string | null {

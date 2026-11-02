@@ -32,6 +32,7 @@ import type {
 	VsPresetManifest,
 } from "../types";
 import type { AvdDevice, BenchmarkMode, BenchmarkState, FetchOptions, GpuDevice, LibraryEntry, SystemStats } from "../ui/models";
+import type { MetricName } from "../features/compare-measure";
 import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
 import { buttonById, byId, inputById } from "../shared/dom";
@@ -791,12 +792,27 @@ export async function fetchPreviewState(jobId: string): Promise<PreviewState> {
 
 export async function startPreviewRequest(
 	jobId: string,
-	options?: { clipCount?: number; clipDuration?: number; references?: { path: string; label: string }[] },
+	options?: {
+		clipCount?: number;
+		clipDuration?: number;
+		references?: { path: string; label: string }[];
+		metrics?: MetricName[];
+		metricsWithGrain?: boolean;
+	},
 ): Promise<PreviewState> {
 	const res = await authFetch(`${API}/api/jobs/${jobId}/preview`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(options ?? {}),
+	});
+	return res.json();
+}
+
+export async function measurePreviewRequest(jobId: string, options: { metrics: MetricName[]; withGrain: boolean }): Promise<PreviewState> {
+	const res = await authFetch(`${API}/api/jobs/${jobId}/preview/measure`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
 	});
 	return res.json();
 }

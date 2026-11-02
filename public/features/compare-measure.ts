@@ -32,6 +32,15 @@ export interface MeasureState {
 }
 
 export const METRIC_LABELS: Record<MetricName, string> = { ssimulacra2: "SSIMULACRA2", xpsnr: "XPSNR", vmaf: "VMAF" };
+/** How to read each metric, shown under the chart for the one picked. */
+export const METRIC_GUIDES: Record<MetricName, string> = {
+	ssimulacra2:
+		"SSIMULACRA2 follows what people see, from 100 for identical pictures down. Above 90 is visually lossless, 80 very good, 70 good, below 50 clearly degraded.",
+	xpsnr:
+		"XPSNR is a PSNR in dB weighted by how visible each error is, 100 for identical pictures. As a rough guide, above 45 dB is near transparent, 40 to 45 very good, 35 to 40 good, below 30 clearly degraded. It is best for ranking encodes of the same source.",
+	vmaf: "VMAF predicts how a viewer rates the video at TV distance, up to about 100. Above 95 is indistinguishable for most viewers, 90 high quality, 80 good, below 70 visibly worse. It can miss banding and fine detail loss that SSIMULACRA2 catches.",
+};
+
 const UNITS: Record<MetricName, string> = { ssimulacra2: "", xpsnr: " dB", vmaf: "" };
 
 /** Categorical slots stepped for the dark surface, by source number, so an encode keeps its colour. */
@@ -231,7 +240,7 @@ export function chartSvg(measure: MeasureState, metric: MetricName, g: ChartGeom
 	</svg>`;
 }
 
-export function tooltipHtml(measure: MeasureState, metric: MetricName, frame: number, labels: string[]): string {
+export function tooltipHtml(measure: MeasureState, metric: MetricName, frame: number, labels: string[], hint = "Click to capture this frame"): string {
 	const time = measure.videoStart + frame / measure.fps;
 	const rows = measure.series
 		.map((s) => {
@@ -241,5 +250,5 @@ export function tooltipHtml(measure: MeasureState, metric: MetricName, frame: nu
 				: `<div class="cm-tip-row"><span class="cm-key" style="background:${seriesColor(s.source)}"></span><span>${escapeHtml(labels[s.source] ?? "")}</span><strong>${formatScore(metric, v)}</strong></div>`;
 		})
 		.join("");
-	return `<div class="cm-tip-head">${clock(time)}.${String(Math.round((time % 1) * 1000)).padStart(3, "0")} · frame ${frame}</div>${rows}<div class="cm-tip-hint">Click to capture this frame</div>`;
+	return `<div class="cm-tip-head">${clock(time)}.${String(Math.round((time % 1) * 1000)).padStart(3, "0")} · frame ${frame}</div>${rows}${hint ? `<div class="cm-tip-hint">${hint}</div>` : ""}`;
 }

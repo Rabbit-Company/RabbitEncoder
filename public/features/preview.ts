@@ -1,6 +1,8 @@
 import type { PreviewReference, PreviewSample, PreviewState } from "../types";
 import type { PreviewArtifactKind, PreviewSampleCard, PreviewSampleView } from "../ui/models";
-import { authFetch, cancelPreviewRequest, fetchJobs, fetchPreviewState, startPreviewRequest } from "../api/client";
+import { authFetch, cancelPreviewRequest, fetchJobs, fetchPreviewState, measurePreviewRequest, startPreviewRequest } from "../api/client";
+import { formatScore, METRIC_LABELS, METRICS, type MetricName } from "./compare-measure";
+import { renderPreviewChart, resetPreviewChart } from "./preview-chart";
 import { API } from "../config/api-base";
 import { escapeHtml, formatBitrate2 } from "./job-render";
 import { previewSettingsFingerprintFE } from "./library-search";
@@ -154,7 +156,29 @@ export function initPreviewOptionControls() {
 	syncDuration();
 }
 
-export function renderPreviewSummary(samples: PreviewSample[]): void {
+function selectedPreviewMetrics(): MetricName[] {
+	return METRICS.filter((m) => document.querySelector<HTMLInputElement>(`[data-preview-metric="${m}"]`)?.checked);
+}
+
+function scoreRows(samples: PreviewSample[], state: PreviewState): string {
+	const metrics = (state.metrics || []).filter((m) => samples.some((s) => s.scores?.[m]));
+	if (!metrics.length) return "";
+	const rows = metrics.map((metric) => {
+		const scored = samples.map((s) => s.scores?.[metric]).filter((s) => s !== undefined);
+		const frames = scored.reduce((a, s) => a + s.count, 0);
+		const mean = scored.reduce((a, s) => a + s.mean * s.count, 0) / Math.max(1, frames);
+		const low = Math.min(...scored.map((s) => s.p5));
+		return `
+			<div class="preview-summary-row">
+				<span class="meta-label">${METRIC_LABELS[metric]}</span>
+				<span class="meta-value">${formatScore(metric, mean)}, worst clip's 5% low ${formatScore(metric, low)}</span>
+			</div>`;
+	});
+	const grain = state.metricsWithGrain === false ? "without film grain" : "as played, with film grain";
+	return `<div class="preview-summary-row preview-summary-subhead"><span class="meta-label">Quality vs source, ${grain}</span></div>${rows.join("")}`;
+}
+
+export function renderPreviewSummary(samples: PreviewSample[], state: PreviewState): void {
 	const el = byId("preview-summary");
 	if (!samples.length) {
 		el.style.display = "none";
@@ -189,6 +213,7 @@ export function renderPreviewSummary(samples: PreviewSample[]): void {
 				<span class="meta-label">Based on</span>
 				<span class="meta-value">${count} clip${count === 1 ? "" : "s"}, ${totalSampledSec}s sampled</span>
 			</div>
+			${scoreRows(samples, state)}
 		</div>`;
 }
 
@@ -204,6 +229,7 @@ export function renderPreviewState(state: PreviewState): void {
 	const runBtn = buttonById("preview-run-btn");
 	const cancelBtn = buttonById("preview-cancel-btn");
 	const clearBtn = byId("preview-clear-btn");
+	const measureBtn = buttonById("preview-measure-btn");
 
 	const status = state?.status || "idle";
 	const isRunning = status === "running";
@@ -244,16 +270,37 @@ export function renderPreviewState(state: PreviewState): void {
 	if (hasResults) {
 		samplesEl.style.display = "";
 		renderPreviewSamples(state.jobId, state.samples, state.references || []);
+		renderPreviewSampleScores(state.samples);
 	} else {
 		samplesEl.style.display = "none";
 	}
-	renderPreviewSummary(state.samples || []);
+	renderPreviewSummary(state.samples || [], state);
+	renderPreviewChart({ ...state, samples: state.samples || [] });
 
 	runBtn.disabled = isRunning;
 	runBtn.textContent = isFinished || hasResults ? "Re-run Preview" : "Run Preview";
 	runBtn.style.display = isRunning ? "none" : "";
 	cancelBtn.style.display = isRunning ? "" : "none";
 	clearBtn.style.display = !isRunning && hasResults ? "" : "none";
+	measureBtn.style.display = !isRunning && hasResults ? "" : "none";
+	measureBtn.textContent = state.samples?.some((s) => s.scores) ? "Measure again" : "Measure";
+}
+
+/** Scores go in their own block, so they fill in without the card and its picture being rebuilt. */
+function renderPreviewSampleScores(samples: PreviewSample[]): void {
+	for (const sample of samples) {
+		const el = document.querySelector<HTMLElement>(`.preview-sample[data-idx="${sample.index}"] .preview-sample-scores`);
+		if (!el) continue;
+		const rows = sample.scoreError
+			? `<div class="preview-sample-meta-row"><span class="meta-label">Metrics failed</span><span class="meta-value" title="${escapeHtml(sample.scoreError)}">${escapeHtml(sample.scoreError.slice(0, 60))}</span></div>`
+			: METRICS.filter((m) => sample.scores?.[m])
+					.map((metric) => {
+						const s = sample.scores![metric]!;
+						return `<div class="preview-sample-meta-row"><span class="meta-label">${METRIC_LABELS[metric]}</span><span class="meta-value" title="Mean, and the score the worst 5% of frames fall below">${formatScore(metric, s.mean)} · 5% low ${formatScore(metric, s.p5)}</span></div>`;
+					})
+					.join("");
+		if (el.innerHTML !== rows) el.innerHTML = rows;
+	}
 }
 
 export function buildPreviewSampleViews(sample: PreviewSample, references: PreviewReference[] = []): PreviewSampleView[] {
@@ -344,6 +391,7 @@ export function renderPreviewSamples(jobId: string, samples: PreviewSample[], re
 					<span class="meta-label">Projected total</span>
 					<span class="meta-value">${escapeHtml(projected)}</span>
 				</div>
+				<div class="preview-sample-scores"></div>
 				<div class="preview-sample-actions">
 					${refDownloads}
 					<button class="btn btn-ghost" data-dl="source">PNG (S)</button>
@@ -494,6 +542,7 @@ export async function handlePreviewRun() {
 	runBtn.disabled = true;
 	runBtn.textContent = "Starting...";
 	clearPreviewBlobCache();
+	resetPreviewChart();
 	const samplesEl = byId("preview-samples");
 	if (samplesEl) samplesEl.dataset.renderedKey = "";
 
@@ -507,7 +556,13 @@ export async function handlePreviewRun() {
 
 	try {
 		const references = appState.previewReferences.map((r) => ({ path: r.path, label: r.label.trim() }));
-		const result = await startPreviewRequest(appState.currentPreviewJobId, { clipCount, clipDuration, references });
+		const result = await startPreviewRequest(appState.currentPreviewJobId, {
+			clipCount,
+			clipDuration,
+			references,
+			metrics: selectedPreviewMetrics(),
+			metricsWithGrain: inputById("preview-metrics-grain").checked,
+		});
 		if (result.error) {
 			byId("preview-error").textContent = result.error;
 			byId("preview-error").style.display = "";
@@ -522,6 +577,30 @@ export async function handlePreviewRun() {
 		byId("preview-error").style.display = "";
 		runBtn.disabled = false;
 		runBtn.textContent = "Run Preview";
+	}
+}
+
+export async function handlePreviewMeasure() {
+	if (!appState.currentPreviewJobId) return;
+	const errorEl = byId("preview-error");
+	const metrics = selectedPreviewMetrics();
+	if (!metrics.length) {
+		errorEl.textContent = "Pick at least one quality metric to measure.";
+		errorEl.style.display = "";
+		return;
+	}
+	try {
+		const result = await measurePreviewRequest(appState.currentPreviewJobId, { metrics, withGrain: inputById("preview-metrics-grain").checked });
+		if (result.error) {
+			errorEl.textContent = result.error;
+			errorEl.style.display = "";
+			return;
+		}
+		renderPreviewState(result);
+		startPreviewPolling();
+	} catch (e) {
+		errorEl.textContent = `Failed to start measuring: ${errorMessage(e)}`;
+		errorEl.style.display = "";
 	}
 }
 

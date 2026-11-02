@@ -54,6 +54,26 @@ export interface PreviewFrameSink {
 	frameOffsetSec: number;
 	/** Color-aware still extractor (closure supplied by the preview driver). Non-fatal on failure. */
 	capture(inputPath: string, outName: string, burnSubs: SubtitleBurnMode): Promise<void>;
+	/** Set by the encoder to the crop it applied, so the source can be scored with the same picture. */
+	crop?: PreviewCrop;
+}
+
+export interface PreviewCrop {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export type PreviewMetricName = "ssimulacra2" | "xpsnr" | "vmaf";
+
+export interface PreviewMetricSummary {
+	mean: number;
+	/** 5th percentile, the score the worst 5% of frames fall below. */
+	p5: number;
+	min: number;
+	minFrame: number;
+	count: number;
 }
 
 export interface EncodeJobOptions {
@@ -1070,6 +1090,12 @@ export interface PreviewSample {
 	prepareFrames: PreviewSamplePrepareFrame[];
 	/** Indices into PreviewState.references whose still was captured for this sample. */
 	refFrames: number[];
+	crop?: PreviewCrop;
+	/** Encode scored against the source clip, by metric. */
+	scores?: Partial<Record<PreviewMetricName, PreviewMetricSummary>>;
+	/** Score of every frame of the clip, by metric. */
+	scoreValues?: Partial<Record<PreviewMetricName, Array<number | null>>>;
+	scoreError?: string;
 }
 
 export interface PreviewState {
@@ -1079,6 +1105,11 @@ export interface PreviewState {
 	currentDetail: string;
 	samples: PreviewSample[];
 	references: PreviewReference[];
+	/** Metrics the samples were scored with, and whether the encode was decoded with its film grain. */
+	metrics?: PreviewMetricName[];
+	metricsWithGrain?: boolean;
+	/** Frame rate of the source, to place each scored frame in time. */
+	fps?: number;
 	error?: string;
 	startedAt?: number;
 	finishedAt?: number;

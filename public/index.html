@@ -2299,6 +2299,19 @@
 								<span>Clip duration <span id="preview-clip-duration-val"></span></span>
 								<input type="range" id="preview-clip-duration" min="1" max="30" step="1" value="5" />
 							</label>
+							<div class="preview-option">
+								<span>Quality metrics</span>
+								<div class="preview-metric-checks">
+									<label class="compare-measure-metric"><input type="checkbox" data-preview-metric="ssimulacra2" checked /> SSIMULACRA2</label>
+									<label class="compare-measure-metric"><input type="checkbox" data-preview-metric="xpsnr" checked /> XPSNR</label>
+									<label class="compare-measure-metric"><input type="checkbox" data-preview-metric="vmaf" checked /> VMAF</label>
+								</div>
+								<label
+									class="compare-measure-metric"
+									title="On, the encode is scored as a player shows it, with its film grain. Off, the grain is left out so the scores show only what compression lost."
+									><input type="checkbox" id="preview-metrics-grain" checked /> Score with film grain</label
+								>
+							</div>
 						</div>
 
 						<div id="preview-references" class="preview-references" style="display: none">
@@ -2330,11 +2343,20 @@
 
 						<div id="preview-samples" class="preview-samples" style="display: none"></div>
 						<div id="preview-summary" class="preview-summary" style="display: none"></div>
+						<div id="preview-chart" class="preview-chart" style="display: none"></div>
 					</div>
 					<div class="modal-footer">
 						<span class="modal-note" id="preview-note"></span>
 						<button class="btn btn-ghost" id="preview-clear-btn" style="display: none">Clear</button>
 						<button class="btn btn-ghost" id="preview-cancel-btn" style="display: none">Cancel</button>
+						<button
+							class="btn btn-ghost"
+							id="preview-measure-btn"
+							style="display: none"
+							title="Score the clips again with the metrics and grain option above, without encoding them again"
+						>
+							Measure
+						</button>
 						<button class="btn btn-primary" id="preview-run-btn">Run Preview</button>
 					</div>
 				</div>
