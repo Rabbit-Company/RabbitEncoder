@@ -77,12 +77,7 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		(v) => (settings.filmGrainRange = v),
 		(v) => (v === "representative" ? "Quick (30s)" : "Full video"),
 	);
-	renderLabeledToggle(
-		byId("advanced-film-grain-restore"),
-		settings.filmGrainRestore === true,
-		"Measure and restore the grain the denoiser or encoder removes",
-		(v) => (settings.filmGrainRestore = v),
-	);
+	renderLabeledToggle(byId("advanced-film-grain-restore"), settings.filmGrainRestore === true, "Restore removed grain", (v) => (settings.filmGrainRestore = v));
 	renderLabeledToggle(
 		byId("advanced-film-grain-just-enough"),
 		settings.filmGrainJustEnough === true,
