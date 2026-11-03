@@ -21,6 +21,7 @@ import {
 	openBitrateAnalysis,
 	openBitrateAnalysisImport,
 } from "../features/bitrate-analysis";
+import { closeLiveView, closeLiveViewIfOutside, openLiveView, toggleLiveFollow, zoomLiveView } from "../features/live-view";
 import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, removeJobs, saveJobSettings } from "../features/job-settings";
 import { openFolderFromSearch, renderLibraryView } from "../features/library-search";
 import {
@@ -543,6 +544,7 @@ export function initEventListeners() {
 			"audio-preview": openAudioPreview,
 			mediainfo: openMediaInfo,
 			bitrate: openBitrateAnalysis,
+			live: openLiveView,
 			repair: openRepair,
 		});
 	});
@@ -658,6 +660,13 @@ export function initEventListeners() {
 		closeMediaInfo();
 	});
 
+	byId("close-live-modal-btn").addEventListener("click", closeLiveView);
+	byId("live-follow").addEventListener("change", toggleLiveFollow);
+	byId("live-zoom-in-btn").addEventListener("click", () => zoomLiveView("in"));
+	byId("live-zoom-out-btn").addEventListener("click", () => zoomLiveView("out"));
+	byId("live-zoom-reset-btn").addEventListener("click", () => zoomLiveView("reset"));
+	byId("close-live-done-btn").addEventListener("click", closeLiveView);
+	byId("live-modal").addEventListener("click", closeLiveViewIfOutside);
 	byId("close-bitrate-modal-btn").addEventListener("click", closeBitrateAnalysis);
 	byId("close-bitrate-done-btn").addEventListener("click", closeBitrateAnalysis);
 	byId("bitrate-modal").addEventListener("click", closeBitrateAnalysisIfOutside);

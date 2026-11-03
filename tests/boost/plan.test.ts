@@ -5,6 +5,7 @@ import {
 	ESSENTIAL_BITRATE_MODEL,
 	percentile15,
 	presetBitrateShare,
+	finalBitrateShare,
 	planZones,
 	sampleFrames,
 	scenesFromKeyframes,
@@ -131,9 +132,25 @@ describe("planZones", () => {
 		expect(zones[0]!.crf).toBe(30 + ESSENTIAL_BITRATE_MODEL.crfPerHalving);
 	});
 
+	it("predicts each scene's final bitrate at its CRF", () => {
+		const zones = planZones([scene(0, 48, [80, 80], aim * 2), scene(48, 96, [80, 80], 1000)], { ...same, model, maxKbps: 6000 });
+		// The capped scene lands on the aim, the other one keeps the base CRF and its fast pass bitrate.
+		expect(zones[0]!.predictedKbps).toBeCloseTo(aim, 0);
+		expect(zones[1]!.predictedKbps).toBeCloseTo(1000, 0);
+	});
+
 	it("keeps CRFs between 1 and 70", () => {
 		const zones = planZones([scene(0, 24, [80], 1_000_000)], { ...same, baseCrf: 60, fastCrf: 60, maxKbps: 100 });
 		expect(zones[0]!.crf).toBe(70);
+	});
+});
+
+describe("finalBitrateShare", () => {
+	it("takes the preset's share and the encoder's efficiency, and halves every crfPerHalving above the fast pass's CRF", () => {
+		const tuned = { crfPerHalving: 10, efficiency: 0.8 };
+		expect(finalBitrateShare(35, 35, 8, tuned)).toBeCloseTo(0.8, 9);
+		expect(finalBitrateShare(45, 35, 8, tuned)).toBeCloseTo(0.4, 9);
+		expect(finalBitrateShare(30, 35, 4, tuned)).toBeCloseTo(presetBitrateShare(4) * 0.8 * 2 ** 0.5, 9);
 	});
 });
 

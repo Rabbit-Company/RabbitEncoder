@@ -33,7 +33,8 @@ export interface SvtRun {
 	workDir: string;
 	label: string;
 	signal?: AbortSignal;
-	onFrame?: (frame: number) => void;
+	/** Called with the frames done and the encoder's log so far. */
+	onFrame?: (frame: number, log: string) => void;
 }
 
 /**
@@ -80,7 +81,7 @@ export async function runSvt(o: SvtRun): Promise<string> {
 		let pending = "";
 		const line = (text: string) => {
 			const frame = svtProgressFrame(text);
-			if (frame !== null) o.onFrame?.(frame);
+			if (frame !== null) o.onFrame?.(frame, stderr);
 		};
 		while (true) {
 			let chunk;

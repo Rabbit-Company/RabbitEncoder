@@ -334,7 +334,8 @@ export function closeSubPreviewIfOutside(e: MouseEvent): void {
 	if (e.target === e.currentTarget) closeSubPreview();
 }
 
-export function renderSteps(steps?: JobStep[]): string {
+/** `allDetails` keeps the detail of finished steps too, which the job card leaves out. */
+export function renderSteps(steps?: JobStep[], allDetails = false): string {
 	if (!steps || steps.length === 0) return "";
 
 	const stepsHtml = steps
@@ -344,7 +345,7 @@ export function renderSteps(steps?: JobStep[]): string {
 			const statusClass = `step-${step.status}`;
 			const pctStr = step.status === "active" ? `${step.progress.toFixed(2)}%` : step.status === "done" ? "100%" : "";
 
-			const detail = step.detail && step.status === "active" ? `<span class="step-detail">${escapeHtml(step.detail)}</span>` : "";
+			const detail = step.detail && (step.status === "active" || allDetails) ? `<span class="step-detail">${escapeHtml(step.detail)}</span>` : "";
 
 			const timeHtml = renderStepTime(step);
 
@@ -469,6 +470,12 @@ export function renderJobCard(job: Job): string {
     </svg>
   </button>`;
 
+	const liveBtn = `<button class="btn-icon" title="Live View" data-id="${job.id}" data-action="live">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+  </button>`;
+
 	const repairBtn = `<button class="btn-icon" title="Repair or remux subtitles" data-id="${job.id}" data-action="repair">
 		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 			<path d="M14.7 6.3a4 4 0 0 0-5-5L7.4 3.6l3 3-3.8 3.8-3-3-2.3 2.3a4 4 0 0 0 5 5l7.9 7.9a2.1 2.1 0 0 0 3-3z"/>
@@ -517,6 +524,7 @@ export function renderJobCard(job: Job): string {
 			${subBtn}
 			${previewBtn}
 			${bitrateBtn}
+			${liveBtn}
       <button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
       </button>`;
@@ -532,6 +540,7 @@ export function renderJobCard(job: Job): string {
 			${subBtn}
 			${previewBtn}
 			${bitrateBtn}
+			${liveBtn}
       <button class="btn-icon" title="Retry" data-id="${job.id}" data-action="retry">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       </button>
@@ -541,6 +550,7 @@ export function renderJobCard(job: Job): string {
 	} else if (done) {
 		actions = `
 			${isToolJob(job) ? "" : bitrateBtn}
+			${isToolJob(job) ? "" : liveBtn}
 			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>

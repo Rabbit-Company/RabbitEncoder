@@ -2181,6 +2181,48 @@
 			</div>
 
 			<!-- Bitrate Analysis Modal -->
+			<div id="live-modal" class="modal-overlay" style="display: none">
+				<div class="modal bitrate-modal live-modal">
+					<div class="modal-header">
+						<h2 id="live-modal-title">Live View</h2>
+						<button class="btn-close" id="close-live-modal-btn">&times;</button>
+					</div>
+					<div class="modal-body">
+						<div id="live-loading" class="sub-preview-loading">Loading...</div>
+						<div id="live-error" class="sub-preview-error" style="display: none"></div>
+						<div id="live-content" class="live-content" style="display: none">
+							<div id="live-stats" class="bitrate-stats"></div>
+							<div id="live-warning" class="job-warning" style="display: none"></div>
+							<p id="live-note" class="bitrate-mode-note" style="display: none">
+								Live bitrate and scene CRFs are recorded only for encodes that use Rabbit Boost. Auto-Boost-Essential runs as its own program, so only its steps
+								are shown.
+							</p>
+							<div class="live-layout">
+								<div id="live-charts" class="live-charts" style="display: none">
+									<div class="bitrate-toolbar">
+										<span class="lang-filter-hint">Scroll to zoom, drag to pan, double-click to show the whole video.</span>
+										<div class="bitrate-zoom-controls">
+											<button class="btn btn-ghost btn-sm" type="button" id="live-zoom-out-btn" title="Zoom out">&minus;</button>
+											<button class="btn btn-ghost btn-sm" type="button" id="live-zoom-in-btn" title="Zoom in">+</button>
+											<button class="btn btn-ghost btn-sm" type="button" id="live-zoom-reset-btn" title="Reset zoom" disabled>Reset zoom</button>
+										</div>
+									</div>
+									<div class="bitrate-chart-wrap"><canvas id="live-bitrate-canvas"></canvas></div>
+									<div id="live-crf-wrap" class="bitrate-chart-wrap"><canvas id="live-crf-canvas"></canvas></div>
+								</div>
+								<div id="live-steps" class="live-steps"></div>
+							</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<label class="toggle-label live-follow" title="When this job is over, switch to the job encoding next"
+							><input type="checkbox" id="live-follow" />&nbsp;Follow queue</label
+						>
+						<button class="btn btn-ghost" id="close-live-done-btn">Close</button>
+					</div>
+				</div>
+			</div>
+
 			<div id="bitrate-modal" class="modal-overlay" style="display: none">
 				<div class="modal bitrate-modal">
 					<div class="modal-header">

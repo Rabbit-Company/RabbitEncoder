@@ -26,6 +26,7 @@ import {
 	SUBTITLE_HEARING_IMPAIRED_PREFERENCES,
 } from "../core/types";
 import { encodeJob, CancelledError } from "../pipeline/encoder";
+import { deleteTelemetry, initTelemetry, resetTelemetry } from "../pipeline/telemetry";
 import { isAlreadyEncoded } from "./library";
 import { Logger } from "../core/logger";
 import { normalizeNlmeansLevelParams, normalizeGradfunLevelParams } from "../video/filters";
@@ -42,7 +43,7 @@ import {
 import { normalizeVsFilterChain } from "../video/vs-filters";
 import { cloneAvdParams, isValidAvdDeviceSpec, normalizeAvdParams } from "../video/avd";
 import { getDefaultJobSettings } from "../core/config";
-import { isValidEncoder } from "../core/encoders";
+import { ENCODERS, isValidEncoder } from "../core/encoders";
 import { runTranslateOnlyJob } from "../pipeline/translate-only";
 import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-tool";
@@ -83,6 +84,7 @@ export function initStore(config: AppConfig) {
 	settingsFile = join(config.tempDir, "settings.json");
 	loadSettings();
 	loadQueue();
+	initTelemetry(config.tempDir, new Set(jobs.keys()));
 	processQueue();
 }
 
@@ -750,6 +752,7 @@ export function removeJob(id: string): boolean {
 	if (!job) return false;
 	if (job.status !== "queued" && job.status !== "done" && job.status !== "error" && job.status !== "cancelled") return false;
 	jobs.delete(id);
+	deleteTelemetry(id);
 	clearPreviewFor(id);
 	clearFilmGrainRunFor(id);
 	saveQueue();
@@ -842,6 +845,17 @@ async function processQueue() {
 
 	processing = true;
 	next.startedAt = Date.now();
+	// Left from an earlier run of the job, which a retry or a pause does not clear.
+	next.estimatedVideoSize = undefined;
+	next.estimatedFinalSize = undefined;
+	resetTelemetry(
+		next.id,
+		(next.kind ?? "encode") === "encode" &&
+			next.settings.subtitleProcessing !== "translate" &&
+			next.settings.videoEncode !== "off" &&
+			!!ENCODERS[next.settings.encoder]?.rabbitBoost &&
+			next.settings.booster === "rabbit-boost",
+	);
 	saveQueue();
 
 	const controller = new AbortController();
@@ -880,6 +894,7 @@ async function processQueue() {
 				Logger.info(`[store] Job ${next.id} paused and returned to queue`);
 			} else {
 				jobs.delete(next.id);
+				deleteTelemetry(next.id);
 				Logger.info(`[store] Job ${next.id} cancelled and removed`);
 			}
 		} else {

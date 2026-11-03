@@ -87,6 +87,7 @@ import {
 } from "../video/film-grain-generator";
 import type { FilmGrainCrop } from "../video/film-grain-crop";
 import { runRabbitBoost, type BoostStage } from "../boost/rabbit-boost";
+import { TelemetryRecorder } from "./telemetry";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
 import {
 	applyArgs as hdr10PlusApplyArgs,
@@ -1170,6 +1171,7 @@ export async function encodeJob(
 					const totalFrames = Math.max(1, Math.round(probe.duration * probe.videoStreamFps));
 					const boostSteps: Record<BoostStage, number> = { fast: S_FAST, scenes: S_SCENES, metrics: S_METRICS, zones: S_ZONES, final: S_FINAL };
 					mkdirSync(join(tempDir, "abe_temp"), { recursive: true });
+					const telemetry = previewMode ? null : new TelemetryRecorder(job.id, { fps: probe.videoStreamFps, maxKbps, rabbitBoost: true });
 					const result = await runRabbitBoost({
 						binary: enc.binary,
 						input: preparedVideo,
@@ -1187,8 +1189,12 @@ export async function encodeJob(
 						skipBoosting: job.settings.skipBoosting,
 						expectedFrames: totalFrames,
 						signal: stageSignal,
+						onPass: (pass, output, total) => telemetry?.followPass(pass, output, total),
+						onFastShare: (share) => telemetry?.setFastShare(share),
+						onZones: (zones, base) => telemetry?.setZones(zones, base),
 						onStage: (stage, status, detail) => {
 							const si = boostSteps[stage];
+							if ((stage === "fast" || stage === "final") && status === "done") telemetry?.endPass(stage);
 							if (status === "active") setStep(si, { status: "active", progress: 0, detail });
 							else setStep(si, { status: "done", progress: 100, detail: detail ?? steps[si]!.detail });
 						},
@@ -1206,7 +1212,7 @@ export async function encodeJob(
 							}
 							setStep(si, { progress: pct2(done, total), detail: fmtFramesWithFps(done, total, steps[si]!.startedAt, estVideo, estTotal) });
 						},
-					});
+					}).finally(() => telemetry?.finish());
 					checkCancelled();
 					Logger.info(`[boost] Rabbit Boost: ${result.summary}`);
 					if (job.settings.skipBoosting) {

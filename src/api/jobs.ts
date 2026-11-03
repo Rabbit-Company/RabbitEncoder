@@ -8,6 +8,7 @@ import {
 	type BitrateAnalysisResult,
 	type FilmGrainRange,
 	type FilmGrainSampling,
+	type JobLiveView,
 	type JobSettings,
 } from "../core/types";
 import {
@@ -29,6 +30,7 @@ import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
 import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
 import { resolveAllowedMediaFile } from "./repair";
+import { getTelemetry } from "../pipeline/telemetry";
 
 /**
  * Completed bitrate-analysis results, keyed by `${jobId}:${mode}[:${metric}]`.
@@ -90,6 +92,29 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		const job = getJob(c.params.id!);
 		if (!job) return c.json({ error: "Job not found" }, 404);
 		return c.json(job);
+	});
+
+	// The live view polls this while it is open. Telemetry is sent only when it changed since `version`.
+	app.get("/api/jobs/:id/live", (c) => {
+		const job = getJob(c.params.id!);
+		if (!job) return c.json({ error: "Job not found" }, 404);
+		const telemetry = getTelemetry(job.id);
+		const known = Number(c.query().get("version") ?? 0);
+		const view: JobLiveView = {
+			filename: job.filename,
+			status: job.status,
+			progress: job.progress,
+			currentStage: job.currentStage,
+			steps: job.steps,
+			startedAt: job.startedAt,
+			finishedAt: job.finishedAt,
+			estimatedFinalSize: job.estimatedFinalSize,
+			encodedFileSize: job.encodedFileSize,
+			error: job.error,
+			telemetry: telemetry && telemetry.version !== known ? telemetry : null,
+			telemetryVersion: telemetry?.version ?? 0,
+		};
+		return c.json(view);
 	});
 
 	app.patch("/api/jobs/:id", async (c) => {

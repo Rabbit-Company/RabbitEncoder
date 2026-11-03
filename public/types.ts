@@ -860,6 +860,62 @@ export interface SubtitleSearchResult {
 	notes: string[];
 }
 
+/** A Rabbit Boost scene, in frames of the final encode. */
+export interface TelemetryZone {
+	start: number;
+	end: number;
+	crf: number;
+	/** The scene's 15th percentile SSIMULACRA2 score in the fast pass. */
+	score: number;
+	fastKbps: number;
+	/** Bitrate the final pass is expected to give the scene. */
+	predictedKbps: number;
+	/** The CRF was raised to keep the scene under the bitrate cap. */
+	capped: boolean;
+}
+
+/** Bytes and frames written in each second of an encode pass, read from its growing IVF file. */
+export interface TelemetryPass {
+	bytes: number[];
+	frames: number[];
+	/** Frames written so far. */
+	done: number;
+	total: number;
+}
+
+/** What an encode measured on its way, for the live view. Bitrate and zones come from Rabbit Boost only. */
+export interface JobTelemetry {
+	jobId: string;
+	/** Raised on every change, so an unchanged view is not sent again. */
+	version: number;
+	fps: number;
+	/** Highest bitrate in kb/s, 0 for none. */
+	maxKbps: number;
+	rabbitBoost: boolean;
+	baseCrf?: number;
+	/** The final pass's bitrate as a share of the fast pass's at the base CRF, for a rough size during the fast pass. */
+	fastShare?: number;
+	fast?: TelemetryPass;
+	final?: TelemetryPass;
+	zones?: TelemetryZone[];
+}
+
+export interface JobLiveView {
+	filename: string;
+	status: JobStatus;
+	progress: number;
+	currentStage: string;
+	steps: JobStep[];
+	startedAt?: number;
+	finishedAt?: number;
+	estimatedFinalSize?: string;
+	encodedFileSize?: string;
+	error?: string;
+	/** Null when the job has none, or when it has not changed since the version asked with. */
+	telemetry: JobTelemetry | null;
+	telemetryVersion: number;
+}
+
 export interface Job {
 	kind?: JobKind;
 	id: string;

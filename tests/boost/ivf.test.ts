@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { run } from "../../src/core/process";
-import { readIvf } from "../../src/boost/ivf";
+import { readIvf, readIvfSize } from "../../src/boost/ivf";
 
 const root = mkdtempSync(join(tmpdir(), "rabbit-ivf-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -120,4 +120,17 @@ const canEncode = !!Bun.which("ffmpeg") && !!Bun.which("ffprobe");
 		expect(info.frames.map((f) => f.keyframe)).toEqual(expected);
 		expect(expected.filter(Boolean).length).toBeGreaterThan(1);
 	}, 60_000);
+});
+
+describe("readIvfSize", () => {
+	it("reads the frame size before any frame is written", () => {
+		expect(readIvfSize(ivf([]))).toEqual({ width: 640, height: 360 });
+	});
+
+	it("gives nothing for a file that is missing or not IVF yet", () => {
+		expect(readIvfSize(join(root, "missing.ivf"))).toBeNull();
+		const short = join(root, "short.ivf");
+		writeFileSync(short, "DKIF");
+		expect(readIvfSize(short)).toBeNull();
+	});
 });

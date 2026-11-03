@@ -2853,6 +2853,46 @@ a.btn {
 	height: 100% !important;
 	cursor: grab;
 }
+.live-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	height: 100%;
+}
+.live-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 320px;
+	gap: 16px;
+	flex: 1;
+	min-height: 0;
+}
+.live-charts {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-height: 0;
+}
+.live-charts .bitrate-chart-wrap {
+	min-height: 260px;
+}
+.live-charts .bitrate-chart-wrap canvas {
+	cursor: grab;
+}
+.live-follow {
+	margin-right: auto;
+}
+.live-steps {
+	overflow-y: auto;
+	min-height: 0;
+}
+.live-layout:has(.live-charts[style*="none"]) {
+	grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 900px) {
+	.live-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
 .auto-threshold-pct {
 	font-size: 0.72rem;
 	color: var(--text-2);

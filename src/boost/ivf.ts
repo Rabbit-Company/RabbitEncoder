@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { closeSync, openSync, readFileSync, readSync } from "fs";
 
 export interface IvfFrame {
 	/** Bytes of the temporal unit, which is one shown frame. */
@@ -60,6 +60,21 @@ function unitHasKeyframe(data: Uint8Array, reducedStill: { value: boolean }): bo
 		at += size;
 	}
 	return false;
+}
+
+/** The frame size in the header of an IVF file, which an encoder writes before its first frame. */
+export function readIvfSize(path: string): { width: number; height: number } | null {
+	let fd: number | null = null;
+	try {
+		fd = openSync(path, "r");
+		const header = Buffer.alloc(32);
+		if (readSync(fd, header, 0, 32, 0) < 32 || header.toString("latin1", 0, 4) !== "DKIF") return null;
+		return { width: header.readUInt16LE(12), height: header.readUInt16LE(14) };
+	} catch {
+		return null;
+	} finally {
+		if (fd !== null) closeSync(fd);
+	}
 }
 
 /** Frame sizes and key frames of an AV1 IVF file, read without decoding it. */

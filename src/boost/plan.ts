@@ -89,6 +89,11 @@ export const ESSENTIAL_BITRATE_MODEL: BitrateModel = { crfPerHalving: 12, effici
  */
 export const CAP_AIM = 0.9;
 
+/** The final pass's bitrate at `crf` as a share of the fast pass's, which ran at `fastCrf` and preset 8. */
+export function finalBitrateShare(crf: number, fastCrf: number, finalPreset: number, model: BitrateModel = ESSENTIAL_BITRATE_MODEL): number {
+	return presetBitrateShare(finalPreset) * model.efficiency * 2 ** (-(crf - fastCrf) / model.crfPerHalving);
+}
+
 export interface ZonePlanOptions {
 	baseCrf: number;
 	/** The CRF the fast pass ran at, which its bitrates belong to. */
@@ -117,6 +122,8 @@ export interface Zone extends Scene {
 	score: number;
 	/** Bitrate of the scene in the fast pass. */
 	fastKbps: number;
+	/** Bitrate the final pass is expected to give the scene at its CRF. */
+	predictedKbps: number;
 	/** The CRF was raised to keep the scene under the bitrate cap. */
 	capped: boolean;
 }
@@ -144,19 +151,20 @@ export function planZones(scenes: SceneStats[], options: ZonePlanOptions): Zone[
 			crf = options.baseCrf - Math.max(-maxChange, Math.min(maxChange, adjustment));
 		}
 		let capped = false;
+		const model = options.model ?? ESSENTIAL_BITRATE_MODEL;
+		// What the final pass would need at the fast pass's CRF, then moved to the scene's CRF.
+		const atFastCrf = fastKbps * finalBitrateShare(options.fastCrf, options.fastCrf, options.finalPreset, model);
+		const expectedAt = (at: number) => fastKbps * finalBitrateShare(at, options.fastCrf, options.finalPreset, model);
 		if (options.maxKbps && options.maxKbps > 0 && fastKbps > 0) {
-			const model = options.model ?? ESSENTIAL_BITRATE_MODEL;
 			const aim = options.maxKbps * CAP_AIM;
-			// What the final pass would need at the fast pass's CRF, then moved to the scene's CRF.
-			const atFastCrf = fastKbps * presetBitrateShare(options.finalPreset) * model.efficiency;
-			const expected = atFastCrf * 2 ** (-(crf - options.fastCrf) / model.crfPerHalving);
-			if (expected > aim) {
+			if (expectedAt(crf) > aim) {
 				// Rounded up to a quarter, ignoring the rounding noise of whole bytes.
 				crf = Math.ceil((options.fastCrf + model.crfPerHalving * Math.log2(atFastCrf / aim)) * 4 - 1e-3) / 4;
 				capped = true;
 			}
 		}
-		return { start: scene.start, end: scene.end, crf: Math.min(70, Math.max(1, quarter(crf))), score, fastKbps, capped };
+		crf = Math.min(70, Math.max(1, quarter(crf)));
+		return { start: scene.start, end: scene.end, crf, score, fastKbps, predictedKbps: expectedAt(crf), capped };
 	});
 }
 

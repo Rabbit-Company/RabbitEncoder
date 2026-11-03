@@ -13,6 +13,7 @@ import type {
 	HdrPlan,
 	VersionsReport,
 	Job,
+	JobLiveView,
 	JobSettings,
 	PreviewState,
 	RepairFolderAudit,
@@ -151,6 +152,13 @@ export async function fetchVulkanDevices(): Promise<GpuDevice[]> {
 
 export async function fetchJobs(): Promise<Job[]> {
 	const res = await authFetch(`${API}/api/jobs`);
+	return res.json();
+}
+
+/** A job's steps and telemetry. Telemetry is null when it has not changed since `version`. */
+export async function fetchJobLive(id: string, version: number, signal?: AbortSignal): Promise<JobLiveView> {
+	const res = await authFetch(`${API}/api/jobs/${id}/live?version=${version}`, { signal });
+	if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || `Request failed (${res.status})`);
 	return res.json();
 }
 

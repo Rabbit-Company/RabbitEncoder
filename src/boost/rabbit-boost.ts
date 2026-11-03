@@ -1,8 +1,19 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { EncoderQuality, EncoderSpeed } from "../core/types";
-import { readIvf } from "./ivf";
-import { baseCrf, FAST_PRESET, planZones, type BitrateModel, sampleFrames, scenesFromKeyframes, SPEED_PRESETS, zonesConfig, type Zone } from "./plan";
+import { readIvf, readIvfSize } from "./ivf";
+import {
+	baseCrf,
+	FAST_PRESET,
+	finalBitrateShare,
+	planZones,
+	type BitrateModel,
+	sampleFrames,
+	scenesFromKeyframes,
+	SPEED_PRESETS,
+	zonesConfig,
+	type Zone,
+} from "./plan";
 import { scoreFrames } from "./score";
 import { runSvt, svtCrfFromLog } from "./svt";
 
@@ -36,6 +47,12 @@ export interface RabbitBoostOptions {
 	signal?: AbortSignal;
 	onStage: (stage: BoostStage, status: "active" | "done", detail?: string) => void;
 	onProgress: (stage: BoostStage, done: number, total: number) => void;
+	/** A pass starts writing `output`, for the live view to follow. */
+	onPass?: (pass: "fast" | "final", output: string, total: number) => void;
+	/** The final pass's bitrate as a share of the fast pass's at the base CRF, known once the fast pass has started. */
+	onFastShare?: (share: number) => void;
+	/** The CRF of every scene, known before the final pass starts. */
+	onZones?: (zones: Zone[], baseCrf: number) => void;
 }
 
 export interface RabbitBoostResult {
@@ -74,6 +91,7 @@ export async function runRabbitBoost(o: RabbitBoostOptions): Promise<RabbitBoost
 	];
 	const final = async (zonesFile: string | undefined, total: number) => {
 		o.onStage("final", "active");
+		o.onPass?.("final", o.output, total);
 		await runSvt({
 			binary: o.binary,
 			input: o.input,
@@ -94,6 +112,8 @@ export async function runRabbitBoost(o: RabbitBoostOptions): Promise<RabbitBoost
 
 	const fast = join(o.workDir, "fast.ivf");
 	o.onStage("fast", "active");
+	o.onPass?.("fast", fast, o.expectedFrames);
+	let shareSent = !o.onFastShare;
 	const fastLog = await runSvt({
 		binary: o.binary,
 		input: o.input,
@@ -102,7 +122,17 @@ export async function runRabbitBoost(o: RabbitBoostOptions): Promise<RabbitBoost
 		workDir: o.workDir,
 		label: "Fast pass",
 		signal: o.signal,
-		onFrame: (frame) => o.onProgress("fast", frame, o.expectedFrames),
+		onFrame: (frame, log) => {
+			o.onProgress("fast", frame, o.expectedFrames);
+			if (shareSent) return;
+			// The CRF is in the encoder's opening lines and the frame size in the file's header, both there by the first frame.
+			const fastCrf = svtCrfFromLog(log);
+			const size = o.manual ? null : readIvfSize(fast);
+			const base = o.manual ? o.manual.crf : size && baseCrf(o.quality, size.width, size.height);
+			if (fastCrf === null || !base) return;
+			shareSent = true;
+			o.onFastShare!(finalBitrateShare(base, fastCrf, finalPreset, o.bitrateModel));
+		},
 	});
 	o.onStage("fast", "done");
 
@@ -149,6 +179,7 @@ export async function runRabbitBoost(o: RabbitBoostOptions): Promise<RabbitBoost
 	writeFileSync(zonesFile, zonesConfig(zones));
 	writeFileSync(join(o.workDir, "zones.json"), JSON.stringify(zones, null, 1));
 	const summary = describe(zones, o.maxKbps);
+	o.onZones?.(zones, base);
 	o.onStage("zones", "done", summary);
 
 	await final(zonesFile, ivf.frames.length);
