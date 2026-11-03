@@ -46,6 +46,9 @@ let pickerRoots: string[] = [];
 const pickerNodes = new Map<string, PickerNode>();
 let pickerFolderCallback: ((path: string) => void | Promise<void>) | null = null;
 let pickerFileCallback: ((path: string) => void | Promise<void>) | null = null;
+/** Set while the picker chooses many videos at once. */
+let pickerFilesCallback: ((paths: string[]) => void | Promise<void>) | null = null;
+const pickerSelectedPaths = new Set<string>();
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -299,7 +302,7 @@ function renderPickerNode(node: PickerNode): string {
 				</div>
 			</div>`;
 		}
-		const selected = node.path === pickerSelectedPath ? " is-selected" : "";
+		const selected = (pickerFilesCallback ? pickerSelectedPaths.has(node.path) : node.path === pickerSelectedPath) ? " is-selected" : "";
 		return `<div class="tree-node tree-file repair-picker-file${selected}" data-picker-action="select" data-path="${escapeHtml(node.path)}">
 			<div class="tree-row" style="padding-left:${node.depth * 24 + 40}px">
 				<svg class="tree-icon tree-icon-file" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
@@ -323,7 +326,9 @@ function renderPickerNode(node: PickerNode): string {
 	const chooseFolder =
 		pickerPurpose === "folder"
 			? `<button class="btn btn-ghost btn-sm repair-picker-use-folder" type="button" data-picker-action="select-folder" data-path="${escapeHtml(node.path)}">Select folder</button>`
-			: "";
+			: pickerFilesCallback
+				? `<button class="btn btn-ghost btn-sm repair-picker-use-folder" type="button" data-picker-action="select-videos" data-path="${escapeHtml(node.path)}" title="Select or clear every video in this folder">Select videos</button>`
+				: "";
 	return `<div class="tree-node tree-folder${selected}">
 		<div class="tree-row" style="padding-left:${node.depth * 24}px" data-picker-action="expand" data-path="${escapeHtml(node.path)}">
 			<button class="tree-chevron ${node.expanded ? "expanded" : ""}" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></button>
@@ -360,8 +365,33 @@ function renderPicker(): void {
 			.map(renderPickerNode)
 			.join("");
 	}
+	const chooseButton = buttonById("repair-picker-choose-btn");
+	if (pickerFilesCallback) {
+		const count = pickerSelectedPaths.size;
+		byId("repair-picker-note").textContent =
+			count === 1 ? [...pickerSelectedPaths][0]! : count ? `${count} videos selected` : "Click videos to select them, or select a folder's videos";
+		chooseButton.textContent = count > 1 ? `Use ${count} videos` : "Use selected video";
+		chooseButton.disabled = !count;
+		return;
+	}
 	byId("repair-picker-note").textContent = pickerSelectedPath || (pickerPurpose === "folder" ? "Select one folder" : "Select one MKV file");
-	buttonById("repair-picker-choose-btn").disabled = !pickerSelectedPath;
+	chooseButton.textContent = "Use selected file";
+	chooseButton.disabled = !pickerSelectedPath;
+}
+
+/** Selects every video directly in a folder, or clears them when all are selected already. */
+async function togglePickerFolderVideos(path: string): Promise<void> {
+	const node = pickerNodes.get(path);
+	if (!node || node.type !== "directory") return;
+	if (node.children === null) await togglePickerFolder(path);
+	const videos = (node.children ?? []).filter((child) => pickerNodes.get(child)?.type === "file");
+	const all = videos.length > 0 && videos.every((video) => pickerSelectedPaths.has(video));
+	for (const video of videos) {
+		if (all) pickerSelectedPaths.delete(video);
+		else pickerSelectedPaths.add(video);
+	}
+	node.expanded = true;
+	renderPicker();
 }
 
 async function togglePickerFolder(path: string): Promise<void> {
@@ -512,8 +542,10 @@ export function openHdrSourcePicker(onChoose: (path: string) => void | Promise<v
 	void openRepairPicker("hdr-source");
 }
 
-export function openSubtitleSearchPicker(onChoose: (path: string) => void | Promise<void>): void {
-	pickerFileCallback = onChoose;
+export function openSubtitleSearchPicker(selected: string[], onChoose: (paths: string[]) => void | Promise<void>): void {
+	pickerFilesCallback = onChoose;
+	pickerSelectedPaths.clear();
+	for (const path of selected) pickerSelectedPaths.add(path);
 	void openRepairPicker("subtitle-search");
 }
 
@@ -530,6 +562,7 @@ export function openTranslateTargetPicker(onChoose: (path: string) => void | Pro
 export function closeRepairPicker(): void {
 	byId("repair-picker-modal").style.display = "none";
 	pickerFileCallback = null;
+	pickerFilesCallback = null;
 }
 
 export function closeRepairPickerIfOutside(event: MouseEvent): void {
@@ -541,7 +574,14 @@ export function handleRepairPickerClick(event: MouseEvent): void {
 	if (!action?.dataset.path) return;
 	if (action.dataset.pickerAction === "expand") void togglePickerFolder(action.dataset.path);
 	else if (action.dataset.pickerAction === "open-folder") void openPickerFolderFromSearch(action.dataset.path);
-	else if (action.dataset.pickerAction === "select-folder") {
+	else if (action.dataset.pickerAction === "select-videos") {
+		event.stopPropagation();
+		void togglePickerFolderVideos(action.dataset.path);
+	} else if (action.dataset.pickerAction === "select" && pickerFilesCallback) {
+		if (pickerSelectedPaths.has(action.dataset.path)) pickerSelectedPaths.delete(action.dataset.path);
+		else pickerSelectedPaths.add(action.dataset.path);
+		renderPicker();
+	} else if (action.dataset.pickerAction === "select-folder") {
 		event.stopPropagation();
 		pickerSelectedPath = action.dataset.path;
 		renderPicker();
@@ -556,6 +596,14 @@ export function filterRepairPicker(): void {
 }
 
 export function chooseRepairPickerFile(): void {
+	if (pickerFilesCallback) {
+		const callback = pickerFilesCallback;
+		const paths = [...pickerSelectedPaths].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+		if (!paths.length) return;
+		closeRepairPicker();
+		void callback(paths);
+		return;
+	}
 	if (!pickerSelectedPath) return;
 	if (
 		pickerPurpose === "subtitle-editor" ||

@@ -5184,6 +5184,85 @@ a.btn {
 	margin-top: 14px;
 }
 
+.subsearch-every {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 12px;
+}
+
+.subsearch-language.is-left-out h3,
+.subsearch-language.is-left-out .subsearch-table,
+.subsearch-table th.is-left-out {
+	opacity: 0.55;
+}
+
+.subsearch-language-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+.subsearch-sources input.subsearch-rename {
+	width: 160px;
+}
+
+.subsearch-matrix {
+	overflow-x: auto;
+	margin-top: 16px;
+}
+
+.subsearch-matrix td {
+	white-space: nowrap;
+}
+
+.subsearch-episode-link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--accent);
+	font: inherit;
+	cursor: pointer;
+}
+
+.subsearch-episode-link:disabled {
+	color: var(--text-2);
+	cursor: default;
+}
+
+.subsearch-chip {
+	padding: 2px 6px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	font: inherit;
+	font-family: var(--font-mono);
+	cursor: pointer;
+}
+
+.subsearch-chip.good {
+	color: var(--green);
+	background: var(--green-dim);
+}
+
+.subsearch-chip.fair {
+	color: var(--amber);
+	background: var(--amber-dim);
+}
+
+.subsearch-chip.poor {
+	color: var(--red);
+	background: var(--red-dim);
+}
+
+.subsearch-episode-nav {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 14px;
+}
+
 .subocr-track {
 	display: flex;
 	align-items: baseline;

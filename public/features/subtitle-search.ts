@@ -15,18 +15,36 @@ import { openSubtitleSearchPicker } from "./repair";
 
 const STORAGE_KEY = "rabbit-subtitle-search-languages";
 const EXTRA_STORAGE_KEY = "rabbit-subtitle-search-extra";
+const EVERY_STORAGE_KEY = "rabbit-subtitle-search-every-episode";
 const POLL_MS = 1000;
+/** Untested subtitles of a source downloaded per episode when it is picked for all of them. */
+const TRIES_PER_EPISODE = 3;
 
-let videoPath = "";
-let search: SubtitleSearchState | null = null;
-/** Chosen candidate key per language. */
-const choices = new Map<string, string>();
-/** Credits typed over the ones read from the release names, per candidate key. */
-const credits = new Map<string, string>();
+interface Episode {
+	path: string;
+	/** Null until its search starts. */
+	search: SubtitleSearchState | null;
+	error: string;
+	/** Chosen candidate key per language. */
+	choices: Map<string, string>;
+	/** Credits typed over the ones read from the release names, per candidate key. */
+	credits: Map<string, string>;
+	/** Modes it was already queued or saved with, so a retry after a failure skips it. */
+	applied: Set<"mux" | "sidecar">;
+}
+
+let episodes: Episode[] = [];
+/** The episode whose candidates are shown, or -1 for the overview of all of them. */
+let focus = 0;
+/** Credits renamed for every episode, by language and the credit read from the names in lower case. */
+const renames = new Map<string, Map<string, string>>();
+/** Languages left out of every episode by hand. */
+const skippedLanguages = new Set<string>();
 /** Candidates whose sample lines are shown. */
 const expanded = new Set<string>();
-/** Candidate being downloaded on request. */
+/** Candidate being downloaded on request, or "batch" while a source is picked for every episode. */
 let trying: string | null = null;
+let searching = false;
 /** Bumped on every search, so polling for an earlier one stops. */
 let run = 0;
 let startedAt = 0;
@@ -40,6 +58,18 @@ const escapeHtml = (value: unknown): string =>
 		.replace(/'/g, "&#039;");
 
 const fileName = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
+/** What every search of a run is started with, besides its video. */
+type SearchOptions = Parameters<typeof startSubtitleSearch> extends [string, ...infer Rest] ? Rest : never;
+
+const isBatch = (): boolean => episodes.length > 1;
+const doneEpisodes = (): Episode[] => episodes.filter((ep) => ep.search?.state === "done");
+const everyEpisodeOnly = (): boolean => localStorage.getItem(EVERY_STORAGE_KEY) === "1";
+
+function episodeLabel(ep: Episode): string {
+	const id = ep.search?.identity;
+	if (id?.kind === "episode" && id.episode !== undefined) return `S${String(id.season ?? 1).padStart(2, "0")}E${String(id.episode).padStart(2, "0")}`;
+	return fileName(ep.path);
+}
 
 function setError(message: string): void {
 	const el = byId("subsearch-error");
@@ -67,8 +97,9 @@ function parseLanguages(value: string): string[] {
 
 function readIdentity(): Partial<SubtitleSearchIdentity> {
 	const out: Partial<SubtitleSearchIdentity> = {};
+	const batch = isBatch();
 	const title = inputById("subsearch-title").value.trim();
-	const imdb = inputById("subsearch-imdb").value.trim();
+	const imdb = batch ? "" : inputById("subsearch-imdb").value.trim();
 	const number = (id: string) => {
 		const v = inputById(id).value.trim();
 		return v && /^\d+$/.test(v) ? parseInt(v, 10) : undefined;
@@ -83,7 +114,8 @@ function readIdentity(): Partial<SubtitleSearchIdentity> {
 		return out;
 	}
 	const season = number("subsearch-season");
-	const episode = number("subsearch-episode");
+	// Each episode keeps the number its own name gives.
+	const episode = batch ? undefined : number("subsearch-episode");
 	if (season !== undefined) out.season = season;
 	if (episode !== undefined) out.episode = episode;
 	if (kind === "episode" || episode !== undefined) out.kind = "episode";
@@ -99,7 +131,9 @@ function setDetectedKind(kind?: "movie" | "episode"): void {
 
 export function updateSubtitleSearchKind(): void {
 	const movie = kindSelect().value === "movie";
-	for (const id of ["subsearch-season", "subsearch-episode"]) inputById(id).disabled = movie;
+	inputById("subsearch-season").disabled = movie;
+	inputById("subsearch-episode").disabled = movie || isBatch();
+	inputById("subsearch-imdb").disabled = isBatch();
 }
 
 function describeIdentity(id: SubtitleSearchIdentity): string {
@@ -140,15 +174,36 @@ function flags(c: SubtitleSearchCandidate): string {
 	return out.join("");
 }
 
+function findCandidate(ep: Episode, language: string, key: string | undefined): SubtitleSearchCandidate | undefined {
+	return key === undefined ? undefined : ep.search?.languages?.find((l) => l.language === language)?.candidates.find((c) => c.key === key);
+}
+
+/** The credit a candidate gets: typed for this episode, renamed for every episode, or read from its names. */
+function creditFor(ep: Episode, language: string, c: SubtitleSearchCandidate): string {
+	return ep.credits.get(c.key) ?? renames.get(language)?.get(c.credit.toLowerCase()) ?? c.credit;
+}
+
+/** How many finished episodes have a subtitle picked in a language. */
+function pickedCount(language: string): number {
+	return doneEpisodes().filter((ep) => ep.choices.has(language)).length;
+}
+
+/** Whether a language goes into the videos. A single video leaves languages out with its own radio buttons. */
+function languageAdded(language: string): boolean {
+	if (!isBatch()) return true;
+	if (skippedLanguages.has(language)) return false;
+	return !everyEpisodeOnly() || pickedCount(language) === doneEpisodes().length;
+}
+
 function tryButton(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
 	if (c.status !== "untested") return "";
 	const label = trying === c.key ? "Trying..." : "Try";
 	return `<button class="btn btn-ghost btn-sm" type="button" data-subsearch-try="${escapeHtml(c.key)}" data-language="${escapeHtml(lang.language)}" title="Download, sync and rate this one"${trying ? " disabled" : ""}>${label}</button>`;
 }
 
-function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
+function candidateRow(ep: Episode, lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
 	const rated = c.status === "rated";
-	const chosen = choices.get(lang.language) === c.key;
+	const chosen = ep.choices.get(lang.language) === c.key;
 	const q = c.quality;
 	const rating = rated ? `<span class="subsearch-rating ${ratingClass(c.rating!)}">${c.rating}</span>` : '<span class="subsearch-rating none">–</span>';
 	const detail = rated
@@ -184,29 +239,37 @@ function candidateRow(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate):
 }
 
 /** Lets a language be left out, since a radio button cannot be unchecked. */
-function skipRow(lang: SubtitleSearchLanguage): string {
+function skipRow(ep: Episode, lang: SubtitleSearchLanguage): string {
 	if (!lang.candidates.some((c) => c.status === "rated")) return "";
-	const skipped = !choices.has(lang.language);
+	const skipped = !ep.choices.has(lang.language);
 	return `<tr class="subsearch-skip${skipped ? " is-chosen" : ""}">
 		<td><input type="radio" name="subsearch-${escapeHtml(lang.language)}" data-subsearch-choose="" data-language="${escapeHtml(lang.language)}"${skipped ? " checked" : ""} /></td>
 		<td colspan="5">Don't add ${escapeHtml(lang.name)}</td>
 	</tr>`;
 }
 
-function creditField(c: SubtitleSearchCandidate): string {
+function creditField(ep: Episode, language: string, c: SubtitleSearchCandidate): string {
 	return `<label class="subsearch-credit">Credited as
-		<input type="text" class="lang-filter-input" maxlength="60" data-subsearch-credit="${escapeHtml(c.key)}" value="${escapeHtml(credits.get(c.key) ?? c.credit)}" placeholder="${escapeHtml(c.credit)}" />
+		<input type="text" class="lang-filter-input" maxlength="60" data-subsearch-credit="${escapeHtml(c.key)}" data-language="${escapeHtml(language)}" value="${escapeHtml(creditFor(ep, language, c))}" placeholder="${escapeHtml(c.credit)}" />
 		<span class="hdr-note">The group or source in brackets at the end of the track name. Fix it when it was read wrong.</span>
 	</label>`;
 }
 
-function renderResults(): void {
-	const container = byId("subsearch-results");
-	if (!search || search.state !== "done" || !search.languages) {
-		container.innerHTML = "";
-		updateButtons();
-		return;
+/** The candidates of one video, to pick and try them one by one. */
+function renderEpisode(ep: Episode): string {
+	const search = ep.search;
+	let nav = "";
+	if (isBatch()) {
+		const index = episodes.indexOf(ep);
+		nav = `<div class="subsearch-episode-nav">
+			<button class="btn btn-ghost btn-sm" type="button" data-subsearch-focus="-1">← All episodes</button>
+			<button class="btn btn-ghost btn-sm" type="button" data-subsearch-focus="${index - 1}"${index > 0 ? "" : " disabled"}>Previous</button>
+			<button class="btn btn-ghost btn-sm" type="button" data-subsearch-focus="${index + 1}"${index < episodes.length - 1 ? "" : " disabled"}>Next</button>
+			<span class="repair-file-name" title="${escapeHtml(ep.path)}">${escapeHtml(fileName(ep.path))}</span>
+		</div>`;
 	}
+	if (!search || search.state !== "done" || !search.languages)
+		return `${nav}<div class="subsearch-summary"><div class="hdr-note">${escapeHtml(ep.error || (search ? "Searching..." : "Not searched yet"))}</div></div>`;
 	const summary: string[] = [];
 	if (search.identity) summary.push(`<div><strong>Searched as</strong> ${escapeHtml(describeIdentity(search.identity))}</div>`);
 	if (search.reference) summary.push(`<div><strong>Synced to</strong> ${escapeHtml(search.reference.label)}</div>`);
@@ -218,81 +281,236 @@ function renderResults(): void {
 	const sections = search.languages
 		.filter((lang) => !unmatched.includes(lang))
 		.map((lang) => {
-			const rows = lang.candidates.map((c) => candidateRow(lang, c)).join("") + skipRow(lang);
-			const chosen = lang.candidates.find((c) => c.key === choices.get(lang.language));
+			const rows = lang.candidates.map((c) => candidateRow(ep, lang, c)).join("") + skipRow(ep, lang);
+			const chosen = findCandidate(ep, lang.language, ep.choices.get(lang.language));
 			const table = lang.candidates.length
 				? `<table class="subsearch-table"><thead><tr><th></th><th>Rating</th><th>Release</th><th>Downloads</th><th>Sync</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
 				: "";
+			const leftOut = isBatch() && !languageAdded(lang.language) ? ' <span class="subsearch-flag poor">left out of every episode</span>' : "";
 			return `<div class="subsearch-language">
-				<h3>${escapeHtml(lang.name)} <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}</h3>
+				<h3>${escapeHtml(lang.name)} <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}${leftOut}</h3>
 				${lang.note ? `<div class="lang-filter-hint">${escapeHtml(lang.note)}</div>` : ""}
 				${table}
-				${chosen ? creditField(chosen) : ""}
+				${chosen ? creditField(ep, lang.language, chosen) : ""}
 			</div>`;
 		})
 		.join("");
-	container.innerHTML = `<div class="subsearch-summary">${summary.join("")}</div>${sections}`;
+	return `${nav}<div class="subsearch-summary">${summary.join("")}</div>${sections}`;
+}
+
+/** Every language found for any episode, in the order the searches list them. */
+function batchLanguages(): SubtitleSearchLanguage[] {
+	const seen = new Map<string, SubtitleSearchLanguage>();
+	for (const ep of doneEpisodes()) for (const lang of ep.search!.languages ?? []) if (!seen.has(lang.language)) seen.set(lang.language, lang);
+	return [...seen.values()];
+}
+
+interface SourceRow {
+	key: string;
+	credit: string;
+	/** Episodes that use it now. */
+	picked: number;
+	/** Episodes with a rated subtitle from it. */
+	rated: number;
+	/** Episodes where it was found but not downloaded yet. */
+	untested: number;
+}
+
+/** The sources a language's subtitles credit, across every episode. */
+function sourceRows(language: string): SourceRow[] {
+	const rows = new Map<string, SourceRow>();
+	for (const ep of doneEpisodes()) {
+		const lang = ep.search!.languages?.find((l) => l.language === language);
+		if (!lang) continue;
+		const chosen = findCandidate(ep, language, ep.choices.get(language));
+		const byKey = new Map<string, SubtitleSearchCandidate[]>();
+		for (const c of lang.candidates) {
+			if (c.status !== "rated" && c.status !== "untested") continue;
+			const key = c.credit.toLowerCase();
+			byKey.set(key, [...(byKey.get(key) ?? []), c]);
+		}
+		for (const [key, list] of byKey) {
+			const row = rows.get(key) ?? { key, credit: list[0]!.credit, picked: 0, rated: 0, untested: 0 };
+			if (chosen?.credit.toLowerCase() === key) row.picked++;
+			if (list.some((c) => c.status === "rated")) row.rated++;
+			else row.untested++;
+			rows.set(key, row);
+		}
+	}
+	return [...rows.values()].sort((a, b) => b.picked - a.picked || b.rated - a.rated || b.untested - a.untested);
+}
+
+function renderSourceRow(language: string, row: SourceRow): string {
+	const rename = renames.get(language)?.get(row.key) ?? row.credit;
+	const downloads = row.untested ? ` and downloads it for the ${row.untested} episode${row.untested === 1 ? "" : "s"} it was not tried on` : "";
+	return `<tr${row.picked ? ' class="is-chosen"' : ""}>
+		<td>${escapeHtml(row.credit)}</td>
+		<td class="subsearch-num">${row.picked}</td>
+		<td class="subsearch-num">${row.rated}</td>
+		<td class="subsearch-num">${row.untested}</td>
+		<td><input type="text" class="lang-filter-input subsearch-rename" maxlength="60" data-subsearch-rename="${escapeHtml(row.key)}" data-language="${escapeHtml(language)}" value="${escapeHtml(rename)}" placeholder="${escapeHtml(row.credit)}" /></td>
+		<td><button class="btn btn-ghost btn-sm" type="button" data-subsearch-use="${escapeHtml(row.key)}" data-language="${escapeHtml(language)}" title="Picks its best subtitle on every episode that has one${downloads}"${trying || searching ? " disabled" : ""}>Use on every episode</button></td>
+	</tr>`;
+}
+
+function renderBatchLanguage(lang: SubtitleSearchLanguage, done: Episode[]): string {
+	const picked = pickedCount(lang.language);
+	const added = languageAdded(lang.language);
+	const missing = done.filter((ep) => !ep.choices.has(lang.language)).map(episodeLabel);
+	const notes: string[] = [];
+	if (missing.length) notes.push(`No subtitle for ${missing.join(", ")}.`);
+	if (!skippedLanguages.has(lang.language) && !added) notes.push("Left out, since it is not on every episode.");
+	const rows = sourceRows(lang.language);
+	return `<div class="subsearch-language${added ? "" : " is-left-out"}">
+		<h3>
+			<label class="subsearch-language-toggle"><input type="checkbox" data-subsearch-add="${escapeHtml(lang.language)}"${skippedLanguages.has(lang.language) ? "" : " checked"} />
+			${escapeHtml(lang.name)}</label> <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}
+			<span class="hdr-note">${picked} of ${done.length} episodes</span>
+		</h3>
+		${notes.map((note) => `<div class="lang-filter-hint">${escapeHtml(note)}</div>`).join("")}
+		${
+			rows.length
+				? `<table class="subsearch-table subsearch-sources"><thead><tr><th>Source</th><th>Used</th><th>Rated</th><th>Not tried</th><th>Credited as</th><th></th></tr></thead><tbody>${rows.map((row) => renderSourceRow(lang.language, row)).join("")}</tbody></table>`
+				: ""
+		}
+	</div>`;
+}
+
+function episodeState(ep: Episode): string {
+	if (ep.error) return `<span class="subsearch-flag poor" title="${escapeHtml(ep.error)}">failed</span>`;
+	if (!ep.search) return '<span class="hdr-note">waiting</span>';
+	if (ep.search.state === "running") return '<span class="hdr-note">searching</span>';
+	const applied = [ep.applied.has("mux") ? "queued" : "", ep.applied.has("sidecar") ? "saved" : ""].filter(Boolean);
+	return applied.map((label) => `<span class="subsearch-flag good">${label}</span>`).join("");
+}
+
+function matrixCell(ep: Episode, language: string): string {
+	if (ep.search?.state !== "done") return "<td></td>";
+	const c = findCandidate(ep, language, ep.choices.get(language));
+	if (!c) return '<td><span class="subsearch-rating none">–</span></td>';
+	return `<td><button type="button" class="subsearch-chip ${ratingClass(c.rating!)}" data-subsearch-focus="${episodes.indexOf(ep)}" title="${escapeHtml(c.release || c.fileName)}">${escapeHtml(creditFor(ep, language, c))} ${c.rating}</button></td>`;
+}
+
+/** Every episode at once: one source and credit per language for all of them, and what each one got. */
+function renderBatch(): string {
+	const done = doneEpisodes();
+	const languages = batchLanguages();
+	const found = languages.filter((lang) =>
+		done.some((ep) => ep.search!.languages?.find((l) => l.language === lang.language)?.candidates.some((c) => c.status === "rated")),
+	);
+	const nothing = languages.filter((lang) => !found.includes(lang));
+	const summary: string[] = [`<div><strong>Episodes</strong> ${done.length} of ${episodes.length} searched</div>`];
+	const remaining = [...done].reverse().find((ep) => ep.search!.remainingDownloads !== undefined)?.search!.remainingDownloads;
+	if (remaining !== undefined) summary.push(`<div><strong>Downloads left today</strong> ${remaining}</div>`);
+	if (nothing.length) summary.push(`<div><strong>No good subtitle for</strong> ${escapeHtml(nothing.map((lang) => lang.name).join(", "))}</div>`);
+	const failed = episodes.filter((ep) => ep.error);
+	if (failed.length) summary.push(`<div><strong>Failed</strong> ${escapeHtml(failed.map((ep) => `${fileName(ep.path)}: ${ep.error}`).join(". "))}</div>`);
+	const every = `<label class="toggle-label subsearch-every"><input type="checkbox" id="subsearch-every"${everyEpisodeOnly() ? " checked" : ""} /> Only add languages found for every episode</label>`;
+	const head = found
+		.map((lang) => `<th class="${languageAdded(lang.language) ? "" : "is-left-out"}" title="${escapeHtml(lang.name)}">${escapeHtml(lang.language)}</th>`)
+		.join("");
+	const rows = episodes
+		.map(
+			(ep, index) => `<tr>
+				<td class="subsearch-name"><button type="button" class="subsearch-episode-link" data-subsearch-focus="${index}" title="${escapeHtml(ep.path)}"${ep.search?.state === "done" ? "" : " disabled"}>${escapeHtml(episodeLabel(ep))}</button> ${episodeState(ep)}</td>
+				${found.map((lang) => matrixCell(ep, lang.language)).join("")}
+			</tr>`,
+		)
+		.join("");
+	return `<div class="subsearch-summary">${summary.join("")}</div>
+		${done.length ? every : ""}
+		${found.map((lang) => renderBatchLanguage(lang, done)).join("")}
+		<div class="subsearch-matrix"><table class="subsearch-table"><thead><tr><th>Episode</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+		<div class="lang-filter-hint">Click an episode or a subtitle to see every subtitle found for it, try more and pick another.</div>`;
+}
+
+function renderResults(): void {
+	const container = byId("subsearch-results");
+	const ep = episodes[focus];
+	if (isBatch() && !ep) container.innerHTML = episodes.some((e) => e.search || e.error) ? renderBatch() : "";
+	else if (ep && (isBatch() || ep.search?.state === "done")) container.innerHTML = renderEpisode(ep);
+	else container.innerHTML = "";
 	updateButtons();
+}
+
+/** What gets added to an episode, with the credits that differ from the ones read from the names. */
+function picksFor(ep: Episode): Array<{ language: string; key: string; credit?: string }> {
+	return [...ep.choices]
+		.filter(([language]) => languageAdded(language))
+		.map(([language, key]) => {
+			const c = findCandidate(ep, language, key);
+			const credit = c ? creditFor(ep, language, c) : undefined;
+			return { language, key, ...(c && credit !== c.credit ? { credit } : {}) };
+		});
 }
 
 function updateButtons(): void {
-	const running = search?.state === "running" || trying !== null;
+	const busy = searching || trying !== null;
 	const searchBtn = buttonById("subsearch-search");
-	searchBtn.textContent = search?.state === "running" ? "Cancel" : "Search";
-	searchBtn.disabled = !videoPath || trying !== null;
-	const ready = !running && choices.size > 0;
-	buttonById("subsearch-apply").disabled = !ready;
-	buttonById("subsearch-sidecar").disabled = !ready;
+	searchBtn.textContent = searching ? "Cancel" : "Search";
+	searchBtn.disabled = !episodes.length || trying !== null;
+	const ready = !busy && doneEpisodes().some((ep) => picksFor(ep).length > 0);
+	const apply = buttonById("subsearch-apply");
+	const sidecar = buttonById("subsearch-sidecar");
+	apply.disabled = !ready;
+	sidecar.disabled = !ready;
+	apply.textContent = isBatch() ? "Add to videos" : "Add to video";
+	sidecar.textContent = isBatch() ? "Save next to videos" : "Save next to video";
 }
 
 function renderVideo(): void {
-	byId("subsearch-video-selection").innerHTML = videoPath
-		? `<span class="repair-file-name" title="${escapeHtml(videoPath)}">${escapeHtml(fileName(videoPath))}</span><span class="repair-file-folder">${escapeHtml(videoPath)}</span>`
-		: '<span class="repair-file-empty">No video selected</span>';
+	const button = byId("subsearch-choose");
+	button.textContent = episodes.length ? "Change videos..." : "Choose videos...";
+	if (!episodes.length) byId("subsearch-video-selection").innerHTML = '<span class="repair-file-empty">No video selected</span>';
+	else if (!isBatch())
+		byId("subsearch-video-selection").innerHTML =
+			`<span class="repair-file-name" title="${escapeHtml(episodes[0]!.path)}">${escapeHtml(fileName(episodes[0]!.path))}</span><span class="repair-file-folder">${escapeHtml(episodes[0]!.path)}</span>`;
+	else {
+		const folders = [...new Set(episodes.map((ep) => ep.path.slice(0, ep.path.lastIndexOf("/"))))];
+		byId("subsearch-video-selection").innerHTML =
+			`<span class="repair-file-name">${episodes.length} videos</span><span class="repair-file-folder" title="${escapeHtml(episodes.map((ep) => fileName(ep.path)).join("\n"))}">${escapeHtml(folders.length === 1 ? folders[0] : `${folders.length} folders`)}</span>`;
+	}
+	updateSubtitleSearchKind();
 	updateButtons();
 }
 
+function cancelRunning(): void {
+	for (const ep of episodes) if (ep.search?.state === "running") void cancelSubtitleSearch(ep.search.searchId);
+}
+
 function resetResults(): void {
-	if (search?.state === "running") void cancelSubtitleSearch(search.searchId);
+	cancelRunning();
 	run++;
-	search = null;
+	searching = false;
 	trying = null;
-	choices.clear();
-	credits.clear();
+	focus = isBatch() ? -1 : 0;
+	episodes = episodes.map((ep) => ({ path: ep.path, search: null, error: "", choices: new Map(), credits: new Map(), applied: new Set() }));
+	renames.clear();
+	skippedLanguages.clear();
 	expanded.clear();
 	setStatus("");
 	setError("");
 	renderResults();
 }
 
-async function poll(current: number): Promise<void> {
-	while (current === run && search?.state === "running") {
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-		if (current !== run || !search) return;
-		try {
-			search = await fetchSubtitleSearch(search.searchId);
-		} catch (error) {
-			if (current !== run) return;
-			search = null;
-			setError(errorMessage(error));
-			break;
-		}
-		if (current !== run) return;
+/** Searches one video and waits for it. Throws when the search fails. */
+async function searchEpisode(ep: Episode, current: number, index: number, payload: SearchOptions): Promise<void> {
+	const progress = () => {
 		const seconds = Math.round((Date.now() - startedAt) / 1000);
-		setStatus(search.state === "running" ? `${search.message || "Searching"}... ${seconds} s` : "");
-	}
-	if (current !== run) return;
-	if (search?.state === "error") {
-		setError(search.error || "Subtitle search failed");
-		search = null;
-	}
-	for (const lang of search?.languages ?? []) if (lang.bestKey) choices.set(lang.language, lang.bestKey);
-	if (search?.state === "done") {
-		if (!kindSelect().value) setDetectedKind(search.identity?.kind);
-		const found = search.languages?.filter((l) => l.bestKey).length ?? 0;
-		setStatus(`Found ${found} of ${search.languages?.length ?? 0} language${search.languages?.length === 1 ? "" : "s"}`);
-	}
+		const prefix = isBatch() ? `${index + 1} of ${episodes.length}: ` : "";
+		setStatus(`${prefix}${ep.search?.message || "Searching"}... ${seconds} s`);
+	};
+	ep.search = await startSubtitleSearch(ep.path, ...payload);
 	renderResults();
+	while (current === run && ep.search.state === "running") {
+		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+		if (current !== run) return;
+		ep.search = await fetchSubtitleSearch(ep.search.searchId);
+		if (current !== run) return;
+		progress();
+	}
+	if (ep.search.state === "error") throw new Error(ep.search.error || "Subtitle search failed");
+	for (const lang of ep.search.languages ?? []) if (lang.bestKey) ep.choices.set(lang.language, lang.bestKey);
 }
 
 export function openSubtitleSearch(): void {
@@ -322,25 +540,39 @@ export function closeSubtitleSearchIfOutside(event: MouseEvent): void {
 }
 
 export function chooseSubtitleSearchVideo(): void {
-	openSubtitleSearchPicker((path) => {
-		videoPath = path;
-		for (const id of ["subsearch-title", "subsearch-year", "subsearch-season", "subsearch-episode", "subsearch-imdb"]) inputById(id).value = "";
-		kindSelect().value = "";
-		setDetectedKind();
-		updateSubtitleSearchKind();
-		resetResults();
-		renderVideo();
-	});
+	openSubtitleSearchPicker(
+		episodes.map((ep) => ep.path),
+		(paths) => {
+			cancelRunning();
+			episodes = paths.map((path) => ({ path, search: null, error: "", choices: new Map(), credits: new Map(), applied: new Set() }));
+			for (const id of ["subsearch-title", "subsearch-year", "subsearch-season", "subsearch-episode", "subsearch-imdb"]) inputById(id).value = "";
+			kindSelect().value = "";
+			setDetectedKind();
+			resetResults();
+			renderVideo();
+		},
+	);
+}
+
+/** Stops a running search. The episodes already searched keep their results. */
+function stopSearch(): void {
+	cancelRunning();
+	run++;
+	searching = false;
+	for (const ep of episodes) {
+		if (ep.search?.state !== "running") continue;
+		ep.search = null;
+		ep.error = "Search cancelled";
+	}
+	setStatus(isBatch() ? `Cancelled after ${doneEpisodes().length} of ${episodes.length} episodes` : "");
+	if (!isBatch()) resetResults();
+	renderResults();
 }
 
 export async function runSubtitleSearch(): Promise<void> {
-	if (search?.state === "running") {
-		resetResults();
-		updateButtons();
-		return;
-	}
+	if (searching) return stopSearch();
 	const languages = parseLanguages(inputById("subsearch-languages").value);
-	if (!videoPath) return setError("Choose a video first");
+	if (!episodes.length) return setError("Choose a video first");
 	const extraLanguages = Number(byId<HTMLSelectElement>("subsearch-extra").value) || 0;
 	if (!languages.length && !extraLanguages) return setError("Enter at least one language, such as slv, eng");
 	resetResults();
@@ -350,21 +582,48 @@ export async function runSubtitleSearch(): Promise<void> {
 		localStorage.setItem(EXTRA_STORAGE_KEY, String(extraLanguages));
 	} catch {}
 	startedAt = Date.now();
+	searching = true;
 	setStatus("Starting...");
-	try {
-		search = await startSubtitleSearch(videoPath, languages, readIdentity(), extraLanguages, parseLanguages(inputById("subsearch-preferred").value));
-	} catch (error) {
-		setStatus("");
-		setError(errorMessage(error));
-		return;
-	}
-	if (current !== run) return;
 	updateButtons();
-	await poll(current);
+	const payload: SearchOptions = [languages, readIdentity(), extraLanguages, parseLanguages(inputById("subsearch-preferred").value)];
+	// One video at a time, since each search reads a whole video and downloads from the same account.
+	for (const [index, ep] of episodes.entries()) {
+		if (current !== run) return;
+		try {
+			await searchEpisode(ep, current, index, payload);
+		} catch (error) {
+			if (current !== run) return;
+			ep.search = null;
+			ep.error = errorMessage(error);
+			if (!isBatch()) setError(ep.error);
+		}
+		if (current !== run) return;
+		renderResults();
+	}
+	searching = false;
+	const done = doneEpisodes();
+	if (done.length) {
+		if (!kindSelect().value) setDetectedKind(done[0]!.search!.identity?.kind);
+		if (isBatch()) setStatus(`Searched ${done.length} of ${episodes.length} episodes`);
+		else {
+			const search = done[0]!.search!;
+			const found = search.languages?.filter((l) => l.bestKey).length ?? 0;
+			setStatus(`Found ${found} of ${search.languages?.length ?? 0} language${search.languages?.length === 1 ? "" : "s"}`);
+		}
+	} else setStatus("");
+	renderResults();
 }
 
 export function handleSubtitleSearchResultsClick(event: MouseEvent): void {
 	const target = event.target instanceof Element ? event.target : null;
+	const focusBtn = target?.closest<HTMLElement>("[data-subsearch-focus]");
+	if (focusBtn) {
+		const index = Number(focusBtn.dataset.subsearchFocus);
+		focus = index >= 0 && index < episodes.length ? index : -1;
+		renderResults();
+		byId("subsearch-results").scrollIntoView({ block: "start" });
+		return;
+	}
 	const samples = target?.closest<HTMLElement>("[data-subsearch-samples]");
 	if (samples) {
 		const key = samples.dataset.subsearchSamples!;
@@ -373,26 +632,75 @@ export function handleSubtitleSearchResultsClick(event: MouseEvent): void {
 		renderResults();
 	}
 	const tryBtn = target?.closest<HTMLElement>("[data-subsearch-try]");
-	if (tryBtn?.dataset.language) void tryCandidate(tryBtn.dataset.language, tryBtn.dataset.subsearchTry!);
+	const ep = episodes[focus];
+	if (tryBtn?.dataset.language && ep) void tryCandidate(ep, tryBtn.dataset.language, tryBtn.dataset.subsearchTry!);
+	const useBtn = target?.closest<HTMLElement>("[data-subsearch-use]");
+	if (useBtn?.dataset.language) void useSourceEverywhere(useBtn.dataset.language, useBtn.dataset.subsearchUse!);
 }
 
-async function tryCandidate(language: string, key: string): Promise<void> {
-	if (!search || trying) return;
+/** Downloads and rates a candidate, and picks it when it beats the current pick. Returns it as rated, or undefined. */
+async function rateCandidate(ep: Episode, language: string, key: string): Promise<SubtitleSearchCandidate | undefined> {
+	ep.search = await trySubtitleSearchCandidate(ep.search!.searchId, language, key);
+	const tried = findCandidate(ep, language, key);
+	return tried?.status === "rated" ? tried : undefined;
+}
+
+async function tryCandidate(ep: Episode, language: string, key: string): Promise<void> {
+	if (!ep.search || trying) return;
 	const current = run;
 	trying = key;
 	setError("");
 	setStatus("Downloading and syncing...");
 	renderResults();
 	try {
-		const updated = await trySubtitleSearchCandidate(search.searchId, language, key);
+		const tried = await rateCandidate(ep, language, key);
 		if (current !== run) return;
-		search = updated;
-		const lang = updated.languages?.find((l) => l.language === language);
-		const tried = lang?.candidates.find((c) => c.key === key);
-		const chosen = lang?.candidates.find((c) => c.key === choices.get(language));
+		const chosen = findCandidate(ep, language, ep.choices.get(language));
 		// A subtitle asked for by hand is picked when it beats the current pick.
-		if (tried?.status === "rated" && (!chosen || tried.rating! > chosen.rating!)) choices.set(language, key);
-		setStatus(tried?.status === "rated" ? `Rated ${tried.rating}` : (tried?.reason ?? ""));
+		if (tried && (!chosen || tried.rating! > chosen.rating!)) ep.choices.set(language, key);
+		setStatus(tried ? `Rated ${tried.rating}` : (findCandidate(ep, language, key)?.reason ?? ""));
+	} catch (error) {
+		if (current !== run) return;
+		setStatus("");
+		setError(errorMessage(error));
+	} finally {
+		if (current === run) trying = null;
+	}
+	renderResults();
+}
+
+/**
+ * Picks the best subtitle of one source on every episode, downloading its
+ * untested ones where it has no rated subtitle yet. Episodes without it keep
+ * their pick.
+ */
+async function useSourceEverywhere(language: string, sourceKey: string): Promise<void> {
+	if (trying || searching) return;
+	const current = run;
+	trying = "batch";
+	setError("");
+	const done = doneEpisodes();
+	const without: string[] = [];
+	let credit = sourceKey;
+	try {
+		for (const [index, ep] of done.entries()) {
+			const lang = ep.search!.languages?.find((l) => l.language === language);
+			const matches = (lang?.candidates ?? []).filter((c) => c.credit.toLowerCase() === sourceKey);
+			if (matches[0]) credit = matches[0].credit;
+			let best = matches.filter((c) => c.status === "rated").sort((a, b) => b.rating! - a.rating!)[0];
+			for (const c of matches.filter((m) => m.status === "untested").slice(0, best ? 0 : TRIES_PER_EPISODE)) {
+				setStatus(`Trying ${credit} for ${episodeLabel(ep)}, ${index + 1} of ${done.length}...`);
+				renderResults();
+				best = await rateCandidate(ep, language, c.key);
+				if (current !== run) return;
+				if (best) break;
+			}
+			if (best) ep.choices.set(language, best.key);
+			else without.push(episodeLabel(ep));
+		}
+		setStatus(
+			`${credit} is used on ${done.length - without.length} of ${done.length} episodes${without.length ? `. Not found for ${without.join(", ")}` : ""}`,
+		);
 	} catch (error) {
 		if (current !== run) return;
 		setStatus("");
@@ -405,39 +713,84 @@ async function tryCandidate(language: string, key: string): Promise<void> {
 
 export function handleSubtitleSearchResultsChange(event: Event): void {
 	const input = event.target as HTMLInputElement;
+	if (input.id === "subsearch-every") {
+		try {
+			localStorage.setItem(EVERY_STORAGE_KEY, input.checked ? "1" : "0");
+		} catch {}
+		renderResults();
+		return;
+	}
+	const added = input.dataset?.subsearchAdd;
+	if (added) {
+		if (input.checked) skippedLanguages.delete(added);
+		else skippedLanguages.add(added);
+		renderResults();
+		return;
+	}
+	const renameKey = input.dataset?.subsearchRename;
+	if (renameKey && input.dataset.language) {
+		const original = sourceRows(input.dataset.language).find((row) => row.key === renameKey)?.credit;
+		const value = input.value.replace(/[[\]]/g, "").trim();
+		const map = renames.get(input.dataset.language) ?? new Map<string, string>();
+		if (!value || value === original) map.delete(renameKey);
+		else map.set(renameKey, value);
+		renames.set(input.dataset.language, map);
+		// A name typed for one episode gives way to the one typed for all of them.
+		for (const ep of doneEpisodes())
+			for (const c of ep.search!.languages?.find((l) => l.language === input.dataset.language)?.candidates ?? [])
+				if (c.credit.toLowerCase() === renameKey) ep.credits.delete(c.key);
+		renderResults();
+		return;
+	}
+	const ep = episodes[focus];
+	if (!ep) return;
 	const creditKey = input.dataset?.subsearchCredit;
-	if (creditKey) {
-		const candidate = search?.languages?.flatMap((l) => l.candidates).find((c) => c.key === creditKey);
+	if (creditKey && input.dataset.language) {
+		const candidate = findCandidate(ep, input.dataset.language, creditKey);
 		const value = input.value.trim();
-		if (!value || value === candidate?.credit) credits.delete(creditKey);
-		else credits.set(creditKey, value);
+		const fallback = candidate && (renames.get(input.dataset.language)?.get(candidate.credit.toLowerCase()) ?? candidate.credit);
+		if (!value || value === fallback) ep.credits.delete(creditKey);
+		else ep.credits.set(creditKey, value);
 		return;
 	}
 	const key = input.dataset?.subsearchChoose;
 	if (key === undefined || !input.dataset.language) return;
-	if (key) choices.set(input.dataset.language, key);
-	else choices.delete(input.dataset.language);
+	if (key) ep.choices.set(input.dataset.language, key);
+	else ep.choices.delete(input.dataset.language);
 	renderResults();
 }
 
 export async function applySubtitleSearch(mode: "mux" | "sidecar"): Promise<void> {
-	if (!search || !choices.size) return;
+	const targets = doneEpisodes().filter((ep) => picksFor(ep).length > 0 && (!isBatch() || !ep.applied.has(mode)));
+	if (!targets.length) {
+		if (isBatch()) setStatus(mode === "mux" ? "Every episode is queued already" : "Every episode is saved already");
+		return;
+	}
 	buttonById("subsearch-apply").disabled = true;
 	buttonById("subsearch-sidecar").disabled = true;
 	setError("");
-	try {
-		const result = await applyVideoSubtitles(
-			search.searchId,
-			[...choices].map(([language, key]) => ({ language, key, ...(credits.has(key) ? { credit: credits.get(key) } : {}) })),
-			mode,
-		);
-		if (mode === "sidecar") setStatus(`Saved ${result.files?.join(", ")}`);
-		else {
-			setStatus("Queued. The subtitles are added when the job runs.");
-			await update();
+	const failures: string[] = [];
+	const files: string[] = [];
+	for (const [index, ep] of targets.entries()) {
+		if (isBatch()) setStatus(`${mode === "mux" ? "Queueing" : "Saving"} ${index + 1} of ${targets.length}...`);
+		try {
+			const result = await applyVideoSubtitles(ep.search!.searchId, picksFor(ep), mode);
+			ep.applied.add(mode);
+			files.push(...(result.files ?? []));
+		} catch (error) {
+			failures.push(isBatch() ? `${episodeLabel(ep)}: ${errorMessage(error)}` : errorMessage(error));
 		}
-	} catch (error) {
-		setError(errorMessage(error));
 	}
-	updateButtons();
+	const succeeded = targets.length - failures.length;
+	if (failures.length) setError(failures.join(". "));
+	if (!isBatch()) {
+		if (succeeded) setStatus(mode === "sidecar" ? `Saved ${files.join(", ")}` : "Queued. The subtitles are added when the job runs.");
+	} else if (succeeded)
+		setStatus(
+			mode === "sidecar"
+				? `Saved ${files.length} file${files.length === 1 ? "" : "s"} next to ${succeeded} video${succeeded === 1 ? "" : "s"}`
+				: `Queued ${succeeded} video${succeeded === 1 ? "" : "s"}. The subtitles are added when the jobs run.`,
+		);
+	if (mode === "mux" && succeeded) await update();
+	renderResults();
 }
