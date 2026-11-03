@@ -270,8 +270,8 @@ RUN set -eux; \
 
 # regrain measures film grain and writes it into the AV1 encode. It is a static binary
 # and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
-ARG REGRAIN_VERSION=0.3.2
-ARG REGRAIN_SHA256=00e0f3ae0de41c559655d050bd4d8867cb167de86a6e4a58e6558427047a8a87
+ARG REGRAIN_VERSION=0.3.3
+ARG REGRAIN_SHA256=e58d498c5e061555202705bff5ef4f6338bfa34163b5d4555c14e7b4dc2d374c
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/regrain/releases/download/v${REGRAIN_VERSION}/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/regrain.tar.gz \
