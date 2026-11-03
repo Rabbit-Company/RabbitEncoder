@@ -1867,10 +1867,14 @@
 									<option value="30">Top 30</option>
 								</select>
 							</label>
+							<label class="toggle-label subsearch-extra">
+								<input type="checkbox" id="subsearch-present" />&nbsp;Also search languages a video already has a subtitle in
+							</label>
 							<div class="lang-filter-hint">
 								The most promising subtitles of each language are downloaded and synced to the video's own subtitles, or to the speech in its audio when it has
 								none. Downloads count against your OpenSubtitles quota. Files downloaded before are reused for free. The most used languages get one download
-								each, and only while more than 20 downloads are left today.
+								each, and only while more than 20 downloads are left today. Languages a video already has a full subtitle in are skipped for that video unless
+								you tick the box above. A download is then added as one more track.
 							</div>
 							<label for="subsearch-preferred" class="subsearch-preferred-label">Preferred sources</label>
 							<input type="text" class="lang-filter-input" id="subsearch-preferred" placeholder="CR, NF" />

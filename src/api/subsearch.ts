@@ -2,16 +2,18 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { randomUUID } from "crypto";
 import { basename, dirname, join, parse as parsePath } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, ProbeResult, SubtitleAddTrack } from "../core/types";
+import type { AppConfig, SubtitleAddTrack, SubtitleStreamInfo } from "../core/types";
 import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch/languages";
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
+import { identifyMatroska } from "../pipeline/repair";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
 import { candidateCredit, cleanPreferredSources, downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
-import type { MediaIdentity } from "../subsearch/identify";
+import { applyIdentityOverride, identifyMedia, type MediaIdentity } from "../subsearch/identify";
 import { checkOpenSubtitles } from "../subsearch/opensubtitles";
 import { accountFrom, LOGIN_NEEDED, searchSubtitles, tryCandidate, type SubtitleSearchResult } from "../subsearch/search";
 import { resolveTranslateLang } from "../translate/translate-languages";
+import { buildKeptDescriptors, missingTargetLanguages } from "../translate/translate-step";
 import { resolveAllowedMediaFile } from "./repair";
 
 /** Searches keep their synced files this long, for the user to apply one. */
@@ -27,7 +29,16 @@ interface StoredSearch {
 	/** A candidate being downloaded on request, one at a time. */
 	trying?: string;
 	result?: SubtitleSearchResult;
+	/** Asked for languages the video has a track in already, so they were not searched. */
+	present?: PresentLanguage[];
 	error?: string;
+}
+
+interface PresentLanguage {
+	language: string;
+	name: string;
+	/** Title of the track the video has in it. */
+	title?: string;
 }
 
 const searches = new Map<string, StoredSearch>();
@@ -56,15 +67,45 @@ function pruneSearches(config: AppConfig): void {
 }
 
 /** The most used languages, without the ones asked for and the ones the file has a dialogue track in. */
-function extraLanguagesFor(count: number, chosen: string[], probe: ProbeResult): string[] {
+function extraLanguagesFor(count: number, chosen: string[], streams: SubtitleStreamInfo[]): string[] {
 	const code = (tag: string | undefined) => resolveTranslateLang(tag)?.code;
-	const taken = new Set([...chosen.map(code), ...(probe.subtitleStreams ?? []).filter((s) => !s.isForced).map((s) => code(s.language))]);
+	const taken = new Set([...chosen.map(code), ...streams.filter((s) => !s.isForced).map((s) => code(s.language))]);
 	return POPULAR_SUBTITLE_LANGUAGES.slice(0, count).filter((tag) => !taken.has(code(tag)));
+}
+
+/**
+ * Subtitle streams with the full language tags of an MKV. ffprobe gives a
+ * zh-Hant track as plain "chi", which reads as Simplified Chinese.
+ */
+async function subtitleStreamsOf(path: string, streams: SubtitleStreamInfo[], signal: AbortSignal): Promise<SubtitleStreamInfo[]> {
+	if (!/\.mk[av]$/i.test(path) || !streams.length) return streams;
+	try {
+		// The n-th subtitle stream ffprobe lists is the n-th subtitle track mkvmerge lists.
+		const tracks = ((await identifyMatroska(path, signal)).tracks ?? []).filter((t) => t.type === "subtitles");
+		return streams.map((s, i) => {
+			const ietf = tracks[i]?.properties.language_ietf;
+			return ietf && ietf !== "und" ? { ...s, language: ietf } : s;
+		});
+	} catch {
+		return streams;
+	}
+}
+
+/** The asked for languages a video has a full track in already, the way translation decides what is missing. */
+function presentLanguages(languages: string[], streams: SubtitleStreamInfo[]): PresentLanguage[] {
+	const missing = new Set(missingTargetLanguages(buildKeptDescriptors(streams), languages));
+	return languages
+		.filter((language) => !missing.has(language))
+		.map((language) => {
+			const lang = resolveTranslateLang(language);
+			const track = streams.find((s) => !s.isForced && resolveTranslateLang(s.language)?.code === lang?.code);
+			return { language, name: lang?.name ?? language, ...(track?.title ? { title: track.title } : {}) };
+		});
 }
 
 /** The state of a search, and its result without server paths. */
 function publicSearch(id: string, s: StoredSearch) {
-	const base = { searchId: id, path: s.path, state: s.state, message: s.message, error: s.error };
+	const base = { searchId: id, path: s.path, state: s.state, message: s.message, error: s.error, present: s.present ?? [] };
 	if (!s.result) return base;
 	const { session: _, ...result } = s.result;
 	return {
@@ -114,6 +155,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 			identity?: unknown;
 			extraLanguages?: unknown;
 			preferredSources?: unknown;
+			searchPresent?: unknown;
 		};
 		pruneSearches(config);
 		try {
@@ -135,11 +177,23 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 			void (async () => {
 				try {
 					const probe = await probeFile(path);
+					const streams = await subtitleStreamsOf(path, probe.subtitleStreams ?? [], stored.controller.signal);
+					stored.present = body.searchPresent === true ? [] : presentLanguages(languages, streams);
+					const missing = languages.filter((language) => !stored.present!.some((p) => p.language === language));
+					const extraLanguages = extraLanguagesFor(extraCount, languages, streams);
+					// Reading the video for a sync reference is the slow part, and nothing would use it.
+					if (!missing.length && !extraLanguages.length) {
+						const identity = applyIdentityOverride(identifyMedia(path), identityOverride(body.identity));
+						stored.result = { identity, hash: null, reference: null, languages: [], notes: [] };
+						stored.state = "done";
+						stored.message = "";
+						return;
+					}
 					stored.result = await searchSubtitles({
 						inputPath: path,
 						probe,
-						languages,
-						extraLanguages: extraLanguagesFor(extraCount, languages, probe),
+						languages: missing,
+						extraLanguages,
 						...(Array.isArray(body.preferredSources) ? { preferredSources: cleanPreferredSources(body.preferredSources) } : {}),
 						settings,
 						cacheDir: config.tempDir,

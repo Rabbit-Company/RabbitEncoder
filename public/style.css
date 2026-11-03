@@ -5255,6 +5255,11 @@ a.btn {
 	background: var(--red-dim);
 }
 
+.subsearch-present {
+	color: var(--green);
+	font-weight: 600;
+}
+
 .subsearch-episode-nav {
 	display: flex;
 	align-items: center;

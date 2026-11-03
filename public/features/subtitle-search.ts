@@ -16,6 +16,7 @@ import { openSubtitleSearchPicker } from "./repair";
 const STORAGE_KEY = "rabbit-subtitle-search-languages";
 const EXTRA_STORAGE_KEY = "rabbit-subtitle-search-extra";
 const EVERY_STORAGE_KEY = "rabbit-subtitle-search-every-episode";
+const PRESENT_STORAGE_KEY = "rabbit-subtitle-search-present";
 const POLL_MS = 1000;
 /** Untested subtitles of a source downloaded per episode when it is picked for all of them. */
 const TRIES_PER_EPISODE = 3;
@@ -183,16 +184,26 @@ function creditFor(ep: Episode, language: string, c: SubtitleSearchCandidate): s
 	return ep.credits.get(c.key) ?? renames.get(language)?.get(c.credit.toLowerCase()) ?? c.credit;
 }
 
+/** The track a video has in a language already, which kept the language from being searched for it. */
+function presentTrack(ep: Episode, language: string) {
+	return ep.search?.present?.find((p) => p.language === language);
+}
+
 /** How many finished episodes have a subtitle picked in a language. */
 function pickedCount(language: string): number {
 	return doneEpisodes().filter((ep) => ep.choices.has(language)).length;
+}
+
+/** How many finished episodes have a language, picked now or in the video already. */
+function coveredCount(language: string): number {
+	return doneEpisodes().filter((ep) => ep.choices.has(language) || presentTrack(ep, language)).length;
 }
 
 /** Whether a language goes into the videos. A single video leaves languages out with its own radio buttons. */
 function languageAdded(language: string): boolean {
 	if (!isBatch()) return true;
 	if (skippedLanguages.has(language)) return false;
-	return !everyEpisodeOnly() || pickedCount(language) === doneEpisodes().length;
+	return !everyEpisodeOnly() || coveredCount(language) === doneEpisodes().length;
 }
 
 function tryButton(lang: SubtitleSearchLanguage, c: SubtitleSearchCandidate): string {
@@ -275,6 +286,10 @@ function renderEpisode(ep: Episode): string {
 	if (search.reference) summary.push(`<div><strong>Synced to</strong> ${escapeHtml(search.reference.label)}</div>`);
 	if (search.remainingDownloads !== undefined) summary.push(`<div><strong>Downloads left today</strong> ${search.remainingDownloads}</div>`);
 	for (const note of search.notes ?? []) summary.push(`<div class="hdr-note">${escapeHtml(note)}</div>`);
+	if (search.present?.length)
+		summary.push(
+			`<div><strong>Already in the video</strong> ${escapeHtml(search.present.map((p) => (p.title ? `${p.name} (${p.title})` : p.name)).join(", "))}. Not searched.</div>`,
+		);
 	// Extra languages without a usable subtitle are listed together, so 30 of them do not bury the rest.
 	const unmatched = search.languages.filter((lang) => lang.extra && !lang.candidates.some((c) => c.status === "rated"));
 	if (unmatched.length) summary.push(`<div><strong>No good subtitle for</strong> ${escapeHtml(unmatched.map((lang) => lang.name).join(", "))}</div>`);
@@ -301,7 +316,10 @@ function renderEpisode(ep: Episode): string {
 /** Every language found for any episode, in the order the searches list them. */
 function batchLanguages(): SubtitleSearchLanguage[] {
 	const seen = new Map<string, SubtitleSearchLanguage>();
-	for (const ep of doneEpisodes()) for (const lang of ep.search!.languages ?? []) if (!seen.has(lang.language)) seen.set(lang.language, lang);
+	for (const ep of doneEpisodes()) {
+		for (const lang of ep.search!.languages ?? []) if (!seen.has(lang.language)) seen.set(lang.language, lang);
+		for (const p of ep.search!.present ?? []) if (!seen.has(p.language)) seen.set(p.language, { language: p.language, name: p.name, candidates: [] });
+	}
 	return [...seen.values()];
 }
 
@@ -355,17 +373,19 @@ function renderSourceRow(language: string, row: SourceRow): string {
 
 function renderBatchLanguage(lang: SubtitleSearchLanguage, done: Episode[]): string {
 	const picked = pickedCount(lang.language);
+	const present = done.filter((ep) => presentTrack(ep, lang.language)).length;
 	const added = languageAdded(lang.language);
-	const missing = done.filter((ep) => !ep.choices.has(lang.language)).map(episodeLabel);
+	const missing = done.filter((ep) => !ep.choices.has(lang.language) && !presentTrack(ep, lang.language)).map(episodeLabel);
 	const notes: string[] = [];
 	if (missing.length) notes.push(`No subtitle for ${missing.join(", ")}.`);
+	if (present) notes.push(`${present} episode${present === 1 ? " has" : "s have"} it already and ${present === 1 ? "was" : "were"} not searched.`);
 	if (!skippedLanguages.has(lang.language) && !added) notes.push("Left out, since it is not on every episode.");
 	const rows = sourceRows(lang.language);
 	return `<div class="subsearch-language${added ? "" : " is-left-out"}">
 		<h3>
 			<label class="subsearch-language-toggle"><input type="checkbox" data-subsearch-add="${escapeHtml(lang.language)}"${skippedLanguages.has(lang.language) ? "" : " checked"} />
 			${escapeHtml(lang.name)}</label> <span class="hdr-note">${escapeHtml(lang.language)}</span>${lang.extra ? ' <span class="subsearch-flag">more</span>' : ""}
-			<span class="hdr-note">${picked} of ${done.length} episodes</span>
+			<span class="hdr-note">${picked + present} of ${done.length} episodes</span>
 		</h3>
 		${notes.map((note) => `<div class="lang-filter-hint">${escapeHtml(note)}</div>`).join("")}
 		${
@@ -387,6 +407,9 @@ function episodeState(ep: Episode): string {
 function matrixCell(ep: Episode, language: string): string {
 	if (ep.search?.state !== "done") return "<td></td>";
 	const c = findCandidate(ep, language, ep.choices.get(language));
+	const present = presentTrack(ep, language);
+	if (!c && present)
+		return `<td><span class="subsearch-present" title="${escapeHtml(`Already in the video${present.title ? `: ${present.title}` : ""}. Not searched.`)}">✓</span></td>`;
 	if (!c) return '<td><span class="subsearch-rating none">–</span></td>';
 	return `<td><button type="button" class="subsearch-chip ${ratingClass(c.rating!)}" data-subsearch-focus="${episodes.indexOf(ep)}" title="${escapeHtml(c.release || c.fileName)}">${escapeHtml(creditFor(ep, language, c))} ${c.rating}</button></td>`;
 }
@@ -396,7 +419,9 @@ function renderBatch(): string {
 	const done = doneEpisodes();
 	const languages = batchLanguages();
 	const found = languages.filter((lang) =>
-		done.some((ep) => ep.search!.languages?.find((l) => l.language === lang.language)?.candidates.some((c) => c.status === "rated")),
+		done.some(
+			(ep) => presentTrack(ep, lang.language) || ep.search!.languages?.find((l) => l.language === lang.language)?.candidates.some((c) => c.status === "rated"),
+		),
 	);
 	const nothing = languages.filter((lang) => !found.includes(lang));
 	const summary: string[] = [`<div><strong>Episodes</strong> ${done.length} of ${episodes.length} searched</div>`];
@@ -527,6 +552,11 @@ export function openSubtitleSearch(): void {
 		extra.value = localStorage.getItem(EXTRA_STORAGE_KEY) ?? String(appState.defaults?.subtitleDownloadExtraLanguages ?? 0);
 		extra.dataset.ready = "1";
 	}
+	const present = inputById("subsearch-present");
+	if (!present.dataset.ready) {
+		present.checked = localStorage.getItem(PRESENT_STORAGE_KEY) === "1";
+		present.dataset.ready = "1";
+	}
 	renderVideo();
 	renderResults();
 }
@@ -580,12 +610,19 @@ export async function runSubtitleSearch(): Promise<void> {
 	try {
 		localStorage.setItem(STORAGE_KEY, languages.join(", "));
 		localStorage.setItem(EXTRA_STORAGE_KEY, String(extraLanguages));
+		localStorage.setItem(PRESENT_STORAGE_KEY, inputById("subsearch-present").checked ? "1" : "0");
 	} catch {}
 	startedAt = Date.now();
 	searching = true;
 	setStatus("Starting...");
 	updateButtons();
-	const payload: SearchOptions = [languages, readIdentity(), extraLanguages, parseLanguages(inputById("subsearch-preferred").value)];
+	const payload: SearchOptions = [
+		languages,
+		readIdentity(),
+		extraLanguages,
+		parseLanguages(inputById("subsearch-preferred").value),
+		inputById("subsearch-present").checked,
+	];
 	// One video at a time, since each search reads a whole video and downloads from the same account.
 	for (const [index, ep] of episodes.entries()) {
 		if (current !== run) return;
