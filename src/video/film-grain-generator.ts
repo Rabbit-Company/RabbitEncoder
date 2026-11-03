@@ -207,6 +207,8 @@ export interface MeasureFilmGrainOptions {
 	scale?: { w: number; h: number };
 	/** Measure luma grain only. */
 	lumaOnly?: boolean;
+	/** Accept a variable frame rate when both videos hold the same frames in the same order, as the pipeline's own files do. */
+	allowVfr?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (progress: FilmGrainProgress) => void;
 }
@@ -226,6 +228,7 @@ export async function measureFilmGrain(opts: MeasureFilmGrainOptions): Promise<n
 		const args = ["regrain", "diff", sourcePath, denoisedPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[opts.sampling]];
 		if (opts.justEnough) args.push("--just-enough");
 		if (opts.lumaOnly) args.push("--no-chroma");
+		if (opts.allowVfr) args.push("--allow-vfr");
 		// A denoising server that crops first hands back a smaller frame. regrain then
 		// measures only the matching area of the original.
 		if (opts.scale) {
