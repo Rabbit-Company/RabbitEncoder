@@ -207,7 +207,7 @@ export interface MeasureFilmGrainOptions {
 	scale?: { w: number; h: number };
 	/** Measure luma grain only. */
 	lumaOnly?: boolean;
-	/** Accept a variable frame rate when both videos hold the same frames in the same order, as the pipeline's own files do. */
+	/** Accept a variable frame rate, or frames that do not match the nominal one, when both videos hold the same frames in the same order, as the pipeline's own files do. */
 	allowVfr?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (progress: FilmGrainProgress) => void;

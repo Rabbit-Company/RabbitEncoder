@@ -592,8 +592,7 @@ export async function encodeJob(
 		// A source that is CFR apart from a few dropped frames gets those gaps
 		// filled with duplicates here, so every later stage sees a plain CFR file.
 		let cfrNormalized = false;
-		const sourceIsVfr = existsSync(timecodesFile) && isTimecodesVFR(timecodesFile);
-		if (job.settings.videoEncode !== "off" && sourceIsVfr) {
+		if (job.settings.videoEncode !== "off" && existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
 			const sourceFrames = await probeVideoFrameCount(preparedVideo, signal);
 			const plan = sourceFrames === null ? null : planCfrNormalization(readTimecodes(timecodesFile), sourceFrames, probe.videoFrameRate);
 
@@ -1036,7 +1035,7 @@ export async function encodeJob(
 						range: job.settings.filmGrainRange ?? "full",
 						justEnough: job.settings.filmGrainJustEnough === true,
 						crop: grainReference.crop,
-						allowVfr: sourceIsVfr && !cfrNormalized,
+						allowVfr: true,
 						signal,
 						onProgress: (progress) => setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
 					});
@@ -1623,7 +1622,7 @@ export async function encodeJob(
 							sampling: job.settings.filmGrainSampling,
 							range: job.settings.filmGrainRange ?? "full",
 							justEnough: job.settings.filmGrainJustEnough === true,
-							allowVfr: sourceIsVfr && !cfrNormalized,
+							allowVfr: true,
 							signal: stageSignal,
 							onProgress: (progress) => setStep(filmGrainStep, { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
 						});
