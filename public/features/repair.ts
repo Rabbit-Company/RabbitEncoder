@@ -461,14 +461,15 @@ function scrollPickerNodeIntoView(path: string): void {
 	setTimeout(() => row?.classList.remove("tree-row-flash"), 1200);
 }
 
-export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
+export async function openRepairPicker(purpose: PickerPurpose, title?: string): Promise<void> {
 	pickerPurpose = purpose;
 	pickerSelectedPath = purpose === "target" ? selectedTargetPath : purpose === "source" ? selectedSourcePath : "";
 	pickerRoots = [];
 	pickerNodes.clear();
 	inputById("repair-picker-search").value = "";
 	byId("repair-picker-title").textContent =
-		purpose === "target"
+		title ??
+		(purpose === "target"
 			? "Choose encoded target"
 			: purpose === "source"
 				? "Choose original subtitle source"
@@ -486,7 +487,7 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 										? "Choose MKV with picture subtitles"
 										: purpose === "translate-target"
 											? "Choose video to add subtitles to"
-											: "Choose folder to audit";
+											: "Choose a folder");
 	inputById("repair-picker-search").placeholder =
 		purpose === "folder"
 			? "Filter loaded folders..."
@@ -517,9 +518,9 @@ export async function openRepairPicker(purpose: PickerPurpose): Promise<void> {
 	}
 }
 
-export function openRepairFolderPicker(onChoose: (path: string) => void | Promise<void>): void {
+export function openRepairFolderPicker(onChoose: (path: string) => void | Promise<void>, title?: string): void {
 	pickerFolderCallback = onChoose;
-	void openRepairPicker("folder");
+	void openRepairPicker("folder", title);
 }
 
 export function openSubtitleFilePicker(onChoose: (path: string) => void | Promise<void>): void {

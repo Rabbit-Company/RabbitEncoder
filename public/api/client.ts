@@ -27,6 +27,9 @@ import type {
 	RepairPlan,
 	RepairSourceLayout,
 	StyleAppearance,
+	SubtitleFileFontSource,
+	SubtitleFilesJobRequest,
+	SubtitleFilesScan,
 	SubtitleSearchIdentity,
 	SubtitleSearchResult,
 	VsFilterEntry,
@@ -1090,4 +1093,39 @@ export async function testTranslateConnection(opts: {
 	} catch (err: any) {
 		return { ok: false, error: err?.message || "Request failed" };
 	}
+}
+
+export async function scanSubtitleFiles(options: { targetDir: string; subtitleDir: string }): Promise<SubtitleFilesScan> {
+	const response = await authFetch(`${API}/api/subtitle-files/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the two folders");
+	return data;
+}
+
+/** Uploads a font, renamed to `name` when given and its own family differs. */
+export async function uploadSubtitleFont(file: File, name?: string): Promise<SubtitleFileFontSource> {
+	const query = name ? `?${new URLSearchParams({ name })}` : "";
+	const response = await authFetch(`${API}/api/subtitle-files/font${query}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: file,
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || `Could not upload ${file.name}`);
+	return data;
+}
+
+export async function createSubtitleFileJobs(request: SubtitleFilesJobRequest): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/subtitle-files/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitles");
+	return data;
 }

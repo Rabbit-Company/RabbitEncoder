@@ -5658,3 +5658,114 @@ a.btn {
 .release-subs-offset input {
 	width: 72px;
 }
+
+.subfiles-options {
+	display: grid;
+	grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+	gap: 12px;
+}
+
+.subfiles-font-warning {
+	margin: 0 0 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--amber);
+	border-radius: var(--radius-sm);
+	background: var(--amber-dim);
+	color: var(--text-0);
+	font-size: 0.74rem;
+	line-height: 1.45;
+}
+
+.subfiles-font-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 10px;
+}
+
+.subfiles-font {
+	display: grid;
+	grid-template-columns: minmax(160px, 1.2fr) 70px minmax(150px, 1fr) auto;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 10px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	background: var(--bg-0);
+	font-size: 0.74rem;
+}
+
+.subfiles-font.is-missing {
+	border-color: rgba(240, 168, 48, 0.35);
+}
+
+.subfiles-font-name {
+	overflow: hidden;
+	color: var(--text-0);
+	font-size: 0.82rem;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.subfiles-font-used {
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: 0.66rem;
+}
+
+.subfiles-font-status.is-ok {
+	color: var(--green);
+}
+
+.subfiles-font-status.is-missing {
+	color: var(--amber);
+}
+
+.subfiles-font small {
+	grid-column: 3;
+	color: var(--text-2);
+	font-size: 0.64rem;
+}
+
+.subfiles-font-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 6px;
+	grid-column: 4;
+	grid-row: 1;
+}
+
+.subfiles-font-actions .btn.is-disabled,
+.subfiles-font-bulk .btn.is-disabled {
+	opacity: 0.5;
+	pointer-events: none;
+}
+
+.subfiles-font-bulk {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 10px;
+}
+
+@media (max-width: 760px) {
+	.subfiles-options,
+	.subfiles-font {
+		grid-template-columns: 1fr;
+	}
+	.subfiles-font small,
+	.subfiles-font-actions {
+		grid-column: auto;
+		grid-row: auto;
+		justify-content: flex-start;
+	}
+}
+
+.subfiles-fonts .hdr-note.has-outliers {
+	color: var(--amber);
+}
+
+.subfiles-fonts p.lang-filter-hint {
+	margin: 6px 0 0;
+}

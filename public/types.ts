@@ -1260,3 +1260,55 @@ export interface VersionsReport {
 }
 
 export type Booster = "auto-boost-essential" | "rabbit-boost";
+
+/** Where a font that imported subtitle files use comes from. */
+export type SubtitleFileFontStatus = "attached" | "folder" | "uploaded" | "replaced" | "missing";
+
+export interface SubtitleFileFont {
+	/** As the subtitles write it. */
+	name: string;
+	status: SubtitleFileFontStatus;
+	/** Subtitle files using it. */
+	usedBy: number;
+	/** Paired videos that need it and do not have it attached, when no folder or uploaded font covers it. */
+	missingIn: string[];
+	/** Comes with Windows, so players there have it and others often do not. */
+	windows?: boolean;
+}
+
+export interface SubtitleFileFontSource {
+	path: string;
+	fileName: string;
+	family: string;
+	names: string[];
+	/** An uploaded font renamed to the name the subtitles use. */
+	renamedFrom?: string;
+}
+
+export interface SubtitleFilesPair extends RepairPairSuggestion {
+	/** Subtitle languages the video already has. */
+	existingLanguages: string[];
+}
+
+export interface SubtitleFilesScan {
+	targetDir: string;
+	subtitleDir: string;
+	pairs: SubtitleFilesPair[];
+	unmatchedSubtitles: string[];
+	/** Read from the file and folder names, such as [Rus]. */
+	language: string | null;
+	/** The subtitle folder name without its language tag. */
+	credit: string;
+	folderFonts: SubtitleFileFontSource[];
+	fonts: SubtitleFileFont[];
+	/** The dialogue font of full subtitles is replaced with this font group, per the settings. */
+	dialogueFontGroup: string | null;
+}
+
+export interface SubtitleFilesJobRequest {
+	pairs: { targetPath: string; sourcePath: string }[];
+	language: string;
+	credit: string;
+	/** Folder fonts and uploaded fonts to attach where the subtitles use them. */
+	fonts: string[];
+}

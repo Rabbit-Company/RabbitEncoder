@@ -228,6 +228,18 @@ import {
 	openRepairAuditPicker,
 	openSelectedAuditRepair,
 } from "../features/repair-audit";
+import {
+	closeSubtitleFiles,
+	closeSubtitleFilesIfOutside,
+	handleSubtitleFilesChange,
+	handleSubtitleFilesClick,
+	handleSubtitleFilesInput,
+	openSubtitleFiles,
+	pairSubtitleFiles,
+	pickSubtitleFilesSourceFolder,
+	pickSubtitleFilesTargetFolder,
+	queueSubtitleFiles,
+} from "../features/subtitle-files";
 
 export function getCurrentSettings(): JobSettings | null {
 	if (appState.currentAdvancedTarget === "default") return window._tempDefaults ?? null;
@@ -271,6 +283,17 @@ export function initEventListeners() {
 	byId("release-subs-grid").addEventListener("change", handleReleaseSubsGridChange);
 	byId("release-subs-grid").addEventListener("click", handleReleaseSubsGridClick);
 	byId("release-subs-queue-btn").addEventListener("click", queueReleaseSubs);
+	byId("open-subfiles-btn").addEventListener("click", openSubtitleFiles);
+	byId("close-subfiles-btn").addEventListener("click", closeSubtitleFiles);
+	byId("subfiles-cancel-btn").addEventListener("click", closeSubtitleFiles);
+	byId("subfiles-modal").addEventListener("click", closeSubtitleFilesIfOutside);
+	byId("subfiles-pick-target-btn").addEventListener("click", pickSubtitleFilesTargetFolder);
+	byId("subfiles-pick-source-btn").addEventListener("click", pickSubtitleFilesSourceFolder);
+	byId("subfiles-pair-btn").addEventListener("click", () => void pairSubtitleFiles());
+	byId("subfiles-queue-btn").addEventListener("click", () => void queueSubtitleFiles());
+	byId("subfiles-modal").addEventListener("change", handleSubtitleFilesChange);
+	byId("subfiles-modal").addEventListener("input", handleSubtitleFilesInput);
+	byId("subfiles-modal").addEventListener("click", handleSubtitleFilesClick);
 	byId("open-repair-batch-btn").addEventListener("click", openRepairBatch);
 	byId("close-repair-batch-btn").addEventListener("click", closeRepairBatch);
 	byId("repair-batch-cancel-btn").addEventListener("click", closeRepairBatch);

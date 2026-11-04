@@ -406,7 +406,7 @@ export function openRepairAuditJobs(jobIds: string[], label?: string): Promise<v
 }
 
 export function openRepairAuditPicker(): void {
-	openRepairFolderPicker(openRepairAuditFolder);
+	openRepairFolderPicker(openRepairAuditFolder, "Choose folder to audit");
 }
 
 export function closeRepairAudit(): void {

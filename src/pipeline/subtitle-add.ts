@@ -14,7 +14,9 @@ import { mkvtoolnixProgress } from "./prepare-progress";
 import { identifyMatroska } from "./repair";
 import { addedDefaults, computeDownloadedFlagArgs, styleSource } from "../translate/translate-step";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
-import { prepareRemuxAddition, type AddedTrack } from "../subtitles/added-tracks";
+import { prepareRemuxAddition, remuxFontReservations, type AddedTrack } from "../subtitles/added-tracks";
+import { fontRegistry } from "../fonts/fonts";
+import { planFontArgs } from "./subtitle-files";
 import { existingSubtitleKind, orderTranslatedByPriority, planTrackOrder, type ExistingTrack } from "./translate-only";
 
 export function describeSubtitleAddPlan(plan: SubtitleAddPlan): string {
@@ -134,7 +136,7 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 
 	try {
 		const missing = plan.tracks.filter((t) => !existsSync(t.file));
-		if (missing.length) throw new Error("The downloaded subtitles are no longer available. Search again.");
+		if (missing.length) throw new Error("The subtitles to add are no longer available. Queue them again.");
 
 		let tracks = plan.tracks;
 		let removed: SubtitleStreamInfo[] = [];
@@ -211,6 +213,14 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 			args.push(...flags, ...(addition.compressionArgs.get(track.file) ?? []), track.file);
 		}
 		args.push(...addition.fontArgs);
+		if (plan.fonts?.length) {
+			const reservations = await remuxFontReservations(plan.targetPath, job.settings, tempDir, signal);
+			const fontArgs = addition.fontArgs;
+			for (let i = 0; i < fontArgs.length; i++) if (fontArgs[i] === "--attachment-name") reservations.attachedFiles.add(fontArgs[i + 1]!.toLowerCase());
+			const extra = planFontArgs(plan.fonts, reservations.occupied, reservations.attachedFiles, (path) => fontRegistry.mime(path));
+			if (extra.length) Logger.info(`[fonts] Attaching ${extra.filter((_, i) => extra[i - 1] === "--attachment-name").join(", ")} for the added subtitles`);
+			args.push(...extra);
+		}
 		args.push(
 			"--track-order",
 			planTrackOrder(
