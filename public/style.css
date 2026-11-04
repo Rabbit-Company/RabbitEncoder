@@ -5769,3 +5769,37 @@ a.btn {
 .subfiles-fonts p.lang-filter-hint {
 	margin: 6px 0 0;
 }
+
+.fontcheck-bulk {
+	display: flex;
+	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.fontcheck-bulk label {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 0.7rem;
+	color: var(--text-2);
+}
+
+.fontcheck-fix .select-input {
+	width: 100%;
+}
+
+#fontcheck-results .subfiles-font {
+	grid-template-columns: minmax(150px, 1fr) 80px minmax(200px, 1.3fr) auto;
+}
+
+#fontcheck-results .subfiles-font small.is-ok {
+	color: var(--green);
+}
+
+.fontcheck-unreadable {
+	margin-top: 10px;
+	font-size: 0.72rem;
+	color: var(--text-1);
+}

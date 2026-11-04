@@ -830,6 +830,17 @@ export interface RepairPlan {
 	tracks: RepairSubtitleTrackPlan[];
 	/** Metadata for the target's own audio tracks. Audio tracks left out keep theirs. */
 	audioTracks?: RepairAudioTrackPlan[];
+	/** Fonts the target's subtitles use but it does not carry. */
+	fontFix?: RepairFontFix;
+}
+
+export interface RepairFontFix {
+	/** Fonts to point the target's ASS tracks at instead, such as a missing "Calligrapher" at the attached "Noto Sans". */
+	maps: { from: string; to: string }[];
+	/** Fonts to attach, already named as the subtitles want them. */
+	attachments: SubtitleAddFont[];
+	/** Folder holding the attachments, removed once the job ends. */
+	workDir: string;
 }
 
 export interface RepairAudioTrackPlan {
@@ -1306,4 +1317,54 @@ export interface VsFilterEntry {
 	presetId: string;
 	level: string;
 	params: Record<string, Record<string, VsParamValue>>;
+}
+
+/** A video of a font check. */
+export interface FontCheckFile {
+	path: string;
+	fileName: string;
+	/** Families of the fonts attached to it. */
+	families: string[];
+	/** Normalized names of the fonts its ASS tracks use and it does not carry. */
+	missing: string[];
+	/** Its tracks, for the repair plan that fixes it. */
+	tracks: RepairAuditTrack[];
+	/** Why its subtitles could not be read. */
+	error?: string;
+}
+
+/** A font the subtitles of a folder use that some of its videos do not carry. */
+export interface FontCheckMissing {
+	key: string;
+	/** As the subtitles write it. */
+	name: string;
+	/** Videos missing it. */
+	files: number;
+	windows?: boolean;
+}
+
+export interface FontCheckResult {
+	folder: string;
+	files: FontCheckFile[];
+	missing: FontCheckMissing[];
+	/** Fonts attached to the videos, which missing fonts can be pointed at, with how many videos carry each. */
+	families: { family: string; files: number }[];
+}
+
+export interface FontCheckProgress {
+	id: string;
+	done: number;
+	total: number;
+	current: string;
+	result?: FontCheckResult;
+	error?: string;
+}
+
+export interface FontCheckJobRequest {
+	scanId: string;
+	/** Missing fonts to attach uploaded fonts for, by key. */
+	uploads: { key: string; path: string }[];
+	/** Missing fonts to point at a family a video carries or an uploaded font, by key. */
+	maps: { key: string; to: string }[];
+	replaceTarget: boolean;
 }

@@ -240,6 +240,16 @@ import {
 	pickSubtitleFilesTargetFolder,
 	queueSubtitleFiles,
 } from "../features/subtitle-files";
+import {
+	closeFontCheck,
+	closeFontCheckIfOutside,
+	handleFontCheckChange,
+	handleFontCheckClick,
+	openFontCheck,
+	pickFontCheckFolder,
+	queueFontCheckFixes,
+	toggleFontCheckScan,
+} from "../features/font-check";
 
 export function getCurrentSettings(): JobSettings | null {
 	if (appState.currentAdvancedTarget === "default") return window._tempDefaults ?? null;
@@ -283,6 +293,15 @@ export function initEventListeners() {
 	byId("release-subs-grid").addEventListener("change", handleReleaseSubsGridChange);
 	byId("release-subs-grid").addEventListener("click", handleReleaseSubsGridClick);
 	byId("release-subs-queue-btn").addEventListener("click", queueReleaseSubs);
+	byId("open-fontcheck-btn").addEventListener("click", openFontCheck);
+	byId("close-fontcheck-btn").addEventListener("click", closeFontCheck);
+	byId("fontcheck-cancel-btn").addEventListener("click", closeFontCheck);
+	byId("fontcheck-modal").addEventListener("click", closeFontCheckIfOutside);
+	byId("fontcheck-pick-btn").addEventListener("click", pickFontCheckFolder);
+	byId("fontcheck-scan-btn").addEventListener("click", () => void toggleFontCheckScan());
+	byId("fontcheck-queue-btn").addEventListener("click", () => void queueFontCheckFixes());
+	byId("fontcheck-results").addEventListener("change", handleFontCheckChange);
+	byId("fontcheck-results").addEventListener("click", handleFontCheckClick);
 	byId("open-subfiles-btn").addEventListener("click", openSubtitleFiles);
 	byId("close-subfiles-btn").addEventListener("click", closeSubtitleFiles);
 	byId("subfiles-cancel-btn").addEventListener("click", closeSubtitleFiles);

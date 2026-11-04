@@ -39,7 +39,7 @@ function resolveAllowedFile(raw: unknown, config: AppConfig, exts: Set<string>, 
 }
 
 /** A font from the media folders, or one Rabbit stored from an upload. */
-function resolveFont(raw: unknown, config: AppConfig): string {
+export function resolveFont(raw: unknown, config: AppConfig): string {
 	if (typeof raw === "string" && inside(resolve(raw), uploadDir(config))) {
 		const path = resolve(raw);
 		if (!existsSync(path) || !FONT_EXTS.has(extname(path).toLowerCase())) throw new Error("An uploaded font is no longer available, upload it again");

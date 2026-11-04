@@ -241,6 +241,10 @@ const WINDOWS_FONTS = new Set(
 	].map(normalizeFontName),
 );
 
+export function isWindowsFont(name: string): boolean {
+	return WINDOWS_FONTS.has(normalizeFontName(name));
+}
+
 /** Every font the paired subtitles use, and where each comes from. */
 export function fontReport(
 	pairs: Pick<ScannedPair, "targetName" | "sourcePath" | "attached">[],

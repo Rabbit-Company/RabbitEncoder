@@ -7,6 +7,7 @@ import type {
 	RepairInspectionFile,
 	RepairAudioTrackPlan,
 	RepairAuditAudioMetadata,
+	RepairFontFix,
 	RepairAuditFile,
 	RepairAuditGroup,
 	RepairAuditTrack,
@@ -198,7 +199,7 @@ export async function buildSourceReplacementPlan(options: {
 	return sanitizeRepairPlan({ targetPath, sourcePath, replaceTarget, tracks });
 }
 
-function auditTrack(track: MkvTrack): RepairAuditTrack {
+export function auditTrack(track: MkvTrack): RepairAuditTrack {
 	return {
 		id: track.id,
 		type: track.type as "audio" | "subtitles",
@@ -609,6 +610,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	tracks.sort((a, b) => a.order - b.order);
 	tracks.forEach((track, index) => (track.order = index));
 	const audioTracks = sanitizeAudioTracks(raw.audioTracks);
+	const fontFix = sanitizeFontFix(raw.fontFix);
 	return {
 		targetPath,
 		sourcePath,
@@ -617,7 +619,64 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...sourceFields,
 		tracks,
 		...(audioTracks.length ? { audioTracks } : {}),
+		...(fontFix ? { fontFix } : {}),
 	};
+}
+
+function sanitizeFontFix(raw: unknown): RepairFontFix | null {
+	if (raw === undefined) return null;
+	const fix = raw as Partial<RepairFontFix> | null;
+	if (!fix || !Array.isArray(fix.maps) || !Array.isArray(fix.attachments) || fix.maps.length > 300 || fix.attachments.length > 300)
+		throw new Error("Invalid font fix");
+	const workDir = checkedText(fix.workDir, 4096);
+	if (!workDir) throw new Error("A font fix needs its folder");
+	const maps = fix.maps.map((map) => {
+		const from = checkedText(map?.from, 200);
+		const to = checkedText(map?.to, 200);
+		if (!from || !to || /[,\\{}]/.test(from + to)) throw new Error("Invalid font mapping");
+		return { from, to };
+	});
+	const attachments = fix.attachments.map((font) => {
+		const file = checkedText(font?.file, 4096);
+		const fileName = checkedText(font?.fileName, 255);
+		if (!file || !fileName || fileName.includes("/") || !file.startsWith(`${workDir}/`)) throw new Error("Invalid font attachment");
+		return { file, fileName, names: Array.isArray(font.names) ? font.names.filter((n): n is string => typeof n === "string").slice(0, 50) : [] };
+	});
+	if (!maps.length && !attachments.length) return null;
+	return { maps, attachments, workDir };
+}
+
+/** The ASS renames a font fix makes. */
+export function fontFixRenames(fix: RepairFontFix | undefined): AssFontRename[] {
+	return (fix?.maps ?? []).map((map) => ({ names: new Set([normalizeFontName(map.from)]), from: map.from, to: map.to }));
+}
+
+/** mkvpropedit or mkvmerge arguments attaching the fonts of a font fix. */
+export function fontFixAttachmentArgs(fix: RepairFontFix | undefined, mkvpropedit: boolean): string[] {
+	return (fix?.attachments ?? []).flatMap((font) => [
+		"--attachment-name",
+		font.fileName,
+		"--attachment-mime-type",
+		fontRegistry.mime(font.file),
+		mkvpropedit ? "--add-attachment" : "--attach-file",
+		font.file,
+	]);
+}
+
+/** The subtitle already has the metadata a plan gives it, so an in-place edit can leave it alone. */
+function subtitleMetadataUnchanged(plan: RepairSubtitleTrackPlan, track: MkvTrack): boolean {
+	const p = track.properties;
+	return (
+		(p.track_name || "") === plan.title &&
+		!!p.language_ietf &&
+		p.language_ietf === plan.language &&
+		!!p.default_track === plan.isDefault &&
+		!!p.forced_track === plan.isForced &&
+		(p.enabled_track !== false) === plan.isEnabled &&
+		!!p.flag_hearing_impaired === plan.isHearingImpaired &&
+		!!p.flag_original === plan.isOriginal &&
+		!!p.flag_commentary === plan.isCommentary
+	);
 }
 
 function sanitizeAudioTracks(raw: unknown): RepairAudioTrackPlan[] {
@@ -804,6 +863,7 @@ export function buildRepairMkvpropeditArgs(path: string, plan: RepairPlan, targe
 	for (const track of plan.tracks) {
 		const allTrackIndex = (target.tracks || []).findIndex((candidate) => candidate.type === "subtitles" && candidate.id === track.trackId);
 		if (allTrackIndex < 0) throw new Error(`target subtitle track ${track.trackId} no longer exists`);
+		if (subtitleMetadataUnchanged(track, target.tracks![allTrackIndex]!)) continue;
 		args.push(
 			"--edit",
 			`track:${allTrackIndex + 1}`,
@@ -825,6 +885,7 @@ export function buildRepairMkvpropeditArgs(path: string, plan: RepairPlan, targe
 			`flag-commentary=${track.isCommentary ? 1 : 0}`,
 		);
 	}
+	args.push(...fontFixAttachmentArgs(plan.fontFix, true));
 	return args;
 }
 
@@ -1188,6 +1249,7 @@ export function buildRepairMkvmergeArgs(options: {
 			item.attachFontPath,
 		);
 	}
+	args.push(...fontFixAttachmentArgs(plan.fontFix, false));
 	return args;
 }
 
@@ -1450,6 +1512,30 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				writeFileSync(item.path, renameAssFonts(readFileSync(item.path, "utf-8"), renamesOf(trackPlan)), "utf-8");
 			}
 		}
+		// A font fix points the target's ASS tracks at fonts the file has, in place of missing ones.
+		const fixRenames = fontFixRenames(plan.fontFix);
+		if (fixRenames.length) {
+			setStep(S_PREPARE, { progress: 54, detail: "Pointing subtitles at the fonts the file has" });
+			for (const item of extracted)
+				if (item.plan.source === "target" && item.kind === "ass" && item.rawText !== undefined) item.rawText = renameAssFonts(item.rawText, fixRenames);
+			for (const trackPlan of plan.tracks.filter((track) => track.source === "target" && track.mode === "copy")) {
+				const track = findTrack(targetId, trackPlan);
+				if (!isRabbitProcessable(track) || extractedExtension(track) !== ".ass") continue;
+				let item = prepared.find((p) => repairTrackKey(p.plan) === repairTrackKey(trackPlan));
+				if (!item) {
+					const out = join(tempDir, `${repairTrackKey(trackPlan).replace(":", "_")}.fontfix.ass`);
+					const extract = await run(["mkvextract", plan.targetPath, "tracks", `${trackPlan.trackId}:${out}`], { signal });
+					checkCancelled();
+					if (extract.code !== 0) throw new Error(`Could not extract subtitle track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
+					const text = readFileSync(out, "utf-8");
+					const renamed = renameAssFonts(text, fixRenames);
+					// A track without the missing fonts is copied as it is.
+					if (renamed === text) continue;
+					writeFileSync(out, renamed, "utf-8");
+					prepared.push({ plan: trackPlan, path: out });
+				} else writeFileSync(item.path, renameAssFonts(readFileSync(item.path, "utf-8"), fixRenames), "utf-8");
+			}
+		}
 		if (warnings.length) updateJob({ repairPlan: plan, warning: warnings.join(". ") });
 
 		// Pass 2 - work out which attachments survive. A font still referenced by
@@ -1536,7 +1622,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		});
 		checkCancelled();
 
-		const metadataOnly = isMetadataOnlyRepair(plan, targetId);
+		const metadataOnly = isMetadataOnlyRepair(plan, targetId) && prepared.length === 0;
 		setStep(S_MUX, { status: "active", progress: 10, detail: metadataOnly ? "Creating safe metadata-edit copy" : "Copying streams without video encoding" });
 		updateJob({ status: "muxing" });
 		if (metadataOnly) {
@@ -1586,6 +1672,9 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			targetId,
 		);
 		if (!durationsAreCompatible(targetId, verified)) throw new Error("Verification failed: repaired duration differs from the encoded target");
+		const attachedNames = new Set((verified.attachments || []).map((attachment) => attachment.file_name));
+		const notAttached = (plan.fontFix?.attachments ?? []).find((font) => !attachedNames.has(font.fileName));
+		if (notAttached) throw new Error(`Verification failed: ${notAttached.fileName} was not attached`);
 
 		const parsed = parsePath(plan.targetPath);
 		const finalPath = plan.replaceTarget ? plan.targetPath : resolveUniqueOutputPath(parsed.dir, `${parsed.name}.repaired.mkv`);
@@ -1616,5 +1705,6 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		try {
 			rmSync(stagePath, { force: true });
 		} catch {}
+		if (plan.fontFix && (job.status === "done" || job.status === "cancelled")) rmSync(plan.fontFix.workDir, { recursive: true, force: true });
 	}
 }

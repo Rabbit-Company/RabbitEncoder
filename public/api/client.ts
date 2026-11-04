@@ -4,6 +4,8 @@ import type {
 	AutoDenoiseThresholds,
 	BitrateAnalysisResult,
 	FilmGrainSampling,
+	FontCheckJobRequest,
+	FontCheckProgress,
 	FilmGrainRun,
 	FontAxis,
 	GroupStyleConfig,
@@ -1127,5 +1129,40 @@ export async function createSubtitleFileJobs(request: SubtitleFilesJobRequest): 
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitles");
+	return data;
+}
+
+export async function startFontCheck(options: { folder: string; recursive: boolean }): Promise<FontCheckProgress> {
+	const response = await authFetch(`${API}/api/font-check/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not check the folder");
+	return data;
+}
+
+export async function fetchFontCheck(id: string): Promise<FontCheckProgress> {
+	const response = await authFetch(`${API}/api/font-check/scan/${encodeURIComponent(id)}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the font check");
+	return data;
+}
+
+export async function cancelFontCheck(id: string): Promise<void> {
+	await authFetch(`${API}/api/font-check/scan/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function createFontCheckJobs(
+	request: FontCheckJobRequest,
+): Promise<{ jobIds: string[]; unreachable: { fileName: string; font: string; to: string }[] }> {
+	const response = await authFetch(`${API}/api/font-check/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the font fixes");
 	return data;
 }

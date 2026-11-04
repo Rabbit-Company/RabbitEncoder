@@ -1312,3 +1312,49 @@ export interface SubtitleFilesJobRequest {
 	/** Folder fonts and uploaded fonts to attach where the subtitles use them. */
 	fonts: string[];
 }
+
+/** A video of a font check. */
+export interface FontCheckFile {
+	path: string;
+	fileName: string;
+	/** Families of the fonts attached to it. */
+	families: string[];
+	/** Normalized names of the fonts its ASS tracks use and it does not carry. */
+	missing: string[];
+	tracks: RepairAuditTrack[];
+	/** Why its subtitles could not be read. */
+	error?: string;
+}
+
+/** A font the subtitles of a folder use that some of its videos do not carry. */
+export interface FontCheckMissing {
+	key: string;
+	/** As the subtitles write it. */
+	name: string;
+	/** Videos missing it. */
+	files: number;
+	windows?: boolean;
+}
+
+export interface FontCheckResult {
+	folder: string;
+	files: FontCheckFile[];
+	missing: FontCheckMissing[];
+	families: { family: string; files: number }[];
+}
+
+export interface FontCheckProgress {
+	id: string;
+	done: number;
+	total: number;
+	current: string;
+	result?: FontCheckResult;
+	error?: string;
+}
+
+export interface FontCheckJobRequest {
+	scanId: string;
+	uploads: { key: string; path: string }[];
+	maps: { key: string; to: string }[];
+	replaceTarget: boolean;
+}
