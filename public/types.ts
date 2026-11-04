@@ -782,10 +782,17 @@ export type RepairAuditSubtitleMetadata = Pick<
 	"title" | "language" | "isDefault" | "isForced" | "isEnabled" | "isHearingImpaired" | "isOriginal" | "isCommentary"
 >;
 
+export type RepairAuditAudioMetadata = Pick<
+	RepairAuditTrack,
+	"title" | "language" | "isDefault" | "isForced" | "isEnabled" | "isHearingImpaired" | "isVisualImpaired" | "isOriginal" | "isCommentary"
+>;
+
 export interface RepairAuditGroupEdit {
 	paths: string[];
 	expectedTracks: RepairAuditTrack[];
 	subtitles: RepairAuditSubtitleMetadata[];
+	/** Every audio track in order. Leave out to keep the audio as it is. */
+	audio?: RepairAuditAudioMetadata[];
 	replaceTarget: boolean;
 }
 

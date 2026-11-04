@@ -417,11 +417,59 @@ describe("subtitle repair plans", () => {
 		const args = buildRepairMkvpropeditArgs("/tmp/staged.mkv", plan, target);
 		expect(args).toContain("track:3");
 		expect(args).toContain("name=Full Subtitles");
-		expect(args).toContain("language-ietf=en-JP");
+		expect(args).toContain("language=en-JP");
 		expect(args).toContain("flag-original=1");
 
 		plan.tracks[0]!.compression = "zlib";
 		expect(isMetadataOnlyRepair(plan, target)).toBe(false);
+	});
+
+	test("group edits retag only the audio tracks that change, by their position in each file", () => {
+		const tracks = [
+			auditTrack("audio", "und", "", { id: 1, isDefault: true }),
+			auditTrack("audio", "en", "English", { id: 2 }),
+			auditTrack("subtitles", "en", "Full", { id: 3 }),
+		];
+		const files = [0, 1].map((index) => ({ path: `/show/e0${index + 1}.mkv`, tracks: tracks.map((track) => ({ ...track, id: track.id + index * 5 })) }));
+		const audio = tracks.filter((track) => track.type === "audio").map((track) => ({ ...track }));
+		audio[0]!.language = "ja";
+		audio[0]!.title = "Japanese";
+		const plans = buildRepairAuditGroupPlans(files, {
+			paths: files.map((file) => file.path),
+			expectedTracks: tracks,
+			subtitles: tracks.filter((track) => track.type === "subtitles"),
+			audio,
+			replaceTarget: true,
+		});
+		expect(plans.map((plan) => plan.audioTracks?.map((track) => [track.trackId, track.language, track.title, track.isDefault]))).toEqual([
+			[[1, "ja", "Japanese", true]],
+			[[6, "ja", "Japanese", true]],
+		]);
+
+		const target = {
+			tracks: [
+				{ id: 0, type: "video", codec: "AV1", properties: {} },
+				{ id: 1, type: "audio", codec: "AAC", properties: {} },
+				{ id: 2, type: "audio", codec: "AAC", properties: {} },
+				{ id: 3, type: "subtitles", codec: "SubStationAlpha", properties: {} },
+			],
+		};
+		const plan = plans[0]!;
+		expect(isMetadataOnlyRepair(plan, target)).toBe(true);
+		const args = buildRepairMkvpropeditArgs("/tmp/staged.mkv", plan, target);
+		expect(args.slice(2, 6)).toEqual(["--edit", "track:2", "--set", "name=Japanese"]);
+		expect(args).toContain("language=ja");
+		expect(args.filter((arg) => arg.startsWith("track:"))).toEqual(["track:2", "track:4"]);
+
+		const merged = buildRepairMkvmergeArgs({ outputPath: "/tmp/out.mkv", plan, target, prepared: [] });
+		expect(merged).toContain("1:ja");
+		expect(merged).toContain("1:Japanese");
+		expect(merged).not.toContain("2:ja");
+		expect(merged.indexOf("1:ja")).toBeLessThan(merged.indexOf("/show/e01.mkv"));
+
+		expect(() =>
+			buildRepairAuditGroupPlans(files, { paths: [], expectedTracks: tracks, subtitles: [tracks[2]!], audio: audio.slice(0, 1), replaceTarget: false }),
+		).toThrow("preserve every audio track");
 	});
 });
 

@@ -766,6 +766,21 @@ export interface RepairPlan {
 	/** More releases to take tracks from after `sourcePath`, which tracks name by `sourceIndex`. */
 	extraSources?: RepairSource[];
 	tracks: RepairSubtitleTrackPlan[];
+	/** Metadata for the target's own audio tracks. Audio tracks left out keep theirs. */
+	audioTracks?: RepairAudioTrackPlan[];
+}
+
+export interface RepairAudioTrackPlan {
+	trackId: number;
+	title: string;
+	language: string;
+	isDefault: boolean;
+	isForced: boolean;
+	isEnabled: boolean;
+	isHearingImpaired: boolean;
+	isVisualImpaired: boolean;
+	isOriginal: boolean;
+	isCommentary: boolean;
 }
 
 export interface RepairSource {
@@ -863,10 +878,14 @@ export type RepairAuditSubtitleMetadata = Pick<
 	"title" | "language" | "isDefault" | "isForced" | "isEnabled" | "isHearingImpaired" | "isOriginal" | "isCommentary"
 >;
 
+export type RepairAuditAudioMetadata = Omit<RepairAudioTrackPlan, "trackId">;
+
 export interface RepairAuditGroupEdit {
 	paths: string[];
 	expectedTracks: RepairAuditTrack[];
 	subtitles: RepairAuditSubtitleMetadata[];
+	/** Every audio track in order. Leave out to keep the audio as it is. */
+	audio?: RepairAuditAudioMetadata[];
 	replaceTarget: boolean;
 }
 

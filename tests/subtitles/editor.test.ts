@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { editSubtitleDocument, editorCues, editorFormat, effectiveEditorOffset, validateEditorEdit } from "../../src/subtitles/editor";
+import { editSubtitleDocument, editorCues, editorFormat, effectiveEditorOffset, previewAssDocument, validateEditorEdit } from "../../src/subtitles/editor";
 
 const srt = "1\n00:00:01,000 --> 00:00:02,000 align:start\nHello\n\n2\n00:00:04,000 --> 00:00:06,000\nTwo\nlines\n";
 const ass = `[Script Info]
@@ -97,5 +97,24 @@ describe("subtitle editor documents", () => {
 		expect(editorFormat("S_VOBSUB")).toBe("bitmap");
 		expect(editorFormat("S_UNKNOWN")).toBeNull();
 		expect(() => editSubtitleDocument("", "bitmap", { trackId: 2, offsetMs: 0, cues: [] })).toThrow();
+	});
+
+	test("previews leave out events that end at or before their start", () => {
+		const document = `[Script Info]
+Title: Dialogue: 0,0:00:01.00,0:00:01.00 stays in the header
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Shown
+Dialogue: 0,0:00:07.00,0:00:07.00,Default,,0,0,0,,Zero-length dummy
+Comment: 0,0:00:05.00,0:00:04.00,Default,,0,0,0,,Ends before it starts
+Dialogue: 0,0:00:03.00,0:00:03.01,Default,,0,0,0,,One centisecond`;
+		expect(previewAssDocument(document).split("\n")).toEqual([
+			"[Script Info]",
+			"Title: Dialogue: 0,0:00:01.00,0:00:01.00 stays in the header",
+			"[Events]",
+			"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+			"Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Shown",
+			"Dialogue: 0,0:00:03.00,0:00:03.01,Default,,0,0,0,,One centisecond",
+		]);
 	});
 });

@@ -128,3 +128,31 @@ export function editSubtitleDocument(document: string, format: SubtitleEditorFor
 		})
 		.join("\n");
 }
+
+/**
+ * The document to burn into a preview. FFmpeg 9 renders no subtitle at all from a
+ * file holding a single event that ends at or before its start, and fansub tracks
+ * often have such dummy lines. They never show, so the preview leaves them out.
+ */
+export function previewAssDocument(document: string): string {
+	let inEvents = false;
+	let fields: string[] = [];
+	return document
+		.split(/\r?\n/)
+		.filter((line) => {
+			if (line.trim().startsWith("[")) inEvents = line.trim().toLowerCase() === "[events]";
+			if (!inEvents) return true;
+			if (/^\s*Format:/i.test(line))
+				fields = line
+					.slice(line.indexOf(":") + 1)
+					.split(",")
+					.map((field) => field.trim().toLowerCase());
+			if (!/^\s*(Dialogue|Comment):/i.test(line)) return true;
+			const values = line.slice(line.indexOf(":") + 1).split(",");
+			const start = values[fields.indexOf("start")];
+			const end = values[fields.indexOf("end")];
+			if (start === undefined || end === undefined) return true;
+			return assTimeToMs(end) > assTimeToMs(start);
+		})
+		.join("\n");
+}

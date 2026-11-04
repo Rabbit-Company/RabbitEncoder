@@ -67,17 +67,25 @@ const hasTools = ["ffmpeg", "mkvmerge", "mkvpropedit"].every((tool) => Bun.which
 				paths: files.map((file) => file.path),
 				expectedTracks: files[0]!.tracks,
 				subtitles: files[0]!.tracks.filter((track) => track.type === "subtitles").map((track) => ({ ...track, title: "Full Subtitles" })),
+				audio: files[0]!.tracks.filter((track) => track.type === "audio").map((track) => ({ ...track, language: "ja", title: "Japanese" })),
 				replaceTarget: false,
 			});
+			expect(files[0]!.tracks.find((track) => track.type === "audio")!.language).toBe("und");
 			for (const [index, plan] of plans.entries()) {
 				const original = await identifyMatroska(plan.targetPath);
 				const staged = join(root, `repaired-${index}.mkv`);
 				copyFileSync(plan.targetPath, staged);
 				await command(buildRepairMkvpropeditArgs(staged, plan, original));
 				const repaired = await inspectRepairAuditFile(staged);
-				expect(repaired.tracks).toEqual(files[index]!.tracks.map((track) => (track.type === "subtitles" ? { ...track, title: "Full Subtitles" } : track)));
+				expect(repaired.tracks).toEqual(
+					files[index]!.tracks.map((track) =>
+						track.type === "subtitles" ? { ...track, title: "Full Subtitles" } : { ...track, language: "ja", title: "Japanese" },
+					),
+				);
 				const verified = await identifyMatroska(staged);
 				expect(verified.tracks?.map((track) => [track.type, track.codec])).toEqual(original.tracks?.map((track) => [track.type, track.codec]));
+				const audio = verified.tracks!.find((track) => track.type === "audio")!.properties;
+				expect([audio.language, audio.language_ietf]).toEqual(["jpn", "ja"]);
 				expect((await inspectRepairAuditFile(plan.targetPath)).tracks).toEqual(files[index]!.tracks);
 			}
 		} finally {

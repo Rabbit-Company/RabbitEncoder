@@ -1,4 +1,11 @@
-import type { RepairAuditFile, RepairAuditLanguage, RepairAuditSubtitleMetadata, RepairAuditTrack, RepairFolderAudit } from "../types";
+import type {
+	RepairAuditAudioMetadata,
+	RepairAuditFile,
+	RepairAuditLanguage,
+	RepairAuditSubtitleMetadata,
+	RepairAuditTrack,
+	RepairFolderAudit,
+} from "../types";
 import { createRepairAuditGroupJobs, fetchRepairFolderAudit, removeRepairAuditLanguages } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
@@ -9,7 +16,9 @@ let audit: RepairFolderAudit | null = null;
 let selectedPath = "";
 let editingGroup: number | null = null;
 let groupSubtitles: RepairAuditSubtitleMetadata[] = [];
+let groupAudio: RepairAuditAudioMetadata[] = [];
 let originalSubtitles = "";
+let originalAudio = "";
 let queueingGroup = false;
 const queuedPaths = new Set<string>();
 /** Subtitle languages ticked for removal. */
@@ -24,6 +33,32 @@ const subtitleFlags = [
 	["isOriginal", "Original"],
 	["isCommentary", "Commentary"],
 ] as const;
+
+const audioFlags = [
+	["isDefault", "Default"],
+	["isEnabled", "Enabled"],
+	["isVisualImpaired", "VI"],
+	["isOriginal", "Original"],
+	["isCommentary", "Commentary"],
+] as const;
+
+function audioMetadata(track: RepairAuditTrack): RepairAuditAudioMetadata {
+	return {
+		title: track.title,
+		language: track.language,
+		isDefault: track.isDefault,
+		isForced: track.isForced,
+		isEnabled: track.isEnabled,
+		isHearingImpaired: track.isHearingImpaired,
+		isVisualImpaired: track.isVisualImpaired,
+		isOriginal: track.isOriginal,
+		isCommentary: track.isCommentary,
+	};
+}
+
+function groupEdited(): { audio: boolean; subtitles: boolean } {
+	return { audio: JSON.stringify(groupAudio) !== originalAudio, subtitles: JSON.stringify(groupSubtitles) !== originalSubtitles };
+}
 
 function subtitleMetadata(track: RepairAuditTrack): RepairAuditSubtitleMetadata {
 	return {
@@ -131,28 +166,47 @@ function renderDetails(): void {
 	buttonById("repair-audit-open-btn").textContent = file.sourcePath ? "Repair with original source" : "Open repair editor";
 }
 
+function languageField(kind: "audio" | "subtitle", index: number, language: string): string {
+	return `<label>Language<input class="repair-input" data-audit-kind="${kind}" data-audit-track="${index}" data-audit-field="language" value="${escapeHtml(language)}" maxlength="35" data-language-picker="single" data-language-codes="tag"></label>`;
+}
+
 function renderGroupEditor(): void {
 	const files = groupFiles();
 	const representative = files[0];
 	if (!representative) return;
 	const tracks = representative.tracks.filter((track) => track.type === "subtitles");
+	const audioTracks = representative.tracks.filter((track) => track.type === "audio");
+	const audioRows = groupAudio
+		.map(
+			(track, index) => `<div class="repair-track">
+			<div class="repair-track-head"><span class="sub-track-id">Audio ${index + 1}</span><span class="repair-codec">${escapeHtml(audioTracks[index]?.codec)}</span></div>
+			<div class="repair-track-fields repair-audit-metadata-fields">
+				<label>Track name<input class="repair-input" data-audit-kind="audio" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
+				${languageField("audio", index, track.language)}
+			</div>
+			<div class="repair-flags">${audioFlags.map(([field, label]) => `<label class="repair-flag"${field === "isVisualImpaired" ? ' title="For visually impaired viewers, such as an audio description"' : ""}><input type="checkbox" data-audit-kind="audio" data-audit-track="${index}" data-audit-field="${field}" ${track[field] ? "checked" : ""}> ${label}</label>`).join("")}</div>
+		</div>`,
+		)
+		.join("");
+	const subtitleRows = groupSubtitles
+		.map(
+			(track, index) => `<div class="repair-track">
+			<div class="repair-track-head"><span class="sub-track-id">Subtitle ${index + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span></div>
+			<div class="repair-track-fields repair-audit-metadata-fields">
+				<label>Subtitle name<input class="repair-input" data-audit-kind="subtitle" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
+				${languageField("subtitle", index, track.language)}
+			</div>
+			<div class="repair-flags">${subtitleFlags.map(([field, label]) => `<label class="repair-flag"><input type="checkbox" data-audit-kind="subtitle" data-audit-track="${index}" data-audit-field="${field}" ${track[field] ? "checked" : ""}> ${label}</label>`).join("")}</div>
+		</div>`,
+		)
+		.join("");
 	byId("repair-audit-details").innerHTML = `<div class="repair-audit-detail-head">
 		<div><span class="repair-audit-group-badge ${groupClass(representative.group)}">${escapeHtml(representative.groupLabel)}</span><strong>Edit group ${escapeHtml(representative.groupLabel)}</strong></div>
 		<small>Changes apply to all ${files.length} file${files.length === 1 ? "" : "s"} in this group.</small>
 	</div>
 	<fieldset class="repair-audit-group-fields" ${queueingGroup ? "disabled" : ""}>
-		<div class="repair-audit-tracks">${groupSubtitles
-			.map(
-				(track, index) => `<div class="repair-track">
-			<div class="repair-track-head"><span class="sub-track-id">Subtitle ${index + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span></div>
-			<div class="repair-track-fields repair-audit-metadata-fields">
-				<label>Subtitle name<input class="repair-input" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
-				<label>Language<input class="repair-input" data-audit-track="${index}" data-audit-field="language" value="${escapeHtml(track.language)}" maxlength="35"></label>
-			</div>
-			<div class="repair-flags">${subtitleFlags.map(([field, label]) => `<label class="repair-flag"><input type="checkbox" data-audit-track="${index}" data-audit-field="${field}" ${track[field] ? "checked" : ""}> ${label}</label>`).join("")}</div>
-		</div>`,
-			)
-			.join("")}</div>
+		${audioRows ? `<div class="repair-audit-section-title">Audio</div><div class="repair-audit-tracks">${audioRows}</div>` : ""}
+		${subtitleRows ? `<div class="repair-audit-section-title">Subtitles</div><div class="repair-audit-tracks">${subtitleRows}</div>` : ""}
 		<label class="repair-audit-save-mode">Save changes to
 			<select class="select-input" id="repair-audit-group-save-mode">
 				<option value="existing" selected>Existing MKV files</option>
@@ -174,7 +228,7 @@ function renderAudit(): void {
 	byId("repair-audit-groups").innerHTML = audit.groups
 		.map((group) => {
 			const files = audit!.files.filter((file) => file.group === group.group);
-			const canEdit = files[0]?.tracks.some((track) => track.type === "subtitles") && !files.some((file) => queuedPaths.has(file.path));
+			const canEdit = !!files[0]?.tracks.length && !files.some((file) => queuedPaths.has(file.path));
 			return `<span class="repair-audit-group-summary"><span class="repair-audit-group-badge ${groupClass(group.group)}">${escapeHtml(group.label)}</span>${group.count} file${group.count === 1 ? "" : "s"}${group.group === 0 ? " (majority)" : ""}<button class="btn btn-ghost btn-sm" type="button" data-audit-edit-group="${group.group}" ${canEdit ? "" : "disabled"}>Edit group</button></span>`;
 		})
 		.join("");
@@ -321,6 +375,7 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	selectedPath = "";
 	editingGroup = null;
 	groupSubtitles = [];
+	groupAudio = [];
 	queuedPaths.clear();
 	removeLanguages.clear();
 	languagesOpen = null;
@@ -371,8 +426,11 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 	if (!element || (element instanceof HTMLButtonElement && element.disabled)) return;
 	if (element.hasAttribute("data-audit-edit-group")) {
 		editingGroup = Number(element.dataset.auditEditGroup);
-		groupSubtitles = (groupFiles()[0]?.tracks || []).filter((track) => track.type === "subtitles").map(subtitleMetadata);
+		const tracks = groupFiles()[0]?.tracks || [];
+		groupSubtitles = tracks.filter((track) => track.type === "subtitles").map(subtitleMetadata);
+		groupAudio = tracks.filter((track) => track.type === "audio").map(audioMetadata);
 		originalSubtitles = JSON.stringify(groupSubtitles);
+		originalAudio = JSON.stringify(groupAudio);
 		byId("repair-audit-status").textContent = "";
 		renderDetails();
 		return;
@@ -394,22 +452,37 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 
 export function handleRepairAuditInput(event: Event): void {
 	if (queueingGroup || !(event.target instanceof HTMLInputElement)) return;
-	const { auditTrack, auditField } = event.target.dataset;
+	const input = event.target;
+	const { auditKind, auditTrack, auditField } = input.dataset;
 	if (auditTrack === undefined || !auditField) return;
-	const track = groupSubtitles[Number(auditTrack)];
-	if (!track) return;
-	if (auditField === "title" || auditField === "language") track[auditField] = event.target.value;
-	else {
-		const flag = subtitleFlags.find(([field]) => field === auditField)?.[0];
-		if (!flag) return;
-		track[flag] = event.target.checked;
+	const index = Number(auditTrack);
+	if (auditKind === "audio") {
+		const track = groupAudio[index];
+		if (!track) return;
+		if (auditField === "title" || auditField === "language") track[auditField] = input.value;
+		else {
+			const flag = audioFlags.find(([field]) => field === auditField)?.[0];
+			if (!flag) return;
+			track[flag] = input.checked;
+		}
+	} else {
+		const track = groupSubtitles[index];
+		if (!track) return;
+		if (auditField === "title" || auditField === "language") track[auditField] = input.value;
+		else {
+			const flag = subtitleFlags.find(([field]) => field === auditField)?.[0];
+			if (!flag) return;
+			track[flag] = input.checked;
+		}
 	}
-	buttonById("repair-audit-group-queue").disabled = JSON.stringify(groupSubtitles) === originalSubtitles;
+	const edited = groupEdited();
+	buttonById("repair-audit-group-queue").disabled = !edited.audio && !edited.subtitles;
 }
 
 async function queueAuditGroup(): Promise<void> {
 	const files = groupFiles();
-	if (queueingGroup || !files.length || JSON.stringify(groupSubtitles) === originalSubtitles) return;
+	const edited = groupEdited();
+	if (queueingGroup || !files.length || (!edited.audio && !edited.subtitles)) return;
 	const currentAudit = audit;
 	const replaceTarget = (byId("repair-audit-group-save-mode") as HTMLSelectElement).value === "existing";
 	queueingGroup = true;
@@ -422,6 +495,7 @@ async function queueAuditGroup(): Promise<void> {
 			paths: files.map((file) => file.path),
 			expectedTracks: files[0]!.tracks,
 			subtitles: groupSubtitles,
+			...(edited.audio ? { audio: groupAudio } : {}),
 			replaceTarget,
 		});
 		if (audit === currentAudit) {

@@ -139,7 +139,7 @@ function renderTrack(track: EditableTrack, index: number): string {
 		</div>
 		<div class="repair-track-fields">
 			<label>Title<input class="repair-input" data-field="title" data-key="${key}" value="${escapeHtml(track.title)}" maxlength="512"></label>
-			<label>Language<input class="repair-input repair-language" data-field="language" data-key="${key}" value="${escapeHtml(track.language)}" maxlength="35"></label>
+			<label>Language<input class="repair-input repair-language" data-field="language" data-key="${key}" value="${escapeHtml(track.language)}" maxlength="35" data-language-picker="single" data-language-codes="tag"></label>
 			<label>Handling<select class="select-input" data-field="mode" data-key="${key}">
 				<option value="copy" ${track.mode === "copy" ? "selected" : ""}>Copy unchanged</option>
 				<option value="rabbit" ${track.mode === "rabbit" ? "selected" : ""} ${track.canRabbitProcess ? "" : "disabled"}>Rabbit defaults</option>

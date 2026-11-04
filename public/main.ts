@@ -5,12 +5,14 @@ import { API } from "./config/api-base";
 import { fetchLibraryDirs } from "./features/library";
 import { startPolling } from "./features/polling";
 import { byId } from "./shared/dom";
+import { initLanguagePickers } from "./shared/language-picker";
 import { appState } from "./state";
 
 byId("title-version").innerText = `v${pkg.version}`;
 
 export async function init() {
 	initEventListeners();
+	initLanguagePickers();
 
 	if (!appState.authToken) {
 		showLogin("");

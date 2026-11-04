@@ -176,13 +176,16 @@ export function buildAvdArgs(engine: AvdEngine, level: DenoiseRange["level"], pa
 	const common = ["--accelerators", AVD_ACCELERATORS, "--device", isValidAvdDeviceSpec(device) ? device : DEFAULT_AVD_DEVICE];
 	if (avdEngineUsesPreset(engine)) common.push("--preset", params.preset);
 
+	// The inputs are temp files that later passes rename over, so a BestSource index beside them would go stale.
+	const io = ["--no-index-cache", "--input", input];
+
 	if (engine === "avd-nl4d") {
-		return [...common, "nl4d", "--lambda-ht-scale", strength, "--input", input];
+		return [...common, "nl4d", "--lambda-ht-scale", strength, ...io];
 	}
 	if (engine === "avd-nlmeans-hq") {
-		return [...common, "nlmeans", "--variant", "hq", "--hq-sigma-scale", strength, "--input", input];
+		return [...common, "nlmeans", "--variant", "hq", "--hq-sigma-scale", strength, ...io];
 	}
-	return [...common, "nlmeans", "--variant", "fast", "--strength", strength, "--input", input];
+	return [...common, "nlmeans", "--variant", "fast", "--strength", strength, ...io];
 }
 
 /**

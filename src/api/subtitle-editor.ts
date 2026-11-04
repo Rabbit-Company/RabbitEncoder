@@ -5,7 +5,7 @@ import type { AppConfig, RepairSubtitleTrackPlan } from "../core/types";
 import { run } from "../core/process";
 import { buildRepairMkvmergeArgs, identifyMatroska, inspectRepairFile } from "../pipeline/repair";
 import { resolveUniqueOutputPath } from "../pipeline/output";
-import { editSubtitleDocument, editorCues, editorFormat, validateEditorEdit, type SubtitleEditorEdit } from "../subtitles/editor";
+import { editSubtitleDocument, editorCues, editorFormat, previewAssDocument, validateEditorEdit, type SubtitleEditorEdit } from "../subtitles/editor";
 import { resolveAllowedMkv } from "./repair";
 
 function fingerprint(path: string): string {
@@ -221,7 +221,8 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 					args.push("-af", "asetpts=PTS-STARTPTS");
 				} else {
 					const document = await documentFor(path, track.id, format, temp, signal);
-					writeFileSync(join(temp, `preview.${format}`), editSubtitleDocument(document, format, edit));
+					const edited = editSubtitleDocument(document, format, edit);
+					writeFileSync(join(temp, `preview.${format}`), format === "srt" ? edited : previewAssDocument(edited));
 					mkdirSync(join(temp, "fonts"));
 					const fonts = (identified.attachments || []).filter((attachment) => /\.(ttf|otf|ttc|woff2?)$/i.test(attachment.file_name));
 					if (fonts.length)

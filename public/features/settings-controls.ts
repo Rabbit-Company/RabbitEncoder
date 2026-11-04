@@ -317,10 +317,13 @@ export function renderLanguagePriorityInput(container: HTMLElement, value: strin
 	input.className = "lang-filter-input";
 	input.placeholder = placeholder;
 	input.value = (value || []).join(", ");
+	input.dataset.languagePicker = "ordered";
+	input.dataset.languageVariants = "off";
+	input.dataset.languageAny = "";
 
 	const hint = document.createElement("div");
 	hint.className = "lang-filter-hint";
-	hint.textContent = "Ordered priority. Use * for everything else (alphabetical).";
+	hint.textContent = "Drag to reorder. Everything else covers the rest, alphabetically.";
 
 	input.oninput = () =>
 		onChange(
@@ -499,10 +502,13 @@ export function renderAudioLanguagesInput(container: HTMLElement, value: string[
 	input.className = "lang-filter-input";
 	input.placeholder = "jpn, eng (empty = keep all)";
 	input.value = (value || []).join(", ");
+	input.dataset.languagePicker = "multi";
+	input.dataset.languageVariants = "off";
+	input.dataset.languageEmpty = "All languages";
 
 	const hint = document.createElement("div");
 	hint.className = "lang-filter-hint";
-	hint.textContent = "Comma-separated ISO codes. Empty keeps every track.";
+	hint.textContent = "Empty keeps every track.";
 
 	input.oninput = () =>
 		onChange(
@@ -524,10 +530,13 @@ export function renderLanguageFilterInput(container: HTMLElement, value: string[
 	input.className = "lang-filter-input";
 	input.placeholder = "jpn, eng (empty = keep all)";
 	input.value = (value || []).join(", ");
+	input.dataset.languagePicker = "multi";
+	input.dataset.languageVariants = "off";
+	input.dataset.languageEmpty = "All languages";
 
 	const hint = document.createElement("div");
 	hint.className = "lang-filter-hint";
-	hint.textContent = "Comma-separated ISO codes. Empty keeps every track.";
+	hint.textContent = "Empty keeps every track.";
 
 	input.oninput = () =>
 		onChange(
@@ -544,9 +553,7 @@ export function renderLanguageFilterInput(container: HTMLElement, value: string[
 const TARGET_LANGUAGES_TEXT = {
 	label: "Target languages",
 	placeholder: "eng, slv",
-	hint:
-		"Comma-separated ISO codes. Every listed language should end up with a full subtitle: " +
-		"if one is missing, it's translated with the LLM from an existing full subtitle.",
+	hint: "Every listed language should end up with a full subtitle: " + "if one is missing, it's translated with the LLM from an existing full subtitle.",
 };
 
 export function renderTranslationLanguagesInput(
@@ -566,6 +573,7 @@ export function renderTranslationLanguagesInput(
 	input.className = "lang-filter-input";
 	input.placeholder = text.placeholder;
 	input.value = (value || []).join(", ");
+	input.dataset.languagePicker = "multi";
 
 	const hint = document.createElement("div");
 	hint.className = "lang-filter-hint";

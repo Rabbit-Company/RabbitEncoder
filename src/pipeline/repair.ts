@@ -5,6 +5,8 @@ import type {
 	Job,
 	JobStep,
 	RepairInspectionFile,
+	RepairAudioTrackPlan,
+	RepairAuditAudioMetadata,
 	RepairAuditFile,
 	RepairAuditGroup,
 	RepairAuditTrack,
@@ -439,17 +441,45 @@ export function buildRepairLanguageRemovalPlans(files: Pick<RepairAuditFile, "pa
 	return plans;
 }
 
-/** Match subtitles by their ordered position, since MKV track IDs can differ between episodes. */
+function audioMetadataOf(track: RepairAuditTrack | RepairAudioTrackPlan): RepairAuditAudioMetadata {
+	return {
+		title: track.title,
+		language: track.language,
+		isDefault: track.isDefault,
+		isForced: track.isForced,
+		isEnabled: track.isEnabled,
+		isHearingImpaired: track.isHearingImpaired,
+		isVisualImpaired: track.isVisualImpaired,
+		isOriginal: track.isOriginal,
+		isCommentary: track.isCommentary,
+	};
+}
+
+/** Match subtitles and audio by their ordered position, since MKV track IDs can differ between episodes. */
 export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], edit: RepairAuditGroupEdit): RepairPlan[] {
 	if (!Array.isArray(edit.expectedTracks) || !Array.isArray(edit.subtitles)) throw new Error("Group track metadata is required");
+	if (edit.audio !== undefined && !Array.isArray(edit.audio)) throw new Error("Invalid group audio metadata");
 	const expectedSignature = auditSignature({ tracks: edit.expectedTracks });
 	const subtitleCount = edit.expectedTracks.filter((track) => track.type === "subtitles").length;
-	if (!subtitleCount || edit.subtitles.length !== subtitleCount) throw new Error("Group edits must preserve every subtitle track");
+	const audioCount = edit.expectedTracks.filter((track) => track.type === "audio").length;
+	if (edit.subtitles.length !== subtitleCount) throw new Error("Group edits must preserve every subtitle track");
+	if (edit.audio && edit.audio.length !== audioCount) throw new Error("Group edits must preserve every audio track");
+	if (!subtitleCount && !edit.audio?.length) throw new Error("The group has no tracks to edit");
 	return files.map((file) => {
 		if (auditSignature(file) !== expectedSignature) throw new Error(`${basename(file.path)} metadata changed since the audit. Audit the folder again.`);
+		// Only audio tracks that actually change are touched, so the rest keep their stored tags exactly.
+		const audioTracks = file.tracks
+			.filter((track) => track.type === "audio")
+			.flatMap((track, index): RepairAudioTrackPlan[] => {
+				const metadata = edit.audio?.[index];
+				if (!metadata) return [];
+				const next = audioMetadataOf({ ...track, ...metadata });
+				return JSON.stringify(next) === JSON.stringify(audioMetadataOf(track)) ? [] : [{ trackId: track.id, ...next }];
+			});
 		return sanitizeRepairPlan({
 			targetPath: file.path,
 			replaceTarget: edit.replaceTarget,
+			...(audioTracks.length ? { audioTracks } : {}),
 			tracks: file.tracks
 				.filter((track) => track.type === "subtitles")
 				.map((track, order) => {
@@ -578,7 +608,92 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	});
 	tracks.sort((a, b) => a.order - b.order);
 	tracks.forEach((track, index) => (track.order = index));
-	return { targetPath, sourcePath, replaceTarget: !!raw.replaceTarget, replaceFromSource, ...sourceFields, tracks };
+	const audioTracks = sanitizeAudioTracks(raw.audioTracks);
+	return {
+		targetPath,
+		sourcePath,
+		replaceTarget: !!raw.replaceTarget,
+		replaceFromSource,
+		...sourceFields,
+		tracks,
+		...(audioTracks.length ? { audioTracks } : {}),
+	};
+}
+
+function sanitizeAudioTracks(raw: unknown): RepairAudioTrackPlan[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_REPAIR_TRACKS) throw new Error("Invalid audio track plan");
+	const seen = new Set<number>();
+	return raw.map((item, index): RepairAudioTrackPlan => {
+		const trackId = Number(item?.trackId);
+		if (!Number.isInteger(trackId) || trackId < 0) throw new Error(`Invalid audio track at position ${index + 1}`);
+		if (seen.has(trackId)) throw new Error(`Audio track ${trackId} was selected more than once`);
+		seen.add(trackId);
+		return {
+			trackId,
+			title: checkedText(item.title, 512),
+			language: sanitizeLanguageTag(item.language, `repair audio ${trackId}`),
+			isDefault: !!item.isDefault,
+			isForced: !!item.isForced,
+			isEnabled: item.isEnabled !== false,
+			isHearingImpaired: !!item.isHearingImpaired,
+			isVisualImpaired: !!item.isVisualImpaired,
+			isOriginal: !!item.isOriginal,
+			isCommentary: !!item.isCommentary,
+		};
+	});
+}
+
+function audioTrackOptions(plan: RepairAudioTrackPlan): string[] {
+	const id = plan.trackId;
+	return [
+		"--language",
+		`${id}:${plan.language}`,
+		"--track-name",
+		`${id}:${plan.title}`,
+		"--default-track-flag",
+		`${id}:${plan.isDefault ? 1 : 0}`,
+		"--forced-display-flag",
+		`${id}:${plan.isForced ? 1 : 0}`,
+		"--track-enabled-flag",
+		`${id}:${plan.isEnabled ? 1 : 0}`,
+		"--hearing-impaired-flag",
+		`${id}:${plan.isHearingImpaired ? 1 : 0}`,
+		"--visual-impaired-flag",
+		`${id}:${plan.isVisualImpaired ? 1 : 0}`,
+		"--original-flag",
+		`${id}:${plan.isOriginal ? 1 : 0}`,
+		"--commentary-flag",
+		`${id}:${plan.isCommentary ? 1 : 0}`,
+	];
+}
+
+function targetAudioTrack(target: MkvIdentification, plan: RepairAudioTrackPlan): MkvTrack {
+	const track = (target.tracks || []).find((candidate) => candidate.type === "audio" && candidate.id === plan.trackId);
+	if (!track) throw new Error(`target audio track ${plan.trackId} no longer exists`);
+	return track;
+}
+
+function assertAudioPlanApplied(plan: RepairPlan, outputAudio: MkvTrack[], target: MkvIdentification): void {
+	const targetAudio = (target.tracks || []).filter((track) => track.type === "audio");
+	for (const expected of plan.audioTracks ?? []) {
+		const index = targetAudio.indexOf(targetAudioTrack(target, expected));
+		const properties = outputAudio[index]?.properties;
+		const name = `audio ${index + 1}`;
+		if (!properties) throw new Error(`Verification failed: ${name} is missing`);
+		if ((properties.track_name || "") !== expected.title) throw new Error(`Verification failed: ${name} title was not applied`);
+		if (!languageMatches(expected.language, properties)) throw new Error(`Verification failed: ${name} language was not applied`);
+		const flags: [boolean, boolean, string][] = [
+			[!!properties.default_track, expected.isDefault, "default"],
+			[!!properties.forced_track, expected.isForced, "forced"],
+			[properties.enabled_track !== false, expected.isEnabled, "enabled"],
+			[!!properties.flag_hearing_impaired, expected.isHearingImpaired, "HI"],
+			[!!properties.flag_visual_impaired, expected.isVisualImpaired, "VI"],
+			[!!properties.flag_original, expected.isOriginal, "original"],
+			[!!properties.flag_commentary, expected.isCommentary, "commentary"],
+		];
+		for (const [actual, wanted, flag] of flags) if (actual !== wanted) throw new Error(`Verification failed: ${name} ${flag} flag was not applied`);
+	}
 }
 
 function trackUsesZlib(track: MkvTrack | undefined): boolean {
@@ -660,6 +775,32 @@ export function isMetadataOnlyRepair(plan: RepairPlan, target: MkvIdentification
 export function buildRepairMkvpropeditArgs(path: string, plan: RepairPlan, target: MkvIdentification): string[] {
 	if (!isMetadataOnlyRepair(plan, target)) throw new Error("mkvpropedit can only be used when the subtitle set, order, and compression are unchanged");
 	const args = ["mkvpropedit", path];
+	// language= writes both the legacy and the IETF element. language-ietf= alone leaves players that read the legacy one on the old value.
+	for (const track of plan.audioTracks ?? []) {
+		const allTrackIndex = (target.tracks || []).indexOf(targetAudioTrack(target, track));
+		args.push(
+			"--edit",
+			`track:${allTrackIndex + 1}`,
+			"--set",
+			`name=${track.title}`,
+			"--set",
+			`language=${track.language}`,
+			"--set",
+			`flag-default=${track.isDefault ? 1 : 0}`,
+			"--set",
+			`flag-forced=${track.isForced ? 1 : 0}`,
+			"--set",
+			`flag-enabled=${track.isEnabled ? 1 : 0}`,
+			"--set",
+			`flag-hearing-impaired=${track.isHearingImpaired ? 1 : 0}`,
+			"--set",
+			`flag-visual-impaired=${track.isVisualImpaired ? 1 : 0}`,
+			"--set",
+			`flag-original=${track.isOriginal ? 1 : 0}`,
+			"--set",
+			`flag-commentary=${track.isCommentary ? 1 : 0}`,
+		);
+	}
 	for (const track of plan.tracks) {
 		const allTrackIndex = (target.tracks || []).findIndex((candidate) => candidate.type === "subtitles" && candidate.id === track.trackId);
 		if (allTrackIndex < 0) throw new Error(`target subtitle track ${track.trackId} no longer exists`);
@@ -669,7 +810,7 @@ export function buildRepairMkvpropeditArgs(path: string, plan: RepairPlan, targe
 			"--set",
 			`name=${track.title}`,
 			"--set",
-			`language-ietf=${track.language}`,
+			`language=${track.language}`,
 			"--set",
 			`flag-default=${track.isDefault ? 1 : 0}`,
 			"--set",
@@ -985,6 +1126,10 @@ export function buildRepairMkvmergeArgs(options: {
 		for (const track of directTarget) args.push(...trackOptions(track, track.trackId, findTrack(target, track)));
 	} else {
 		args.push("--no-subtitles");
+	}
+	for (const track of plan.audioTracks ?? []) {
+		targetAudioTrack(target, track);
+		args.push(...audioTrackOptions(track));
 	}
 	args.push(plan.targetPath);
 
@@ -1435,6 +1580,11 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		if (outputSubs.length !== plan.tracks.length)
 			throw new Error(`Verification failed: expected ${plan.tracks.length} subtitle tracks, found ${outputSubs.length}`);
 		assertSubtitlePlanApplied(plan, outputSubs, targetId, sourceIds);
+		assertAudioPlanApplied(
+			plan,
+			(verified.tracks || []).filter((track) => track.type === "audio"),
+			targetId,
+		);
 		if (!durationsAreCompatible(targetId, verified)) throw new Error("Verification failed: repaired duration differs from the encoded target");
 
 		const parsed = parsePath(plan.targetPath);

@@ -1359,7 +1359,7 @@
 						<div class="library-translate-grid">
 							<div class="setting-group">
 								<label for="library-translate-source">Source language</label>
-								<input type="text" class="lang-filter-input" id="library-translate-source" placeholder="eng" autocomplete="off" />
+								<input type="text" class="lang-filter-input" id="library-translate-source" placeholder="eng" autocomplete="off" data-language-picker="single" />
 							</div>
 							<div class="setting-group">
 								<label for="library-translate-type">Source track</label>
@@ -1372,17 +1372,32 @@
 							</div>
 							<div class="setting-group">
 								<label for="library-translate-targets">Translate to</label>
-								<input type="text" class="lang-filter-input" id="library-translate-targets" placeholder="slv, deu" autocomplete="off" />
+								<input
+									type="text"
+									class="lang-filter-input"
+									id="library-translate-targets"
+									placeholder="slv, deu"
+									autocomplete="off"
+									data-language-picker="multi"
+								/>
 							</div>
 							<div class="setting-group">
 								<label for="library-translate-references">Reference languages</label>
-								<input type="text" class="lang-filter-input" id="library-translate-references" placeholder="rus (optional)" autocomplete="off" />
+								<input
+									type="text"
+									class="lang-filter-input"
+									id="library-translate-references"
+									placeholder="rus (optional)"
+									autocomplete="off"
+									data-language-picker="multi"
+									data-language-empty="None (optional)"
+								/>
 							</div>
 						</div>
 						<div class="lang-filter-hint">
-							ISO codes, comma separated for several languages. Reference languages are optional: their subtitles are matched to each line by timing and help
-							with gender and formal or informal address. Each file gets the new tracks appended. Video, audio and existing subtitles are copied as they are and
-							the file is replaced in place. Files that already have the target language are left alone.
+							Reference languages are optional: their subtitles are matched to each line by timing and help with gender and formal or informal address. Each
+							file gets the new tracks appended. Video, audio and existing subtitles are copied as they are and the file is replaced in place. Files that
+							already have the target language are left alone.
 						</div>
 						<div class="setting-group">
 							<label class="toggle-label"><input type="checkbox" id="library-translate-download" />&nbsp;Download from OpenSubtitles first</label>
@@ -1857,7 +1872,7 @@
 						</div>
 						<div class="setting-group">
 							<label for="subsearch-languages">Languages</label>
-							<input type="text" class="lang-filter-input" id="subsearch-languages" placeholder="slv, eng" />
+							<input type="text" class="lang-filter-input" id="subsearch-languages" placeholder="slv, eng" data-language-picker="multi" />
 							<label class="toggle-label subsearch-extra">
 								Also add the most used languages&nbsp;
 								<select class="select-input" id="subsearch-extra">
@@ -1970,7 +1985,14 @@
 						<div id="subocr-pairs"></div>
 						<div class="setting-group" id="subocr-folder-options" style="display: none">
 							<label for="subocr-languages">Languages</label>
-							<input type="text" class="lang-filter-input" id="subocr-languages" placeholder="All languages" />
+							<input
+								type="text"
+								class="lang-filter-input"
+								id="subocr-languages"
+								placeholder="All languages"
+								data-language-picker="multi"
+								data-language-empty="All languages"
+							/>
 							<div class="lang-filter-hint">
 								Every MKV becomes a job of its own. Each reads the picture subtitles that have no text track in their language and kind. Leave the languages
 								empty to read all of them.
