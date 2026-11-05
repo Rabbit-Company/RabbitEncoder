@@ -1732,6 +1732,17 @@
 									<label for="compare-align">Alignment</label>
 									<div class="compare-align"><input type="checkbox" id="compare-align" checked /><span>Align automatically by audio</span></div>
 								</div>
+								<div class="setting-group">
+									<label for="compare-still-style">Stills</label>
+									<select
+										class="select-input"
+										id="compare-still-style"
+										title="Comparison standard follows the thewiki.moe guide, as comparisons on slow.pics are expected to. Match mpv looks like a screenshot from mpv with its default settings."
+									>
+										<option value="standard">Comparison standard</option>
+										<option value="mpv">Match mpv</option>
+									</select>
+								</div>
 							</div>
 						</div>
 						<div id="compare-progress" style="display: none">
@@ -2509,6 +2520,17 @@
 									><input type="checkbox" id="preview-metrics-grain" checked /> Score with film grain</label
 								>
 							</div>
+							<label class="preview-option">
+								<span>Stills</span>
+								<select
+									class="select-input"
+									id="preview-still-style"
+									title="Comparison standard follows the thewiki.moe guide, as comparisons on slow.pics are expected to. Match mpv looks like a screenshot from mpv with its default settings."
+								>
+									<option value="standard">Comparison standard</option>
+									<option value="mpv">Match mpv</option>
+								</select>
+							</label>
 						</div>
 
 						<div id="preview-references" class="preview-references" style="display: none">

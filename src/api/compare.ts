@@ -20,6 +20,7 @@ import {
 	type MeasureInterval,
 } from "../compare/compare";
 import { METRIC_NAMES, type MetricName } from "../compare/metrics";
+import { DEFAULT_STILL_STYLE, isStillStyle, STILL_STYLES } from "../core/still-style";
 
 const MAX_SOURCES = 8;
 const MAX_FRAMES = 50;
@@ -42,7 +43,14 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 
 	app.post("/api/compare", async (c) => {
 		try {
-			const body = (await c.req.json().catch(() => ({}))) as { sources?: unknown; mode?: unknown; count?: unknown; timestamps?: unknown; align?: unknown };
+			const body = (await c.req.json().catch(() => ({}))) as {
+				sources?: unknown;
+				mode?: unknown;
+				count?: unknown;
+				timestamps?: unknown;
+				align?: unknown;
+				stillStyle?: unknown;
+			};
 			if (!Array.isArray(body.sources) || body.sources.length < 2 || body.sources.length > MAX_SOURCES)
 				throw new Error(`Choose 2 to ${MAX_SOURCES} videos to compare`);
 			const sources: CompareSourceInput[] = body.sources.map((raw, i) => {
@@ -77,7 +85,9 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 				timestamps = body.timestamps.map(Number);
 				if (timestamps.some((t) => !Number.isFinite(t) || t < 0)) throw new Error("Timestamps must be positive seconds");
 			}
-			const session = startCompare(root, { sources, mode, count, timestamps, align: body.align !== false });
+			if (body.stillStyle !== undefined && !isStillStyle(body.stillStyle)) throw new Error(`stillStyle must be one of ${STILL_STYLES.join(", ")}`);
+			const stillStyle = body.stillStyle ?? DEFAULT_STILL_STYLE;
+			const session = startCompare(root, { sources, mode, count, timestamps, align: body.align !== false, stillStyle });
 			return c.json(session);
 		} catch (error) {
 			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);

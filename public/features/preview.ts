@@ -11,6 +11,7 @@ import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { humanFileSize } from "./library";
 import { openPreviewReferencePicker } from "./repair";
+import type { StillStyle } from "../../src/core/still-style";
 
 const MAX_PREVIEW_REFERENCES = 4;
 
@@ -581,6 +582,7 @@ export async function handlePreviewRun() {
 			references,
 			metrics: selectedPreviewMetrics(),
 			metricsWithGrain: inputById("preview-metrics-grain").checked,
+			stillStyle: byId<HTMLSelectElement>("preview-still-style").value as StillStyle,
 		});
 		if (result.error) {
 			byId("preview-error").textContent = result.error;

@@ -4,6 +4,9 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { run } from "../../src/core/process";
 import { captureFrame } from "../../src/pipeline/preview-encoder";
+import { STILL_STYLES } from "../../src/core/still-style";
+
+const COLOR = { range: "tv" as const, space: "bt709", transfer: null, primaries: null, chromaLocation: null };
 
 const hasFfmpeg = !!Bun.which("ffmpeg");
 
@@ -40,11 +43,32 @@ async function meanRgb(png: string): Promise<[number, number, number]> {
 		const converted = await run(["ffmpeg", "-v", "error", "-i", eight, "-pix_fmt", "yuv420p10le", "-c:v", "ffv1", ten]);
 		if (converted.code !== 0) throw new Error(converted.stderr);
 
-		const color = { range: "tv" as const, space: "bt709" };
 		const signal = new AbortController().signal;
-		expect(await captureFrame(eight, join(root, "eight.png"), 5, "none", color, 360, signal)).toBe(true);
-		expect(await captureFrame(ten, join(root, "ten.png"), 5, "none", color, 360, signal)).toBe(true);
-		const [a, b] = await Promise.all([meanRgb(join(root, "eight.png")), meanRgb(join(root, "ten.png"))]);
-		for (let c = 0; c < 3; c++) expect(Math.abs(a[c]! - b[c]!)).toBeLessThan(0.1);
-	}, 30_000);
+		for (const style of STILL_STYLES) {
+			expect(await captureFrame(eight, join(root, `eight_${style}.png`), 5, "none", COLOR, 360, style, signal)).toBe(true);
+			expect(await captureFrame(ten, join(root, `ten_${style}.png`), 5, "none", COLOR, 360, style, signal)).toBe(true);
+			const [a, b] = await Promise.all([meanRgb(join(root, `eight_${style}.png`)), meanRgb(join(root, `ten_${style}.png`))]);
+			for (let c = 0; c < 3; c++) expect(Math.abs(a[c]! - b[c]!)).toBeLessThan(0.1);
+		}
+	}, 60_000);
+
+	it("saves 16-bit PNGs, with mpv's darker shadows only in the mpv style", async () => {
+		const dark = join(root, "dark.mkv");
+		const made = await run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=0x141414:s=320x180:r=24:d=1,format=yuv420p", "-c:v", "ffv1", dark]);
+		if (made.code !== 0) throw new Error(made.stderr);
+		const signal = new AbortController().signal;
+		const levels: Record<string, number> = {};
+		for (const style of STILL_STYLES) {
+			const png = join(root, `dark_${style}.png`);
+			expect(await captureFrame(dark, png, 0, "none", COLOR, 180, style, signal)).toBe(true);
+			const probe = await run(["ffprobe", "-v", "error", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", png]);
+			expect(probe.stdout.trim()).toBe("rgb48be");
+			levels[style] = (await meanRgb(png))[1];
+		}
+		// The standard style keeps the video's own values, like a plain matrix conversion.
+		expect(Math.abs(levels.standard! - 20)).toBeLessThan(1);
+		// mpv shows BT.1886 as sRGB, which puts level 20 near 18.7.
+		expect(levels.standard! - levels.mpv!).toBeGreaterThan(0.8);
+		expect(levels.standard! - levels.mpv!).toBeLessThan(2.5);
+	}, 60_000);
 });

@@ -1013,6 +1013,7 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 		settingsFingerprint: previewSettingsFingerprint(job.settings),
 		sampleCount: opts.sampleCount,
 		windowSeconds: opts.windowSeconds,
+		stillStyle: opts.stillStyle,
 		...(opts.metrics.length > 0 ? { metrics: opts.metrics, metricsWithGrain: opts.metricsWithGrain } : {}),
 		startedAt: Date.now(),
 	};

@@ -22,6 +22,8 @@ import { FFV1_ENCODE_ARGS } from "../video/auto-denoise";
 import { vsRegistry } from "../video/vs-filters";
 import { measurePreviewSample, type PreviewMeasureOptions } from "./preview-metrics";
 import { comparisonFileName } from "../compare/compare";
+import { captureScreenshot } from "../video/screenshot";
+import { DEFAULT_STILL_STYLE, STILL_STYLE_LABELS, type StillStyle } from "../core/still-style";
 
 /** Extra video (e.g. the pre-denoise original) whose frames are shown next to the job's own source and encode. */
 export interface PreviewReferenceInput {
@@ -38,9 +40,17 @@ export interface PreviewEncodeOptions {
 	/** Metrics each encoded clip is scored with against its source clip, none to skip scoring. */
 	metrics: PreviewMetricName[];
 	metricsWithGrain: boolean;
+	stillStyle: StillStyle;
 }
 
-export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = { sampleCount: 6, windowSeconds: 5, references: [], metrics: [], metricsWithGrain: true };
+export const DEFAULT_PREVIEW_OPTIONS: PreviewEncodeOptions = {
+	sampleCount: 6,
+	windowSeconds: 5,
+	references: [],
+	metrics: [],
+	metricsWithGrain: true,
+	stillStyle: DEFAULT_STILL_STYLE,
+};
 
 export function buildPreviewReferences(inputs: PreviewReferenceInput[]): PreviewReference[] {
 	return inputs.map((ref, index) => ({ index, path: ref.path, name: basename(ref.path), label: ref.label }));
@@ -100,20 +110,30 @@ export function previewSettingsFingerprint(s: JobSettings): string {
 export interface PreviewColorInfo {
 	range: "tv" | "pc" | null;
 	space: string | null;
-}
-
-export function previewMatrixFromColorSpace(space: string | null, height: number): string {
-	if (space === "bt2020nc" || space === "bt2020c") return "bt2020";
-	if (space === "smpte170m" || space === "bt470bg") return "bt601";
-	if (space === "bt709") return "bt709";
-	return height >= 720 ? "bt709" : "bt601";
+	transfer: string | null;
+	primaries: string | null;
+	chromaLocation: string | null;
 }
 
 export async function probeColorInfo(inputPath: string): Promise<PreviewColorInfo> {
-	const proc = Bun.spawn(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range,color_space", "-of", "json", inputPath], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
+	const proc = Bun.spawn(
+		[
+			"ffprobe",
+			"-v",
+			"error",
+			"-select_streams",
+			"v:0",
+			"-show_entries",
+			"stream=color_range,color_space,color_transfer,color_primaries,chroma_location",
+			"-of",
+			"json",
+			inputPath,
+		],
+		{
+			stdout: "pipe",
+			stderr: "pipe",
+		},
+	);
 	const out = await new Response(proc.stdout).text();
 	await proc.exited;
 	let s: any = {};
@@ -127,7 +147,13 @@ export async function probeColorInfo(inputPath: string): Promise<PreviewColorInf
 	};
 	const range = clean(s.color_range);
 	const space = clean(s.color_space);
-	return { range: range === "pc" ? "pc" : range === "tv" ? "tv" : null, space: space || null };
+	return {
+		range: range === "pc" ? "pc" : range === "tv" ? "tv" : null,
+		space: space || null,
+		transfer: clean(s.color_transfer) || null,
+		primaries: clean(s.color_primaries) || null,
+		chromaLocation: clean(s.chroma_location) || null,
+	};
 }
 
 function escapeSubtitlesFilterPath(p: string): string {
@@ -168,33 +194,32 @@ export async function captureFrame(
 	burnSubs: SubtitleBurnMode,
 	color: PreviewColorInfo,
 	height: number,
+	style: StillStyle,
 	signal: AbortSignal,
 	seekSec?: number,
 ): Promise<boolean> {
-	const inRange = color.range === "pc" ? "pc" : "tv";
-	const matrix = previewMatrixFromColorSpace(color.space, height);
 	const targetFrame = Math.max(0, Math.round(frameIndex));
 	// Input seek, so frame 0 is the first frame at or after seekSec (same as cutSourceClip).
 	const input = seekSec !== undefined ? ["-ss", seekSec.toFixed(3), "-i", inputPath] : ["-i", inputPath];
 
-	const select = `select=eq(n\\,${targetFrame})`;
+	// trim ends the stream after the frame. libplacebo holds a frame until the next one
+	// arrives, so with select it would decode to the end of the file.
+	const pick = `trim=start_frame=${targetFrame}:end_frame=${targetFrame + 1}`;
 	const resetVideoPts = "setpts=PTS-STARTPTS";
-	const colorChain = `scale=in_range=${inRange}:out_range=pc:in_color_matrix=${matrix}:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int,format=rgb24,setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`;
-
-	let args: string[];
-	if (burnSubs === "text") {
-		const sub = `subtitles=filename='${escapeSubtitlesFilterPath(inputPath)}':si=0`;
-		args = [
+	const graph = (toRgb: string): string[] => {
+		if (burnSubs === "bitmap") return ["-filter_complex", `[0:v:0]${resetVideoPts}[base];[base][0:s:0]overlay,${pick},${toRgb}[v]`, "-map", "[v]"];
+		const sub = burnSubs === "text" ? `subtitles=filename='${escapeSubtitlesFilterPath(inputPath)}':si=0,` : "";
+		return ["-map", "0:v:0", "-vf", `${resetVideoPts},${sub}${pick},${toRgb}`];
+	};
+	const res = await captureScreenshot(
+		(toRgb) => [
 			"ffmpeg",
 			"-hide_banner",
 			"-loglevel",
 			"error",
 			"-y",
 			...input,
-			"-map",
-			"0:v:0",
-			"-vf",
-			`${resetVideoPts},${sub},${select},${colorChain}`,
+			...graph(toRgb),
 			"-frames:v",
 			"1",
 			"-an",
@@ -204,54 +229,11 @@ export async function captureFrame(
 			"-update",
 			"1",
 			outPath,
-		];
-	} else if (burnSubs === "bitmap") {
-		args = [
-			"ffmpeg",
-			"-hide_banner",
-			"-loglevel",
-			"error",
-			"-y",
-			...input,
-			"-filter_complex",
-			`[0:v:0]${resetVideoPts}[base];[base][0:s:0]overlay,${select},${colorChain}[v]`,
-			"-map",
-			"[v]",
-			"-frames:v",
-			"1",
-			"-an",
-			"-sn",
-			"-map_metadata",
-			"-1",
-			"-update",
-			"1",
-			outPath,
-		];
-	} else {
-		args = [
-			"ffmpeg",
-			"-hide_banner",
-			"-loglevel",
-			"error",
-			"-y",
-			...input,
-			"-map",
-			"0:v:0",
-			"-vf",
-			`${resetVideoPts},${select},${colorChain}`,
-			"-frames:v",
-			"1",
-			"-an",
-			"-sn",
-			"-map_metadata",
-			"-1",
-			"-update",
-			"1",
-			outPath,
-		];
-	}
-
-	const res = await run(args, { signal });
+		],
+		style,
+		{ ...color, height },
+		signal,
+	);
 	if (res.code !== 0) Logger.warn(`[preview] Frame capture failed (${outPath}): ${res.stderr.slice(-300)}`);
 	return res.code === 0 && existsSync(outPath);
 }
@@ -422,7 +404,8 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 			const sink: PreviewFrameSink = {
 				dir: sampleDir,
 				frameOffsetSec: opts.windowSeconds / 2,
-				capture: (input, name, burn) => captureFrame(input, join(sampleDir, name), comparisonFrame, burn, colorInfo, probe.height, signal).then(() => {}),
+				capture: (input, name, burn) =>
+					captureFrame(input, join(sampleDir, name), comparisonFrame, burn, colorInfo, probe.height, opts.stillStyle, signal).then(() => {}),
 			};
 
 			// Same seek + frame offset as the cut clip, so matching files land on the same frame as source.png.
@@ -431,7 +414,17 @@ export async function runPreviewEncode(args: RunPreviewArgs): Promise<PreviewSam
 				if (signal.aborted) throw new CancelledError();
 				if (stamps[i]! + opts.windowSeconds / 2 >= r.duration) continue;
 				report(`Capturing ${r.ref.label}`);
-				const ok = await captureFrame(r.ref.path, join(sampleDir, `ref_${r.ref.index}.png`), r.frame, "none", r.color, r.height, signal, stamps[i]!);
+				const ok = await captureFrame(
+					r.ref.path,
+					join(sampleDir, `ref_${r.ref.index}.png`),
+					r.frame,
+					"none",
+					r.color,
+					r.height,
+					opts.stillStyle,
+					signal,
+					stamps[i]!,
+				);
 				if (ok) refFrames.push(r.ref.index);
 			}
 
@@ -589,6 +582,7 @@ export function previewArchiveEntries(config: AppConfig, state: PreviewState): A
 
 	const digits = Math.max(2, String(samples.length).length);
 	const lines = [
+		...(state.stillStyle ? [`Stills: ${STILL_STYLE_LABELS[state.stillStyle]}`, ""] : []),
 		...(state.references.length ? ["References:", ...state.references.map((r) => `${r.label}: ${r.name}`), ""] : []),
 		"Samples (time in the source):",
 		...samples.map((sample, n) => {

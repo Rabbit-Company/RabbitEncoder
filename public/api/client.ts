@@ -42,6 +42,7 @@ import type { MetricName } from "../features/compare-measure";
 import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
 import { buttonById, byId, inputById } from "../shared/dom";
+import type { StillStyle } from "../../src/core/still-style";
 import { appState } from "../state";
 
 export function hashPassword(password: string): string {
@@ -839,6 +840,7 @@ export async function startPreviewRequest(
 		references?: { path: string; label: string }[];
 		metrics?: MetricName[];
 		metricsWithGrain?: boolean;
+		stillStyle?: StillStyle;
 	},
 ): Promise<PreviewState> {
 	const res = await authFetch(`${API}/api/jobs/${jobId}/preview`, {

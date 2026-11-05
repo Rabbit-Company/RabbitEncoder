@@ -41,6 +41,7 @@ describe("previewArchiveEntries", () => {
 			settingsFingerprint: "",
 			sampleCount: 2,
 			windowSeconds: 5,
+			stillStyle: "standard",
 		};
 		const entries = previewArchiveEntries(config, state);
 		expect(entries.map((e) => e.name)).toEqual([
@@ -53,6 +54,8 @@ describe("previewArchiveEntries", () => {
 			"preview.txt",
 		]);
 		expect(new TextDecoder().decode(entries[0]!.data)).toBe("ref_0.png");
-		expect(new TextDecoder().decode(entries.at(-1)!.data)).toContain("02. 0:10:00.000");
+		const text = new TextDecoder().decode(entries.at(-1)!.data);
+		expect(text).toContain("02. 0:10:00.000");
+		expect(text).toContain("Stills: Comparison standard (thewiki.moe guide)");
 	});
 });

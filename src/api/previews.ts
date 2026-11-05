@@ -11,6 +11,7 @@ import {
 import { isPreviewMetric, type PreviewMeasureOptions } from "../pipeline/preview-metrics";
 import { resolveAllowedMediaFile } from "./repair";
 import { buildZip } from "../core/zip";
+import { isStillStyle, STILL_STYLES } from "../core/still-style";
 
 function parseMeasureOptions(metrics: unknown, withGrain: unknown, allowNone: boolean): PreviewMeasureOptions | string {
 	if (!Array.isArray(metrics) || !metrics.every(isPreviewMetric)) return "metrics must be a list of ssimulacra2, xpsnr and vmaf";
@@ -27,7 +28,7 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 	});
 
 	app.post("/api/jobs/:id/preview", async (c) => {
-		let body: { clipCount?: number; clipDuration?: number; references?: unknown; metrics?: unknown; metricsWithGrain?: unknown } = {};
+		let body: { clipCount?: number; clipDuration?: number; references?: unknown; metrics?: unknown; metricsWithGrain?: unknown; stillStyle?: unknown } = {};
 		try {
 			body = (await c.req.json()) as typeof body;
 		} catch {
@@ -76,6 +77,11 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 			if (typeof measure === "string") return c.json({ error: measure }, 400);
 			options.metrics = measure.metrics;
 			options.metricsWithGrain = measure.withGrain;
+		}
+
+		if (body.stillStyle !== undefined) {
+			if (!isStillStyle(body.stillStyle)) return c.json({ error: `stillStyle must be one of ${STILL_STYLES.join(", ")}` }, 400);
+			options.stillStyle = body.stillStyle;
 		}
 
 		const result = startPreview(c.params.id!, options);

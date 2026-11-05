@@ -3,6 +3,8 @@ import { basename, join } from "path";
 import { randomUUID } from "crypto";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
+import { captureScreenshot, isHdrTransfer } from "../video/screenshot";
+import { DEFAULT_STILL_STYLE, STILL_STYLE_LABELS, type StillStyle } from "../core/still-style";
 import { createSemaphore } from "../core/concurrency";
 import { audioEnvelope, bestLag, ENVELOPE_RATE } from "../sync/audio-envelope";
 import { measureImagePairs, measureVideoPair, summarize, METRIC_NAMES, type FrameScores, type MetricName, type MetricSummary, type VsMatrix } from "./metrics";
@@ -47,6 +49,7 @@ export interface CompareRequest {
 	/** Seconds in the first source, for manual mode. */
 	timestamps?: number[];
 	align: boolean;
+	stillStyle?: StillStyle;
 }
 
 export interface CompareSourceState {
@@ -127,6 +130,8 @@ export interface CompareSession {
 	error?: string;
 	sources: CompareSourceState[];
 	frames: CompareFrameState[];
+	/** How the stills are made. Sessions from before the choice existed have none and are treated as mpv's. */
+	stillStyle?: StillStyle;
 	/** Why the captured frames have no scores. */
 	scoreError?: string;
 	measure?: MeasureState;
@@ -146,6 +151,7 @@ interface VideoInfo {
 	range: "tv" | "pc" | null;
 	space: string | null;
 	transfer: string | null;
+	primaries: string | null;
 	/** Where 4:2:0 chroma samples sit, as ffprobe names it. */
 	chromaLocation: string | null;
 	audio: Array<{ index: number; start: number; language?: string }>;
@@ -233,7 +239,7 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 			"-v",
 			"error",
 			"-show_entries",
-			"format=start_time,duration:stream=index,codec_type,codec_name,start_time,width,height,sample_aspect_ratio,avg_frame_rate,r_frame_rate,color_range,color_space,color_transfer,chroma_location:stream_disposition=attached_pic:stream_tags=language",
+			"format=start_time,duration:stream=index,codec_type,codec_name,start_time,width,height,sample_aspect_ratio,avg_frame_rate,r_frame_rate,color_range,color_space,color_transfer,color_primaries,chroma_location:stream_disposition=attached_pic:stream_tags=language",
 			"-of",
 			"json",
 			path,
@@ -257,6 +263,7 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 		range: video.color_range === "pc" ? "pc" : video.color_range === "tv" ? "tv" : null,
 		space: cleanTag(video.color_space),
 		transfer: cleanTag(video.color_transfer),
+		primaries: cleanTag(video.color_primaries),
 		chromaLocation: cleanTag(video.chroma_location),
 		audio: streams
 			.filter((s) => s.codec_type === "audio")
@@ -265,7 +272,7 @@ async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo>
 }
 
 function isHdr(info: VideoInfo): boolean {
-	return info.transfer === "smpte2084" || info.transfer === "arib-std-b67";
+	return isHdrTransfer(info.transfer);
 }
 
 /** Same language as the first source's audio when the file has it, else its first audio stream. */
@@ -467,31 +474,6 @@ async function matchShift(
 	);
 }
 
-const ZIMG_MATRIX: Record<string, string> = {
-	bt709: "709",
-	smpte170m: "170m",
-	bt470bg: "470bg",
-	bt2020nc: "2020_ncl",
-	bt2020c: "2020_cl",
-};
-
-const ZIMG_CHROMA: Record<string, string> = { left: "left", center: "center", topleft: "topleft", top: "top", bottomleft: "bottomleft", bottom: "bottom" };
-
-/**
- * zimg conversion to 8-bit full range RGB, matching an mpv screenshot to
- * within dithering. ffmpeg's default scaler takes rounding shortcuts here and
- * comes out 1 to 3 levels dark with soft chroma. Lanczos chroma is what mpv
- * uses. Untagged chroma sits on the left, the 4:2:0 default for these codecs.
- */
-export function sdrToRgbFilter(info: Pick<VideoInfo, "range" | "space" | "height" | "chromaLocation">, size?: OutputSize): string {
-	const matrix = (info.space && ZIMG_MATRIX[info.space]) || (info.height >= 720 ? "709" : "170m");
-	const range = info.range === "pc" ? "full" : "limited";
-	const chroma = (info.chromaLocation && ZIMG_CHROMA[info.chromaLocation]) || "left";
-	// Spline36 when upscaling: sharp with little ringing on line art. zimg has no EWA kernels.
-	const resize = size ? `:w=${size.width}:h=${size.height}:filter=spline36` : ":filter=lanczos";
-	return `zscale=matrixin=${matrix}:rangein=${range}:chromalin=${chroma}:matrix=${matrix}:range=full${resize}:dither=error_diffusion,format=gbrp,format=rgb24`;
-}
-
 const MATRIX_OVERRIDE: Record<NonNullable<CompareSourceInput["matrix"]>, string> = { "709": "bt709", "601": "smpte170m", "2020": "bt2020nc" };
 
 /** The video's colour tags with any hand-set range and matrix applied. */
@@ -503,13 +485,19 @@ function withOverrides(info: VideoInfo, src: CompareSourceInput): VideoInfo {
 	};
 }
 
-/** sRGB PNG of the frame `skip` frames after the first one at or after `seekSec`, scaled to `size` when given, tone mapped when the source is HDR. */
-async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath: string, signal: AbortSignal, size?: OutputSize, skip = 0): Promise<boolean> {
-	const toRgb = isHdr(info)
-		? `${size ? `zscale=w=${size.width}:h=${size.height}:filter=spline36,` : ""}zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc:dither=error_diffusion,format=rgb24`
-		: sdrToRgbFilter(info, size);
-	const res = await run(
-		[
+/** 16-bit sRGB PNG of the frame `skip` frames after the first one at or after `seekSec`, as mpv would save it, scaled to `size` when given. */
+async function captureAt(
+	path: string,
+	info: VideoInfo,
+	style: StillStyle,
+	seekSec: number,
+	outPath: string,
+	signal: AbortSignal,
+	size?: OutputSize,
+	skip = 0,
+): Promise<boolean> {
+	const res = await captureScreenshot(
+		(toRgb) => [
 			"ffmpeg",
 			"-hide_banner",
 			"-loglevel",
@@ -522,7 +510,7 @@ async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath
 			"-map",
 			"0:V:0",
 			"-vf",
-			`${skip > 0 ? `select=eq(n\\,${skip}),` : ""}${toRgb},setparams=range=pc:colorspace=gbr:color_primaries=bt709:color_trc=iec61966-2-1`,
+			`trim=start_frame=${skip}:end_frame=${skip + 1},${toRgb}`,
 			"-frames:v",
 			"1",
 			"-an",
@@ -533,7 +521,10 @@ async function captureAt(path: string, info: VideoInfo, seekSec: number, outPath
 			"1",
 			outPath,
 		],
-		{ signal },
+		style,
+		info,
+		signal,
+		size,
 	);
 	if (res.code !== 0) Logger.warn(`[compare] Frame capture failed for ${basename(path)} at ${seekSec.toFixed(3)}s: ${res.stderr.slice(-300)}`);
 	return res.code === 0 && existsSync(outPath);
@@ -591,6 +582,7 @@ export function startCompare(root: string, req: CompareRequest): CompareSession 
 			...(s.matrix ? { matrix: s.matrix } : {}),
 		})),
 		frames: [],
+		stillStyle: req.stillStyle ?? DEFAULT_STILL_STYLE,
 	};
 	mkdirSync(sessionDir(root, session.id), { recursive: true });
 	saveSession(root, session);
@@ -767,7 +759,7 @@ async function captureSource(
 		}
 	}
 	const size = state.outputWidth ? sizes[s] : undefined;
-	frame.images[s] = await captureAt(state.path, info, at, imagePath(root, session.id, f, s), signal, size, skip);
+	frame.images[s] = await captureAt(state.path, info, session.stillStyle ?? "mpv", at, imagePath(root, session.id, f, s), signal, size, skip);
 }
 
 /**
@@ -994,6 +986,7 @@ export function comparisonArchiveEntries(root: string, session: CompareSession):
 		}),
 	);
 	const lines = [
+		...(session.stillStyle ? [`Stills: ${STILL_STYLE_LABELS[session.stillStyle]}`, ""] : []),
 		"Sources:",
 		...session.sources.map(
 			(src, i) =>

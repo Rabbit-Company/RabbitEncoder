@@ -283,6 +283,7 @@ export async function startCompareRun(): Promise<void> {
 	const body: Record<string, unknown> = {
 		mode,
 		align: inputById("compare-align").checked,
+		stillStyle: byId<HTMLSelectElement>("compare-still-style").value,
 		sources: rows.map((row, i) => {
 			const offset = row.offset.trim();
 			return {

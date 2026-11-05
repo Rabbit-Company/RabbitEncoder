@@ -1,3 +1,5 @@
+import type { StillStyle } from "./still-style";
+
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
 export type EncoderQuality = "lower" | "low" | "medium" | "high" | "higher";
 export type EncoderSpeed = "slower" | "slow" | "medium" | "fast" | "faster";
@@ -1256,6 +1258,8 @@ export interface PreviewState {
 	/** Metrics the samples were scored with, and whether the encode was decoded with its film grain. */
 	metrics?: PreviewMetricName[];
 	metricsWithGrain?: boolean;
+	/** How the stills were made. Previews from before the choice existed have none. */
+	stillStyle?: StillStyle;
 	/** Frame rate of the source, to place each scored frame in time. */
 	fps?: number;
 	error?: string;
