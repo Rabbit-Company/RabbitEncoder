@@ -2,10 +2,11 @@ import { mkdirSync, rmSync } from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
 import type { Web } from "@rabbit-company/web";
-import type { AppConfig, FontCheckJobRequest, FontCheckProgress } from "../core/types";
+import type { AppConfig, FontCheckJobRequest, FontCheckProgress, SubtitleFileFontSource } from "../core/types";
 import { Logger } from "../core/logger";
 import { CancelledError } from "../core/process";
 import { buildFontCheckPlans, checkFolderFonts, type FontCheckUpload } from "../pipeline/font-check";
+import { fontRegistry } from "../fonts/fonts";
 import { readFontSource } from "../pipeline/subtitle-files";
 import { normalizeFontName } from "../subtitles/ass-classifier";
 import { addRepairJob, getAllJobs } from "../queue/store";
@@ -82,7 +83,9 @@ export function registerFontCheckRoutes(app: Web, config: AppConfig): void {
 			const raw = (await c.req.json()) as Partial<FontCheckJobRequest>;
 			const result = typeof raw.scanId === "string" ? scans.get(raw.scanId)?.result : undefined;
 			if (!result) throw new Error("The font check has expired. Check the folder again.");
-			if (!Array.isArray(raw.uploads) || !Array.isArray(raw.maps) || raw.uploads.length + raw.maps.length > 300) throw new Error("Invalid font fixes");
+			const requested = raw.library ?? [];
+			if (!Array.isArray(raw.uploads) || !Array.isArray(raw.maps) || !Array.isArray(requested) || raw.uploads.length + raw.maps.length + requested.length > 300)
+				throw new Error("Invalid font fixes");
 			const keys = new Set(result.missing.map((m) => m.key));
 			const uploads: FontCheckUpload[] = [];
 			for (const upload of raw.uploads) {
@@ -97,10 +100,28 @@ export function registerFontCheckRoutes(app: Web, config: AppConfig): void {
 				if (normalizeFontName(to) === map.key) throw new Error("A font cannot be mapped to itself");
 				return { key: map.key, to };
 			});
-			if (!uploads.length && !maps.length) throw new Error("Choose a fix for at least one font");
+			const faces = fontRegistry.list().flatMap((group) => group.faces);
+			const libraryFamily = (family: string) => faces.filter((face) => normalizeFontName(face.family) === normalizeFontName(family));
+			const library = requested.map((entry) => {
+				const family = typeof entry?.family === "string" ? entry.family : "";
+				if (!keys.has(entry?.key) || !family) throw new Error("Invalid library font");
+				if (!libraryFamily(family).some((face) => face.names.includes(entry.key))) throw new Error(`The library has no font named "${entry.key}" in ${family}`);
+				return { key: entry.key, family };
+			});
+			if (!uploads.length && !maps.length && !library.length) throw new Error("Choose a fix for at least one font");
+			const wanted = new Set([...library.map((l) => l.family), ...maps.map((m) => m.to)].map(normalizeFontName));
+			const libraryFonts: SubtitleFileFontSource[] = faces
+				.filter((face) => wanted.has(normalizeFontName(face.family)))
+				.map(({ path, fileName, family, names }) => ({ path, fileName, family, names }));
 
 			workRoot = join(config.tempDir, "font-fix", randomUUID());
-			const { plans, unreachable } = buildFontCheckPlans(result, { maps, replaceTarget: raw.replaceTarget !== false }, uploads, workRoot);
+			const { plans, unreachable } = buildFontCheckPlans(
+				result,
+				{ maps, library, replaceTarget: raw.replaceTarget !== false },
+				uploads,
+				workRoot,
+				libraryFonts,
+			);
 			if (!plans.length) throw new Error("None of the videos can be fixed with these choices");
 			const busy = new Set(
 				getAllJobs()

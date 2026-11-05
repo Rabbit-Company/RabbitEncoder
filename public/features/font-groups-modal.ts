@@ -1,6 +1,17 @@
 // public/features/font-groups-modal.ts
 import type { FontOption, SystemFont } from "../api/client";
-import { fetchFonts, fetchSystemFonts, createFontGroup, renameFontGroup, deleteFontGroup, importFontFace, updateFontFace, deleteFontFace } from "../api/client";
+import {
+	fetchFonts,
+	fetchSystemFonts,
+	createFontGroup,
+	renameFontGroup,
+	deleteFontGroup,
+	importFontFace,
+	updateFontFace,
+	deleteFontFace,
+	uploadLibraryFont,
+	fetchFontFace,
+} from "../api/client";
 import { byId } from "../shared/dom";
 
 /** Writing systems offered in the import dropdown -> these match script-detect.ts keys. */
@@ -24,6 +35,50 @@ let state: {
 	selected: string;
 } | null = null;
 
+let search = "";
+let uploading = false;
+
+/** CSS family names of faces already loaded for previews, by group and file. */
+const previews = new Map<string, Promise<string>>();
+let previewCount = 0;
+
+const size = (bytes: number) => (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+/** Loads a library face under a name of its own, so a same-named font on the computer cannot stand in for it. */
+function loadPreview(label: string, fileName: string): Promise<string> {
+	const id = `${label}/${fileName}`;
+	let loaded = previews.get(id);
+	if (!loaded) {
+		const family = `rabbit-library-${++previewCount}`;
+		loaded = fetchFontFace(label, fileName)
+			.then((blob) => new FontFace(family, `url(${URL.createObjectURL(blob)})`).load())
+			.then((face) => {
+				document.fonts.add(face);
+				return family;
+			});
+		loaded.catch(() => previews.delete(id));
+		previews.set(id, loaded);
+	}
+	return loaded;
+}
+
+const previewObserver = new IntersectionObserver((entries) => {
+	for (const entry of entries) {
+		if (!entry.isIntersecting) continue;
+		const el = entry.target as HTMLElement;
+		previewObserver.unobserve(el);
+		loadPreview(el.dataset.group!, el.dataset.file!)
+			.then((family) => {
+				el.style.fontFamily = `"${family}", var(--font-body)`;
+				el.classList.remove("is-loading");
+			})
+			.catch(() => {
+				el.classList.remove("is-loading");
+				el.title = "This font could not be shown";
+			});
+	}
+});
+
 function setStatus(msg: string): void {
 	byId("fg-status").textContent = msg;
 }
@@ -45,15 +100,144 @@ async function refresh(keepSelection = true): Promise<void> {
 }
 
 function render(): void {
+	renderLibrary();
 	renderGroupBar();
 	renderFaces();
+	renderUpload();
 	renderImport();
+}
+
+async function uploadToLibrary(files: File[]): Promise<void> {
+	uploading = true;
+	renderLibrary();
+	const stored: string[] = [];
+	const failed: string[] = [];
+	for (const file of files) {
+		setStatus(`Uploading ${file.name}...`);
+		try {
+			const font = await uploadLibraryFont(file);
+			stored.push(`${font.fileName} to "${font.label}"`);
+		} catch (error) {
+			failed.push(error instanceof Error ? error.message : String(error));
+		}
+	}
+	uploading = false;
+	setStatus([stored.length ? `Uploaded ${stored.join(", ")}` : "", ...failed].filter(Boolean).join(". "));
+	await refresh();
+}
+
+async function removeFace(label: string, fileName: string, last: boolean): Promise<void> {
+	const note = last ? `\n\nIt is the last font in "${label}", so the group is removed too.` : "";
+	if (!window.confirm(`Remove "${fileName}" from "${label}"?${note}`)) return;
+	setStatus("Removing...");
+	const r = last ? await deleteFontGroup(label) : await deleteFontFace(label, fileName);
+	if (!r.ok) return setStatus(r.error || "Remove failed");
+	setStatus(last ? `Removed "${fileName}" and its group "${label}"` : `Removed "${fileName}"`);
+	await refresh();
+}
+
+/** Every face of every group in one list, to find, preview and remove fonts. */
+function renderLibrary(): void {
+	const host = byId("fg-library");
+	const focused = document.activeElement?.id === "fg-search";
+	host.innerHTML = "";
+	const s = state!;
+	const faces = s.groups.flatMap((group) => (group.faces ?? []).map((face) => ({ group: group.label, last: group.faces!.length === 1, ...face })));
+	const total = faces.reduce((n, face) => n + (face.size ?? 0), 0);
+
+	const title = document.createElement("div");
+	title.className = "fg-section-title";
+	title.textContent = faces.length ? `All fonts (${faces.length}, ${size(total)})` : "All fonts";
+
+	const row = document.createElement("div");
+	row.className = "fg-row";
+	const searchInput = document.createElement("input");
+	searchInput.type = "search";
+	searchInput.id = "fg-search";
+	searchInput.className = "lang-filter-input fg-search";
+	searchInput.placeholder = "Search by family, file or group";
+	searchInput.value = search;
+	searchInput.oninput = () => {
+		search = searchInput.value;
+		renderLibrary();
+	};
+	const fileInput = document.createElement("input");
+	fileInput.type = "file";
+	fileInput.accept = ".ttf,.otf,.ttc,.otc";
+	fileInput.multiple = true;
+	fileInput.hidden = true;
+	fileInput.onchange = () => {
+		if (fileInput.files?.length) void uploadToLibrary([...fileInput.files]);
+	};
+	const uploadBtn = document.createElement("button");
+	uploadBtn.type = "button";
+	uploadBtn.className = "btn btn-ghost";
+	uploadBtn.title = "Each font goes to a group named after its family, where Font check and the subtitle style can use it";
+	uploadBtn.textContent = uploading ? "Uploading..." : "Upload fonts...";
+	uploadBtn.disabled = uploading;
+	uploadBtn.onclick = () => fileInput.click();
+	row.append(searchInput, uploadBtn, fileInput);
+	host.append(title, row);
+	if (focused) {
+		searchInput.focus();
+		searchInput.setSelectionRange(search.length, search.length);
+	}
+
+	const query = search.trim().toLowerCase();
+	const shown = query ? faces.filter((face) => [face.family, face.fileName, face.group].some((text) => text.toLowerCase().includes(query))) : faces;
+	const list = document.createElement("div");
+	list.className = "fg-library-list";
+	if (!shown.length) {
+		const empty = document.createElement("div");
+		empty.className = "setting-help";
+		empty.textContent = faces.length ? "No font matches the search." : "No fonts yet. Upload some above.";
+		list.appendChild(empty);
+	}
+	for (const face of shown) {
+		const item = document.createElement("div");
+		item.className = "fg-library-row";
+
+		const info = document.createElement("div");
+		info.className = "fg-face-info";
+		const preview = document.createElement("div");
+		preview.className = "fg-library-preview is-loading";
+		preview.textContent = face.family;
+		preview.dataset.group = face.group;
+		preview.dataset.file = face.fileName;
+		previewObserver.observe(preview);
+		const details = document.createElement("div");
+		details.className = "fg-face-file";
+		details.textContent = `${face.fileName}, ${size(face.size ?? 0)}${face.group === face.family ? "" : `, in "${face.group}"`}`;
+		info.append(preview, details);
+
+		const edit = document.createElement("button");
+		edit.className = "btn btn-ghost btn-sm";
+		edit.textContent = "Edit group";
+		edit.onclick = () => {
+			state!.selected = face.group;
+			render();
+			byId("fg-group-bar").scrollIntoView({ behavior: "smooth", block: "start" });
+		};
+		const remove = document.createElement("button");
+		remove.className = "btn btn-ghost btn-sm fg-danger";
+		remove.textContent = "Remove";
+		remove.onclick = () => void removeFace(face.group, face.fileName, face.last);
+
+		item.append(info, edit, remove);
+		list.appendChild(item);
+	}
+	host.appendChild(list);
 }
 
 function renderGroupBar(): void {
 	const host = byId("fg-group-bar");
 	host.innerHTML = "";
 	const s = state!;
+
+	const title = document.createElement("div");
+	title.className = "fg-section-title";
+	title.textContent = "Font groups";
+	host.appendChild(title);
 
 	const createRow = document.createElement("div");
 	createRow.className = "fg-row";
@@ -212,6 +396,80 @@ function renderFaces(): void {
 	}
 }
 
+function writingSystemSelect(): HTMLSelectElement {
+	const select = document.createElement("select");
+	select.className = "select-input";
+	for (const w of WRITING_SYSTEMS) {
+		const o = document.createElement("option");
+		o.value = w.value;
+		o.textContent = w.label;
+		select.appendChild(o);
+	}
+	return select;
+}
+
+const extraKeys = (input: HTMLInputElement) =>
+	input.value
+		.split(",")
+		.map((k) => k.trim())
+		.filter(Boolean);
+
+function renderUpload(): void {
+	const host = byId("fg-upload");
+	host.innerHTML = "";
+	const g = currentGroup();
+	if (!g) return;
+
+	const title = document.createElement("div");
+	title.className = "fg-section-title";
+	title.textContent = "Upload fonts from this computer into this group";
+	host.appendChild(title);
+
+	const row = document.createElement("div");
+	row.className = "fg-row";
+
+	const sysSel = writingSystemSelect();
+	const customInput = document.createElement("input");
+	customInput.type = "text";
+	customInput.className = "lang-filter-input";
+	customInput.placeholder = "+ extra keys (e.g. jpn)";
+
+	const fileInput = document.createElement("input");
+	fileInput.type = "file";
+	fileInput.accept = ".ttf,.otf,.ttc,.otc";
+	fileInput.multiple = true;
+	fileInput.hidden = true;
+
+	const uploadBtn = document.createElement("button");
+	uploadBtn.type = "button";
+	uploadBtn.className = "btn btn-primary";
+	uploadBtn.textContent = "Upload fonts...";
+	uploadBtn.onclick = () => fileInput.click();
+	fileInput.onchange = async () => {
+		const files = [...(fileInput.files ?? [])];
+		if (!files.length) return;
+		const group = state!.selected;
+		const keys = [sysSel.value, ...extraKeys(customInput)];
+		uploadBtn.disabled = true;
+		const stored: string[] = [];
+		const failed: string[] = [];
+		for (const file of files) {
+			setStatus(`Uploading ${file.name}...`);
+			try {
+				stored.push((await uploadLibraryFont(file, { group, keys })).fileName);
+			} catch (error) {
+				failed.push(error instanceof Error ? error.message : String(error));
+			}
+		}
+		setStatus([stored.length ? `Uploaded ${stored.join(", ")}` : "", ...failed].filter(Boolean).join(". "));
+		uploadBtn.disabled = false;
+		await refresh();
+	};
+
+	row.append(sysSel, customInput, uploadBtn, fileInput);
+	host.appendChild(row);
+}
+
 function renderImport(): void {
 	const host = byId("fg-import");
 	host.innerHTML = "";
@@ -250,14 +508,7 @@ function renderImport(): void {
 		fontSel.appendChild(o);
 	}
 
-	const sysSel = document.createElement("select");
-	sysSel.className = "select-input";
-	for (const w of WRITING_SYSTEMS) {
-		const o = document.createElement("option");
-		o.value = w.value;
-		o.textContent = w.label;
-		sysSel.appendChild(o);
-	}
+	const sysSel = writingSystemSelect();
 
 	const customInput = document.createElement("input");
 	customInput.type = "text";
@@ -269,13 +520,7 @@ function renderImport(): void {
 	importBtn.textContent = "Import";
 	importBtn.onclick = async () => {
 		const source = fontSel.value;
-		const keys = [
-			sysSel.value,
-			...customInput.value
-				.split(",")
-				.map((k) => k.trim())
-				.filter(Boolean),
-		];
+		const keys = [sysSel.value, ...extraKeys(customInput)];
 		setStatus("Importing...");
 		const r = await importFontFace(state!.selected, source, keys);
 		if (!r.ok) return setStatus(r.error || "Import failed");

@@ -20,7 +20,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Library encoding** browse mounted media folders from the UI and encode in-place, replacing source files
 - **Subtitle repair/remux** replace, remove, reorder, retag, restyle, or recompress MKV subtitle tracks without re-encoding video or audio
 - **Subtitle editor** browse MKVs, navigate and edit SRT/ASS/SSA cues, and preview timing changes in an audible video loop (three seconds before and after each cue by default). Adjust track offsets and loop boundaries. Bitmap PGS/VobSub/DVB subtitles use track delays. Save a separate `*.subtitles-edited.mkv` with video and audio copied unchanged.
-- **Font check** find the fonts a folder's subtitles use but its videos do not carry, then attach them or point the subtitles at a font the videos have
+- **Font check** find the fonts a folder's subtitles use but its videos do not carry, then attach them from an upload or the font library, or point the subtitles at the closest font the videos already have
 - **Subtitles from files** add a folder of ASS, SSA or SRT files to their episodes, with the fonts they use, uploading and renaming the ones neither the videos nor the folder have
 - **Subtitle search** finds subtitles for a video on OpenSubtitles.com and downloads the most promising ones per language. Each one is synced by rewriting its timestamps to match the video's own subtitles, the display times of its picture subtitles, or the speech in its audio. Offsets, PAL speedups and cut scenes are handled. Every download is rated on how well it fits and whether parts are missing. The best one can be added as a track or saved next to the video. Several episodes can be searched at once. One source, such as CR, can then be picked for every episode that has it, its credit renamed for all of them, and languages missing from any episode left out. Downloads use the OpenSubtitles.com account you log in with under Settings and count against its daily quota. Downloads are cached, so a file never uses the daily quota twice. With Subtitle translation on, missing target languages are downloaded this way first, and only the languages without a good subtitle are translated with AI. Up to 30 of the most used languages can be added on top, one download each, kept only when they sync well. Missing languages can also be added without encoding, from the Library or from **Subtitles**, **Translate subtitles** for any video or folder in the input, output or library folders.
 - **Picture subtitle OCR** reads PGS subtitles with a vision model you choose, such as Surya OCR 2 or Chandra OCR 2 served with vLLM, a model in Ollama, or a cloud model, and adds them as text tracks with their exact timing and italics. Every picture is read once, however often it is shown. The text tracks can be styled like other subtitles and translated, so BluRay files with only picture subtitles can be translated too. Runs as part of encodes and translate jobs, or on its own from **Subtitles**, **Subtitle OCR** for one MKV or a whole folder, optionally removing the picture tracks it read. When an encode no longer has its picture subtitles, they can be read from its original, one file or a folder of encodes matched to a folder of originals, and their timing is checked against the encode and shifted if it was cut or delayed.
@@ -172,7 +172,7 @@ Use **Subs from files** to add a folder of ASS, SSA or SRT files to the episodes
 
 The fonts the subtitles use are checked against the fonts attached to each video and the fonts inside the subtitle folder or a `Fonts` folder next to it. Fonts that neither has are listed as missing, since players would draw that text in another font. Upload a font on its row to supply it. A font with another family name is renamed to the name the subtitles use, so a substitute works. **Upload several fonts** keeps their own names and matches them to the fonts the subtitles use. Each episode gets only the fonts its own file uses, and a font the video already carries under the same name is not attached again. When **Replace dialogue font** is on for full subtitles, the dialogue fonts are replaced by the font group and are not needed.
 
-Use **Font check** to find the fonts the subtitles of a folder use but its videos do not carry. Every ASS track of every MKV is read in full, so overrides such as `\fn` inside lines are found too, and each video is read from disk once. Each missing font lists how many videos lack it. Fix it one of two ways. **Upload...** attaches a font to the videos missing it, renamed to the missing name when its family differs. **Use** a font the videos carry, such as the dialogue font, points the subtitles at it instead, which rewrites the font names in the ASS tracks and remuxes the video without duplicating any font. **Every font left missing** applies one font to the rest in one step. A video that only gets uploaded fonts is changed in place with mkvpropedit, without a remux. The fixes run as repair jobs, which verify every file before replacing it, and can write `*.repaired.mkv` copies instead.
+Use **Font check** to find the fonts the subtitles of a folder use but its videos do not carry. Every ASS track of every MKV is read in full, so overrides such as `\fn` inside lines are found too, and each video is read from disk once. Each missing font lists how many videos lack it. **Upload...** attaches a font to the videos missing it, renamed to the missing name when its family differs. A font in the font library that already has the missing name can be attached as it is. **Use** another font points the subtitles at it instead, which rewrites the font names in the ASS tracks and remuxes the video. The fonts are listed in groups. Fonts **already in the videos** add no size. Fonts **from the font library** are attached to the videos that lack them, with their size shown. A video without a carried font that is pointed at gets the library copy of that family when there is one. For each missing font the carried font most like it is marked closest, judged by its name: another weight of the same family first, then one of the same kind (sans, serif, mono or script), then the font most videos carry. **Every font left missing** applies one font to the rest in one step, or the closest one to each. **Add to library...** stores font files in the library, each in a group named after its family, so every later Font check can use them. A video that only gets uploaded fonts is changed in place with mkvpropedit, without a remux. The fixes run as repair jobs, which verify every file before replacing it, and can write `*.repaired.mkv` copies instead.
 
 ## HDR Metadata
 
@@ -329,7 +329,12 @@ colours, alignment, bold, and variable-font axes). Because axes are face-specifi
 they belong in the per-key override for that face (a static Latin face has none,
 a variable CJK face can pin `wght`).
 
-You can manage font groups entirely from the dashboard ("Manage font groups..."):
+You can manage fonts entirely from the dashboard (**Tools -> Fonts**, or "Manage
+fonts..." next to the subtitle style). **All fonts** lists every face of every group
+with a preview in its own font, its file, size and group. Search it by family, file
+or group, and remove faces from it. Removing the last face of a group removes the
+group too. **Upload fonts...** there stores each font in a group named after its
+family, where Font check and the subtitle style can use it. Below, you can
 create, rename, and delete groups, edit each face's `keys`, and remove faces. All
 changes are written to `/config/fonts` and the registry is reloaded automatically.
 Renaming a group also repoints the `fontGroup` reference in your default settings
@@ -340,6 +345,9 @@ fonts become selectable in the import dropdown: pick a font, choose a writing
 system (Latin, Japanese, Cyrillic, ...) or type extra language keys, and click
 **Import** to copy it into the selected group with those `keys`. The host mount is
 never written to. Import always copies into `/config/fonts`.
+
+**Upload fonts from this computer** stores font files from the browser in the
+selected group the same way, with a writing system and extra keys.
 
 You can still edit a group's style from the dashboard ("Subtitle font & style..."),
 choosing a scope of "Group global" or a specific script/language. Saving writes
@@ -440,6 +448,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `PATCH`  | `/api/fonts/groups/:label`                  | Rename a group (folder + label) and repoint defaults and all jobs              |
 | `DELETE` | `/api/fonts/groups/:label`                  | Delete a font group folder and its contents                                    |
 | `POST`   | `/api/fonts/groups/:label/faces`            | Import a host font into the group with writing-system / language keys          |
+| `POST`   | `/api/fonts/upload`                         | Store an uploaded font in `?group=`, or a group named after its family         |
 | `PATCH`  | `/api/fonts/groups/:label/faces/:file`      | Update a face's keys / family override in the group's `metadata.json`          |
 | `DELETE` | `/api/fonts/groups/:label/faces/:file`      | Remove a font file from the group and its metadata entry                       |
 | `POST`   | `/api/subsearch/search`                     | Start a subtitle search for one video: download, sync and rate per language    |
@@ -453,7 +462,7 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `POST`   | `/api/font-check/scan`                      | Start reading a folder's subtitles for fonts its videos do not carry           |
 | `GET`    | `/api/font-check/scan/:id`                  | Progress and result of a font check                                            |
 | `DELETE` | `/api/font-check/scan/:id`                  | Cancel a font check or drop its result                                         |
-| `POST`   | `/api/font-check/jobs`                      | Queue one repair per video, attaching uploads and pointing at mapped fonts     |
+| `POST`   | `/api/font-check/jobs`                      | Queue one repair per video, attaching uploaded or library fonts and mapping    |
 | `POST`   | `/api/ocr/test`                             | Read a sample subtitle image with the OCR model                                |
 | `GET`    | `/api/ocr/inspect`                          | Subtitle tracks of an MKV, marking picture tracks without a text version       |
 | `POST`   | `/api/ocr/jobs`                             | Queue OCR of chosen picture subtitle tracks of one MKV                         |

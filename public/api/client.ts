@@ -486,7 +486,7 @@ export async function fetchConfig(): Promise<JobSettings> {
 
 export interface FontOption {
 	label: string;
-	faces?: { fileName: string; family: string; keys: string[]; axes: FontAxis[] }[];
+	faces?: { fileName: string; family: string; names?: string[]; keys: string[]; axes: FontAxis[]; size?: number }[];
 }
 
 export async function fetchFonts(): Promise<FontOption[]> {
@@ -593,6 +593,24 @@ export async function importFontFace(label: string, source: string, keys: string
 	});
 	const data = await res.json().catch(() => ({}));
 	return res.ok ? { ok: true, fileName: data?.fileName } : { ok: false, error: data?.error };
+}
+
+/** Stores a font file in the library, in `group` or else a group named after its family. */
+export async function uploadLibraryFont(
+	file: File,
+	options: { group?: string; keys?: string[] } = {},
+): Promise<{ label: string; fileName: string; family: string }> {
+	const query = new URLSearchParams({ fileName: file.name });
+	if (options.group) query.set("group", options.group);
+	if (options.keys?.length) query.set("keys", options.keys.join(","));
+	const res = await authFetch(`${API}/api/fonts/upload?${query}`, {
+		method: "POST",
+		headers: { "Content-Type": "application/octet-stream" },
+		body: file,
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(data?.error || `Could not upload ${file.name}`);
+	return data;
 }
 
 export async function updateFontFace(label: string, file: string, keys: string[], family?: string): Promise<{ ok: boolean; error?: string }> {

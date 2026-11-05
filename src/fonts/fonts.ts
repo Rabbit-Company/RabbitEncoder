@@ -9,6 +9,18 @@ import { resolveStyleAppearance, type GroupStyleConfig, type StyleAppearance } f
 
 export const FONT_EXTS = new Set([".ttf", ".otf", ".ttc", ".otc"]);
 
+/** The font format its first bytes name. */
+export function fontExtension(bytes: Uint8Array): string | null {
+	const tag = String.fromCharCode(...bytes.slice(0, 4));
+	if (tag === "OTTO") return ".otf";
+	if (tag === "ttcf") return ".ttc";
+	if (tag === "true" || (bytes[0] === 0 && bytes[1] === 1 && bytes[2] === 0 && bytes[3] === 0)) return ".ttf";
+	return null;
+}
+
+/** "TheSans OT 7B" as a font file name. */
+export const fontFileName = (name: string, ext: string) => `${name.replace(/[^\p{L}\p{N} ._-]+/gu, "").trim() || "font"}${ext}`;
+
 export interface MkvAttachment {
 	id: number;
 	fileName: string;
@@ -339,19 +351,31 @@ class FontRegistry {
 	}
 
 	/** Copy a host font file into the group and record its keys. Never writes to the source. */
-	async importFace(label: string, sourcePath: string, keys: string[]): Promise<{ ok: boolean; fileName?: string; error?: string }> {
+	async importFace(
+		label: string,
+		sourcePath: string,
+		keys: string[],
+		name = basename(sourcePath),
+	): Promise<{ ok: boolean; fileName?: string; error?: string }> {
 		const fam = this.findFamily(label);
 		const dir = fam?.dir ?? this.safeGroupDir(label);
 		if (!dir) return { ok: false, error: "Group not found or not editable" };
-		const ext = extname(sourcePath).toLowerCase();
-		if (!FONT_EXTS.has(ext)) return { ok: false, error: "Not a font file" };
+		const ext = extname(name).toLowerCase();
+		if (!FONT_EXTS.has(ext) || basename(name) !== name) return { ok: false, error: "Not a font file" };
 		if (!existsSync(sourcePath)) return { ok: false, error: "Source font no longer exists" };
 		if (!existsSync(dir)) {
 			try {
 				mkdirSync(dir, { recursive: true });
 			} catch {}
 		}
-		let fileName = basename(sourcePath);
+		// The same font again is not stored twice.
+		const bytes = readFileSync(sourcePath);
+		const same = readdirSync(dir).find((f) => {
+			const path = join(dir, f);
+			return FONT_EXTS.has(extname(f).toLowerCase()) && statSync(path).size === bytes.length && readFileSync(path).equals(bytes);
+		});
+		if (same) return { ok: true, fileName: same };
+		let fileName = name;
 		if (existsSync(join(dir, fileName))) {
 			const stem = basename(fileName, ext);
 			let n = 2;

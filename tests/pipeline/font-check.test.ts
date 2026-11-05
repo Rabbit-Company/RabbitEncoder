@@ -5,7 +5,7 @@ import { join } from "path";
 import { getDefaultJobSettings } from "../../src/core/config";
 import { run } from "../../src/core/process";
 import type { AppConfig, FontCheckFile, Job, RepairAuditTrack } from "../../src/core/types";
-import { buildFontCheckPlans, checkFolderFonts, summarizeFontCheck, type FontCheckUpload } from "../../src/pipeline/font-check";
+import { buildFontCheckPlans, checkFolderFonts, closestFamily, fontKind, summarizeFontCheck, type FontCheckUpload } from "../../src/pipeline/font-check";
 import { buildRepairMkvpropeditArgs, identifyMatroska, isMetadataOnlyRepair, runRepairJob } from "../../src/pipeline/repair";
 
 const sub = (id: number, language = "ru"): RepairAuditTrack => ({
@@ -52,9 +52,9 @@ describe("font check plans", () => {
 
 	test("counts each missing font and the families the videos carry", () => {
 		expect(result.missing).toEqual([
-			{ key: "calligrapher", name: "Calligrapher", files: 2 },
-			{ key: "arial", name: "Arial", files: 1, windows: true },
-			{ key: "thesans ot 7b", name: "TheSans OT 7B", files: 1 },
+			{ key: "calligrapher", name: "Calligrapher", files: 2, closest: "Noto Sans" },
+			{ key: "arial", name: "Arial", files: 1, windows: true, closest: "Noto Sans" },
+			{ key: "thesans ot 7b", name: "TheSans OT 7B", files: 1, closest: "Noto Sans" },
 		]);
 		expect(result.families).toEqual([{ family: "Noto Sans", files: 2 }]);
 	});
@@ -94,6 +94,44 @@ describe("font check plans", () => {
 			expect(toUpload.plans.map((p) => [p.targetPath, p.fontFix!.maps, p.fontFix!.attachments.map((a) => a.fileName)])).toEqual([
 				["/show/E01.mkv", [{ from: "Calligrapher", to: "TheSans OT 7B" }], ["TheSans OT 7B.ttf"]],
 				["/show/E02.mkv", [{ from: "Calligrapher", to: "TheSans OT 7B" }], ["TheSans OT 7B.ttf"]],
+			]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("attaches a library font named like the missing one, and a mapped library family where a video lacks it", () => {
+		const root = mkdtempSync(join(tmpdir(), "rabbit-fontcheck-library-"));
+		try {
+			const regular = join(root, "Calligrapher.ttf");
+			const bold = join(root, "Calligrapher Bold.ttf");
+			const arial = join(root, "Arial.ttf");
+			for (const path of [regular, bold, arial]) writeFileSync(path, "font");
+			const library = [
+				{ path: regular, fileName: "Calligrapher.ttf", family: "Calligrapher", names: ["calligrapher"] },
+				{ path: bold, fileName: "Calligrapher Bold.ttf", family: "Calligrapher", names: ["calligrapher", "calligrapher bold"] },
+				{ path: arial, fileName: "Arial.ttf", family: "Arial", names: ["arial"] },
+			];
+			const attached = buildFontCheckPlans(
+				result,
+				{ maps: [], library: [{ key: "calligrapher", family: "Calligrapher" }], replaceTarget: true },
+				[],
+				join(root, "work"),
+				library,
+			);
+			expect(attached.plans.map((p) => [p.targetPath, p.fontFix!.maps, p.fontFix!.attachments.map((a) => a.fileName)])).toEqual([
+				["/show/E01.mkv", [], ["Calligrapher.ttf", "Calligrapher Bold.ttf"]],
+				["/show/E02.mkv", [], ["Calligrapher.ttf", "Calligrapher Bold.ttf"]],
+			]);
+
+			// Pointed at a family only some videos carry, the others get the library copy.
+			const mapped = buildFontCheckPlans(result, { maps: [{ key: "calligrapher", to: "Noto Sans" }], replaceTarget: true }, [], join(root, "work"), [
+				{ path: arial, fileName: "Noto Sans.ttf", family: "Noto Sans", names: ["noto sans"] },
+			]);
+			expect(mapped.unreachable).toEqual([]);
+			expect(mapped.plans.map((p) => [p.targetPath, p.fontFix!.maps, p.fontFix!.attachments.map((a) => a.fileName)])).toEqual([
+				["/show/E01.mkv", [{ from: "Calligrapher", to: "Noto Sans" }], []],
+				["/show/E02.mkv", [{ from: "Calligrapher", to: "Noto Sans" }], ["Noto Sans.ttf"]],
 			]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -283,3 +321,35 @@ Dialogue: 0,0:00:01.00,0:00:01.50,Sign,,0,0,0,,Знак
 	},
 	90_000,
 );
+
+describe("closest carried font", () => {
+	const carried = [
+		{ family: "Open Sans", files: 12 },
+		{ family: "Gandhi Sans", files: 12 },
+		{ family: "Times New Roman", files: 3 },
+		{ family: "Arial", files: 2 },
+		{ family: "Fira Mono", files: 1 },
+	];
+
+	test("guesses the kind of a font from its name", () => {
+		expect(fontKind("Arial Bold")).toBe("sans");
+		expect(fontKind("Georgia")).toBe("serif");
+		expect(fontKind("Noto Serif JP")).toBe("serif");
+		expect(fontKind("Microsoft Sans Serif")).toBe("sans");
+		expect(fontKind("Source Code Pro")).toBe("mono");
+		expect(fontKind("Comic Sans MS")).toBe("script");
+		expect(fontKind("Calligrapher")).toBe("script");
+		expect(fontKind("TheSans OT 7B")).toBe("sans");
+		expect(fontKind("Wingdings")).toBeUndefined();
+	});
+
+	test("prefers another weight of the family, then the same kind, then the most carried", () => {
+		expect(closestFamily("Arial Black", carried)).toBe("Arial");
+		expect(closestFamily("Arial-BoldItalic", carried)).toBe("Arial");
+		expect(closestFamily("Georgia", carried)).toBe("Times New Roman");
+		expect(closestFamily("Consolas", carried)).toBe("Fira Mono");
+		expect(closestFamily("Verdana", carried)).toBe("Open Sans");
+		expect(closestFamily("Wingdings", carried)).toBe("Open Sans");
+		expect(closestFamily("Open Sans", [{ family: "Open Sans", files: 1 }])).toBeUndefined();
+	});
+});

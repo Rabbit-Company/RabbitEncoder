@@ -1334,6 +1334,8 @@ export interface FontCheckMissing {
 	/** Videos missing it. */
 	files: number;
 	windows?: boolean;
+	/** The carried family most like it, by name. */
+	closest?: string;
 }
 
 export interface FontCheckResult {
@@ -1356,5 +1358,7 @@ export interface FontCheckJobRequest {
 	scanId: string;
 	uploads: { key: string; path: string }[];
 	maps: { key: string; to: string }[];
+	/** Missing fonts to attach a library font for that already has their name, by key. */
+	library?: { key: string; family: string }[];
 	replaceTarget: boolean;
 }

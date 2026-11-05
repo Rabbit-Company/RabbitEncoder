@@ -366,6 +366,7 @@ export function initEventListeners() {
 
 	byId("default-open-font-groups-btn").addEventListener("click", openFontGroupsModal);
 	byId("job-open-font-groups-btn").addEventListener("click", openFontGroupsModal);
+	byId("open-fonts-btn").addEventListener("click", openFontGroupsModal);
 	byId("close-font-groups-modal-btn").addEventListener("click", closeFontGroupsModal);
 	byId("close-font-groups-done-btn").addEventListener("click", closeFontGroupsModal);
 	byId("font-groups-modal").addEventListener("click", closeFontGroupsModalIfOutside);

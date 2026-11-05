@@ -4491,11 +4491,27 @@ a.btn {
 	margin-bottom: 6px;
 	flex-wrap: wrap;
 }
+.modal.fg-modal {
+	width: min(760px, calc(100vw - 32px));
+}
+.fg-modal .setting-group {
+	margin-top: 0;
+}
+.fg-modal .setting-group > .fg-section-title:first-child {
+	margin-top: 0;
+}
+.fg-modal .setting-group:empty {
+	display: none;
+}
+.fg-row .btn,
+.fg-face-row .btn {
+	height: 34px;
+}
 .fg-face-info {
 	display: flex;
 	flex-direction: column;
-	min-width: 160px;
-	flex: 1;
+	min-width: 0;
+	flex: 1 1 160px;
 }
 .fg-face-family {
 	font-size: 0.85rem;
@@ -4507,15 +4523,67 @@ a.btn {
 	font-size: 0.7rem;
 	color: var(--text-2);
 }
+.fg-row .lang-filter-input {
+	width: auto;
+	flex: 1;
+	min-width: 160px;
+}
+.fg-row > label {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 0;
+}
+.fg-row .select-input,
+.fg-row .lang-filter-input,
+.fg-face-row .lang-filter-input {
+	height: 34px;
+}
 .fg-keys-input {
 	min-width: 140px;
 }
+.fg-face-row .fg-keys-input {
+	width: auto;
+	flex: 1 1 140px;
+	min-width: 100px;
+}
 .fg-import-row .fg-import-font {
-	min-width: 220px;
-	flex: 1;
+	flex: 1 1 100%;
 }
 .fg-danger {
 	color: var(--red);
+}
+.fg-search {
+	flex: 1;
+	min-width: 200px;
+}
+.fg-library-list {
+	max-height: 340px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 4px;
+}
+.fg-library-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+.fg-library-preview {
+	font-size: 1.15rem;
+	line-height: 1.6rem;
+	height: 1.6rem;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.fg-library-preview.is-loading {
+	opacity: 0.4;
 }
 
 /* Batch subtitle replacement: encode/source mapping table */
@@ -5736,7 +5804,8 @@ a.btn {
 }
 
 .subfiles-font-actions .btn.is-disabled,
-.subfiles-font-bulk .btn.is-disabled {
+.subfiles-font-bulk .btn.is-disabled,
+.fontcheck-bulk .btn.is-disabled {
 	opacity: 0.5;
 	pointer-events: none;
 }
@@ -5778,7 +5847,7 @@ a.btn {
 	margin-top: 10px;
 }
 
-.fontcheck-bulk label {
+.fontcheck-bulk label:not(.btn) {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;

@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { extname, isAbsolute, join, relative, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig, SubtitleFileFontSource, SubtitleFilesJobRequest } from "../core/types";
-import { FONT_EXTS } from "../fonts/fonts";
+import { FONT_EXTS, fontExtension, fontFileName } from "../fonts/fonts";
 import { mkvFilesIn } from "../pipeline/release-subs";
 import { renameFontFamily } from "../pipeline/repair-fonts";
 import { buildSubtitleFilePlan, readFontSource, scanSubtitleFiles, SUBTITLE_FILE_EXTS } from "../pipeline/subtitle-files";
@@ -47,18 +47,6 @@ export function resolveFont(raw: unknown, config: AppConfig): string {
 	}
 	return resolveAllowedFile(raw, config, FONT_EXTS, "Font");
 }
-
-/** The font format its first bytes name. */
-function fontExtension(bytes: Uint8Array): string | null {
-	const tag = String.fromCharCode(...bytes.slice(0, 4));
-	if (tag === "OTTO") return ".otf";
-	if (tag === "ttcf") return ".ttc";
-	if (tag === "true" || (bytes[0] === 0 && bytes[1] === 1 && bytes[2] === 0 && bytes[3] === 0)) return ".ttf";
-	return null;
-}
-
-/** "TheSans OT 7B" as an attachment file name. */
-const fontFileName = (name: string, ext: string) => `${name.replace(/[^\p{L}\p{N} ._-]+/gu, "").trim() || "font"}${ext}`;
 
 export function registerSubtitleFileRoutes(app: Web, config: AppConfig): void {
 	/** Pairs the videos of one folder with the subtitle files of another and reports the fonts they need. */

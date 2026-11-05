@@ -1,18 +1,69 @@
+import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { randomUUID } from "crypto";
+import { join } from "path";
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
-import { fontRegistry } from "../fonts/fonts";
+import { fontExtension, fontFileName, fontRegistry, scanFontNames } from "../fonts/fonts";
 import type { GroupStyleConfig } from "../subtitles/subtitle-style";
 import { isInsideRoots, listSystemFonts } from "../fonts/system-fonts";
 import { renameFontGroupReferences } from "../queue/store";
+
+const MAX_FONT_BYTES = 64 * 1024 * 1024;
+
+const sizeOf = (path: string) => {
+	try {
+		return statSync(path).size;
+	} catch {
+		return 0;
+	}
+};
 
 export function registerFontRoutes(app: Web, config: AppConfig): void {
 	app.get("/api/fonts", (c) => {
 		return c.json({
 			fonts: fontRegistry.list().map((f) => ({
 				label: f.label,
-				faces: f.faces.map((x) => ({ fileName: x.fileName, family: x.family, keys: x.keys, axes: x.axes })),
+				faces: f.faces.map((x) => ({ fileName: x.fileName, family: x.family, names: x.names, keys: x.keys, axes: x.axes, size: sizeOf(x.path) })),
 			})),
 		});
+	});
+
+	/**
+	 * Stores a font sent from the browser in the library. Without a group it
+	 * goes to a group named after its family, which is created when missing.
+	 */
+	app.post("/api/fonts/upload", async (c) => {
+		const dir = join(config.tempDir, "font-library-uploads");
+		let uploaded = "";
+		try {
+			const group = (c.query().get("group") ?? "").trim();
+			const keys = (c.query().get("keys") ?? "")
+				.split(",")
+				.map((k) => k.trim())
+				.filter(Boolean);
+			const original = (c.query().get("fileName") ?? "").trim();
+			if (group.length > 200 || original.length > 255) throw new Error("The name is too long");
+			if (Number(c.req.headers.get("content-length") ?? 0) > MAX_FONT_BYTES) throw new Error("The font file is too large");
+			const bytes = new Uint8Array(await c.req.arrayBuffer());
+			if (bytes.length > MAX_FONT_BYTES) throw new Error("The font file is too large");
+			const ext = fontExtension(bytes);
+			if (!ext) throw new Error("The file is not a TrueType or OpenType font");
+			mkdirSync(dir, { recursive: true });
+			uploaded = join(dir, `${randomUUID()}${ext}`);
+			writeFileSync(uploaded, bytes);
+			const { family, names } = await scanFontNames(uploaded, c.req.signal);
+			if (!names.length) throw new Error("The font could not be read");
+			const label = group || fontFileName(family, "");
+			const stem = original.replace(/\.[^.]+$/, "");
+			const r = await fontRegistry.importFace(label, uploaded, keys, fontFileName(stem || family, ext));
+			if (!r.ok) throw new Error(r.error || "The font could not be stored");
+			await fontRegistry.reload();
+			return c.json({ label, fileName: r.fileName, family }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		} finally {
+			if (uploaded) rmSync(uploaded, { force: true });
+		}
 	});
 
 	app.post("/api/fonts/reload", async (c) => {
