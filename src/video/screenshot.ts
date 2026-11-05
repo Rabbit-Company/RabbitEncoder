@@ -1,3 +1,4 @@
+import { closeSync, existsSync, openSync, readSync, renameSync, rmSync, statSync } from "fs";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
 import type { StillStyle } from "../core/still-style";
@@ -111,6 +112,56 @@ function zimgChain(style: StillStyle, color: ScreenshotColor, size?: ScreenshotS
 	}
 	const curve = style === "mpv" ? [`lutrgb=r='${bt1886ToSrgbExpr()}':g='${bt1886ToSrgbExpr()}':b='${bt1886ToSrgbExpr()}'`] : [];
 	return [`${input}:matrix=${ZIMG_MATRIX[c.space]}:range=full:dither=none`, "format=gbrp16le", ...curve, "format=rgb48be", SRGB_TAGS].join(",");
+}
+
+/** A PNG's bit depth per channel, read from its IHDR chunk. */
+function pngBitDepth(path: string): number {
+	const fd = openSync(path, "r");
+	try {
+		const head = Buffer.alloc(25);
+		readSync(fd, head, 0, 25, 0);
+		return head[24]!;
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * An 8-bit copy of a 16-bit still for showing in a browser, dithered with
+ * error diffusion. Browsers cut 16-bit PNGs to 8 bits by dropping the low
+ * byte, which brings the banding back and darkens the picture by half a
+ * level. The copy is made once and kept next to the still. 8-bit stills are
+ * returned as they are.
+ */
+export async function viewablePng(path: string, signal?: AbortSignal): Promise<string> {
+	if (pngBitDepth(path) <= 8) return path;
+	const view = `${path}.view.png`;
+	if (existsSync(view) && statSync(view).mtimeMs >= statSync(path).mtimeMs) return view;
+	const tmp = `${view}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp.png`;
+	const res = await run(
+		[
+			"ffmpeg",
+			"-hide_banner",
+			"-loglevel",
+			"error",
+			"-y",
+			"-i",
+			path,
+			"-vf",
+			`format=gbrp16le,zscale=dither=error_diffusion,format=gbrp,format=rgb24,${SRGB_TAGS}`,
+			"-frames:v",
+			"1",
+			tmp,
+		],
+		{ signal },
+	);
+	if (res.code !== 0 || !existsSync(tmp)) {
+		Logger.warn(`[screenshot] Could not make an 8-bit copy of ${path}: ${res.stderr.trim().slice(-300)}`);
+		rmSync(tmp, { force: true });
+		return path;
+	}
+	renameSync(tmp, view);
+	return view;
 }
 
 let libplaceboProbe: Promise<boolean> | null = null;

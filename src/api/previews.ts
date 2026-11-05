@@ -12,6 +12,7 @@ import { isPreviewMetric, type PreviewMeasureOptions } from "../pipeline/preview
 import { resolveAllowedMediaFile } from "./repair";
 import { buildZip } from "../core/zip";
 import { isStillStyle, STILL_STYLES } from "../core/still-style";
+import { viewablePng } from "../video/screenshot";
 
 function parseMeasureOptions(metrics: unknown, withGrain: unknown, allowNone: boolean): PreviewMeasureOptions | string {
 	if (!Array.isArray(metrics) || !metrics.every(isPreviewMetric)) return "metrics must be a list of ssimulacra2, xpsnr and vmaf";
@@ -121,7 +122,8 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 		});
 	});
 
-	app.get("/api/jobs/:id/preview/sample/:index/:kind", (c) => {
+	// ?view=1 gives stills as an 8-bit copy for showing in the browser. Without it, the 16-bit still.
+	app.get("/api/jobs/:id/preview/sample/:index/:kind", async (c) => {
 		const jobId = c.params.id!;
 		const idx = parseInt(c.params.index!, 10);
 		const kind = c.params.kind!;
@@ -152,7 +154,8 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 			});
 		}
 
-		return new Response(file, {
+		const served = c.query().get("view") === "1" ? Bun.file(await viewablePng(path, c.req.signal)) : file;
+		return new Response(served, {
 			headers: {
 				"Content-Type": "image/png",
 				"Cache-Control": "private, max-age=60",

@@ -373,7 +373,8 @@ function imageUrl(f: number, s: number): Promise<string> {
 	const key = `${f}_${s}`;
 	let url = imageUrls.get(key);
 	if (!url) {
-		url = authFetch(`${API}/api/compare/${session!.id}/image/${f}/${s}`).then(async (res) => {
+		// The 8-bit view copy, as browsers show 16-bit PNGs with banding.
+		url = authFetch(`${API}/api/compare/${session!.id}/image/${f}/${s}?view=1`).then(async (res) => {
 			if (!res.ok) throw new Error("Image not available");
 			return URL.createObjectURL(await res.blob());
 		});
@@ -453,6 +454,8 @@ function renderViewer(): void {
 			img.src = url;
 			const link = byId<HTMLAnchorElement>("compare-download");
 			link.href = url;
+			link.dataset.frame = String(frame);
+			link.dataset.source = String(source);
 			const digits = Math.max(2, String(session!.frames.length).length);
 			const label = src.label.replace(/[^\p{L}\p{N}._-]+/gu, "_").replace(/^_+|_+$/g, "") || "source";
 			link.download = `${String(frame + 1).padStart(digits, "0")}_${source + 1}_${label}.png`;
@@ -473,6 +476,18 @@ function selectFrame(f: number): void {
 	frame = f;
 	if (!session.frames[f]!.images[source]) source = Math.max(0, session.frames[f]!.images.indexOf(true));
 	renderViewer();
+}
+
+/** Saves the shown image as its 16-bit original, not the 8-bit copy on screen. */
+export async function downloadCompareImage(event: MouseEvent): Promise<void> {
+	event.preventDefault();
+	const link = byId<HTMLAnchorElement>("compare-download");
+	if (!session || link.dataset.frame === undefined) return;
+	try {
+		await saveResponse(await authFetch(`${API}/api/compare/${session.id}/image/${link.dataset.frame}/${link.dataset.source}`), link.download || "frame.png");
+	} catch (error) {
+		setError(errorMessage(error));
+	}
 }
 
 export async function downloadAllCompare(): Promise<void> {

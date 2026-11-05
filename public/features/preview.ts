@@ -19,7 +19,9 @@ export async function fetchPreviewArtifactBlob(jobId: string, idx: number, kind:
 	const cacheKey = `${jobId}:${idx}:${kind}`;
 	const cached = appState.previewBlobCache.get(cacheKey);
 	if (cached) return cached;
-	const res = await authFetch(`${API}/api/jobs/${jobId}/preview/sample/${idx}/${kind}`);
+	// Stills come as the 8-bit view copy, as browsers show 16-bit PNGs with banding.
+	const isClip = kind === "clip" || kind === "source-clip";
+	const res = await authFetch(`${API}/api/jobs/${jobId}/preview/sample/${idx}/${kind}${isClip ? "" : "?view=1"}`);
 	if (!res.ok) throw new Error(`Failed to load ${kind} (${res.status})`);
 	const blob = await res.blob();
 	const url = URL.createObjectURL(blob);
@@ -522,18 +524,13 @@ export function closePreviewFullscreenIfOutside(e: MouseEvent): void {
 	if (e.target === e.currentTarget) closePreviewFullscreen();
 }
 
+/** Saves a clip, or a still as its 16-bit original rather than the 8-bit copy on screen. */
 export async function downloadPreviewSampleArtifact(jobId: string, idx: number, kind: PreviewArtifactKind): Promise<void> {
 	try {
-		const url = await fetchPreviewArtifactBlob(jobId, idx, kind);
-		const a = document.createElement("a");
-		a.href = url;
 		const isClip = kind === "clip" || kind === "source-clip";
 		const ext = isClip ? "mkv" : "png";
 		const role = isClip ? kind : `${kind.replace(":", "")}-frame`;
-		a.download = `preview-${role}-sample${idx + 1}.${ext}`;
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
+		await saveResponse(await authFetch(`${API}/api/jobs/${jobId}/preview/sample/${idx}/${kind}`), `preview-${role}-sample${idx + 1}.${ext}`);
 	} catch (e) {
 		console.error("Download failed:", e);
 	}

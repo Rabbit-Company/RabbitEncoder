@@ -1039,8 +1039,9 @@ export function measurementCsv(session: CompareSession): string {
 }
 
 /** Bytes of one captured image, or null. */
-export function readImage(root: string, id: string, frame: number, source: number): Buffer | null {
+/** Path of a captured image, or null when the session or image does not exist. */
+export function imageFile(root: string, id: string, frame: number, source: number): string | null {
 	if (!loadSession(root, id)) return null;
 	const file = imagePath(root, id, frame, source);
-	return existsSync(file) && statSync(file).isFile() ? readFileSync(file) : null;
+	return existsSync(file) && statSync(file).isFile() ? file : null;
 }

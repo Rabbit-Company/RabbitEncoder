@@ -104,6 +104,7 @@ import {
 	comparePrevFrame,
 	deleteCurrentCompare,
 	downloadAllCompare,
+	downloadCompareImage,
 	handleCompareKey,
 	handleCompareMeasureChange,
 	handleCompareMeasureClick,
@@ -454,6 +455,7 @@ export function initEventListeners() {
 	byId("compare-prev").addEventListener("click", comparePrevFrame);
 	byId("compare-next").addEventListener("click", compareNextFrame);
 	byId("compare-download-all").addEventListener("click", () => void downloadAllCompare());
+	byId("compare-download").addEventListener("click", (e) => void downloadCompareImage(e));
 	byId("compare-measure").addEventListener("click", handleCompareMeasureClick);
 	byId("compare-measure").addEventListener("change", handleCompareMeasureChange);
 	byId("compare-measure").addEventListener("mousemove", handleCompareMeasureMove);

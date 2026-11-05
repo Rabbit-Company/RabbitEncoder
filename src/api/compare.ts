@@ -12,7 +12,7 @@ import {
 	deleteSession,
 	getSession,
 	listSessions,
-	readImage,
+	imageFile,
 	startCompare,
 	startMeasure,
 	type CompareFrameMode,
@@ -21,6 +21,7 @@ import {
 } from "../compare/compare";
 import { METRIC_NAMES, type MetricName } from "../compare/metrics";
 import { DEFAULT_STILL_STYLE, isStillStyle, STILL_STYLES } from "../core/still-style";
+import { viewablePng } from "../video/screenshot";
 
 const MAX_SOURCES = 8;
 const MAX_FRAMES = 50;
@@ -131,13 +132,15 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 		}
 	});
 
-	app.get("/api/compare/:id/image/:frame/:source", (c) => {
+	// ?view=1 gives an 8-bit copy for showing in the browser. Without it, the 16-bit still.
+	app.get("/api/compare/:id/image/:frame/:source", async (c) => {
 		const frame = Number(c.params.frame);
 		const source = Number(c.params.source);
 		if (!Number.isInteger(frame) || frame < 0 || !Number.isInteger(source) || source < 0) return c.json({ error: "Invalid image" }, 400);
-		const data = readImage(root, c.params.id!, frame, source);
-		if (!data) return c.json({ error: "Image not found" }, 404);
-		return new Response(new Uint8Array(data), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=86400" } });
+		const file = imageFile(root, c.params.id!, frame, source);
+		if (!file) return c.json({ error: "Image not found" }, 404);
+		const served = c.query().get("view") === "1" ? await viewablePng(file, c.req.signal) : file;
+		return new Response(Bun.file(served), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=86400" } });
 	});
 
 	app.get("/api/compare/:id/download", (c) => {

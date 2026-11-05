@@ -5,6 +5,7 @@ import { join } from "path";
 import { run } from "../../src/core/process";
 import { captureFrame } from "../../src/pipeline/preview-encoder";
 import { STILL_STYLES } from "../../src/core/still-style";
+import { viewablePng } from "../../src/video/screenshot";
 
 const COLOR = { range: "tv" as const, space: "bt709", transfer: null, primaries: null, chromaLocation: null };
 
@@ -16,6 +17,16 @@ async function meanRgb(png: string): Promise<[number, number, number]> {
 	const sums = [0, 0, 0];
 	for (let i = 0; i < data.length; i++) sums[i % 3]! += data[i]!;
 	const n = data.length / 3;
+	return [sums[0]! / n, sums[1]! / n, sums[2]! / n];
+}
+
+/** Mean per channel on the 0 to 255 scale, read at 16 bits so a 16-bit PNG is not rounded first. */
+async function meanRgb16(png: string): Promise<[number, number, number]> {
+	const proc = Bun.spawn(["ffmpeg", "-v", "error", "-i", png, "-f", "rawvideo", "-pix_fmt", "rgb48le", "-"], { stdout: "pipe" });
+	const data = new Uint16Array(await new Response(proc.stdout).arrayBuffer());
+	const sums = [0, 0, 0];
+	for (let i = 0; i < data.length; i++) sums[i % 3]! += data[i]!;
+	const n = (data.length / 3) * 257;
 	return [sums[0]! / n, sums[1]! / n, sums[2]! / n];
 }
 
@@ -70,5 +81,31 @@ async function meanRgb(png: string): Promise<[number, number, number]> {
 		// mpv shows BT.1886 as sRGB, which puts level 20 near 18.7.
 		expect(levels.standard! - levels.mpv!).toBeGreaterThan(0.8);
 		expect(levels.standard! - levels.mpv!).toBeLessThan(2.5);
+	}, 60_000);
+
+	it("shows 16-bit stills through a dithered 8-bit copy of the same brightness", async () => {
+		const gradient = join(root, "gradient.mkv");
+		const made = await run([
+			"ffmpeg",
+			"-v",
+			"error",
+			"-f",
+			"lavfi",
+			"-i",
+			"gradients=size=640x360:rate=24:duration=1:c0=0x0c1018:c1=0x203040,format=yuv420p10le",
+			"-c:v",
+			"ffv1",
+			gradient,
+		]);
+		if (made.code !== 0) throw new Error(made.stderr);
+		const still = join(root, "gradient.png");
+		expect(await captureFrame(gradient, still, 0, "none", COLOR, 360, "standard", new AbortController().signal)).toBe(true);
+		const view = await viewablePng(still);
+		expect(view).not.toBe(still);
+		const probe = await run(["ffprobe", "-v", "error", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", view]);
+		expect(probe.stdout.trim()).toBe("rgb24");
+		const [a, b] = await Promise.all([meanRgb16(still), meanRgb(view)]);
+		for (let c = 0; c < 3; c++) expect(Math.abs(a[c]! - b[c]!)).toBeLessThan(0.05);
+		expect(await viewablePng(view)).toBe(view);
 	}, 60_000);
 });
