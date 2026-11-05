@@ -64,6 +64,7 @@ import {
 	handlePreviewCancel,
 	handlePreviewClear,
 	handlePreviewMeasure,
+	handlePreviewDownloadAll,
 	handlePreviewReferenceListClick,
 	handlePreviewReferenceListInput,
 	handlePreviewRun,
@@ -489,6 +490,7 @@ export function initEventListeners() {
 	byId("preview-cancel-btn").addEventListener("click", handlePreviewCancel);
 	byId("preview-clear-btn").addEventListener("click", handlePreviewClear);
 	byId("preview-measure-btn").addEventListener("click", handlePreviewMeasure);
+	byId("preview-download-all-btn").addEventListener("click", handlePreviewDownloadAll);
 	byId("preview-chart").addEventListener("click", handlePreviewChartClick);
 	byId("preview-chart").addEventListener("change", handlePreviewChartChange);
 	byId("preview-chart").addEventListener("mousemove", handlePreviewChartMove);

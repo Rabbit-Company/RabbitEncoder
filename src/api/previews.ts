@@ -1,9 +1,16 @@
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
-import { cancelPreview, clearPreviewFor, getPreviewState, startPreview, startPreviewMeasure } from "../queue/store";
-import { MAX_PREVIEW_REFERENCES, resolvePreviewArtifact, type PreviewEncodeOptions, type PreviewReferenceInput } from "../pipeline/preview-encoder";
+import { cancelPreview, clearPreviewFor, getJob, getPreviewState, startPreview, startPreviewMeasure } from "../queue/store";
+import {
+	MAX_PREVIEW_REFERENCES,
+	previewArchiveEntries,
+	resolvePreviewArtifact,
+	type PreviewEncodeOptions,
+	type PreviewReferenceInput,
+} from "../pipeline/preview-encoder";
 import { isPreviewMetric, type PreviewMeasureOptions } from "../pipeline/preview-metrics";
 import { resolveAllowedMediaFile } from "./repair";
+import { buildZip } from "../core/zip";
 
 function parseMeasureOptions(metrics: unknown, withGrain: unknown, allowNone: boolean): PreviewMeasureOptions | string {
 	if (!Array.isArray(metrics) || !metrics.every(isPreviewMetric)) return "metrics must be a list of ssimulacra2, xpsnr and vmaf";
@@ -95,6 +102,17 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 			return c.json({ ok: true, cleared: true });
 		}
 		return c.json({ ok: true, cancelled: true });
+	});
+
+	app.get("/api/jobs/:id/preview/download", (c) => {
+		const state = getPreviewState(c.params.id!);
+		if (!state || state.status === "running" || !state.samples.length) return c.json({ error: "No finished preview to download" }, 404);
+		const zip = buildZip(previewArchiveEntries(config, state), new Date(state.finishedAt ?? Date.now()));
+		const base = (getJob(state.jobId)?.filename ?? state.jobId).replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}._-]+/gu, "_");
+		const name = `preview_${base}.zip`;
+		return new Response(zip, {
+			headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}` },
+		});
 	});
 
 	app.get("/api/jobs/:id/preview/sample/:index/:kind", (c) => {

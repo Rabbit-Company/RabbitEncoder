@@ -1,6 +1,6 @@
 import type { PreviewReference, PreviewSample, PreviewState } from "../types";
 import type { PreviewArtifactKind, PreviewSampleCard, PreviewSampleView } from "../ui/models";
-import { authFetch, cancelPreviewRequest, fetchJobs, fetchPreviewState, measurePreviewRequest, startPreviewRequest } from "../api/client";
+import { authFetch, cancelPreviewRequest, saveResponse, fetchJobs, fetchPreviewState, measurePreviewRequest, startPreviewRequest } from "../api/client";
 import { formatScore, METRIC_LABELS, METRICS, type MetricName } from "./compare-measure";
 import { renderPreviewChart, resetPreviewChart } from "./preview-chart";
 import { API } from "../config/api-base";
@@ -230,6 +230,7 @@ export function renderPreviewState(state: PreviewState): void {
 	const cancelBtn = buttonById("preview-cancel-btn");
 	const clearBtn = byId("preview-clear-btn");
 	const measureBtn = buttonById("preview-measure-btn");
+	const downloadAllBtn = buttonById("preview-download-all-btn");
 
 	const status = state?.status || "idle";
 	const isRunning = status === "running";
@@ -283,6 +284,7 @@ export function renderPreviewState(state: PreviewState): void {
 	cancelBtn.style.display = isRunning ? "" : "none";
 	clearBtn.style.display = !isRunning && hasResults ? "" : "none";
 	measureBtn.style.display = !isRunning && hasResults ? "" : "none";
+	downloadAllBtn.style.display = !isRunning && hasResults ? "" : "none";
 	measureBtn.textContent = state.samples?.some((s) => s.scores) ? "Measure again" : "Measure";
 }
 
@@ -533,6 +535,23 @@ export async function downloadPreviewSampleArtifact(jobId: string, idx: number, 
 		document.body.removeChild(a);
 	} catch (e) {
 		console.error("Download failed:", e);
+	}
+}
+
+export async function handlePreviewDownloadAll(): Promise<void> {
+	const jobId = appState.currentPreviewJobId;
+	if (!jobId) return;
+	const button = buttonById("preview-download-all-btn");
+	button.disabled = true;
+	button.textContent = "Preparing...";
+	try {
+		await saveResponse(await authFetch(`${API}/api/jobs/${jobId}/preview/download`), "preview.zip");
+	} catch (e) {
+		byId("preview-error").textContent = `Download failed: ${errorMessage(e)}`;
+		byId("preview-error").style.display = "";
+	} finally {
+		button.disabled = false;
+		button.textContent = "Download all";
 	}
 }
 

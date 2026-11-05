@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "fs";
 import { basename, join } from "path";
 import type {
 	AppConfig,
@@ -21,6 +21,7 @@ import { analyzeSourceTracks } from "./source-analysis";
 import { FFV1_ENCODE_ARGS } from "../video/auto-denoise";
 import { vsRegistry } from "../video/vs-filters";
 import { measurePreviewSample, type PreviewMeasureOptions } from "./preview-metrics";
+import { comparisonFileName } from "../compare/compare";
 
 /** Extra video (e.g. the pre-denoise original) whose frames are shown next to the job's own source and encode. */
 export interface PreviewReferenceInput {
@@ -549,6 +550,57 @@ export function resolvePreviewArtifact(config: AppConfig, jobId: string, sampleI
 	} else return null;
 
 	return existsSync(file) ? file : null;
+}
+
+function formatArchiveTime(sec: number): string {
+	const h = Math.floor(sec / 3600);
+	const m = Math.floor(sec / 60) % 60;
+	const s = (sec % 60).toFixed(3).padStart(6, "0");
+	return `${h}:${String(m).padStart(2, "0")}:${s}`;
+}
+
+/**
+ * Every still of every sample, named like the compare tool's archive so the
+ * files sort sample by sample, each sample's views in the order the card shows them.
+ */
+export function previewArchiveEntries(config: AppConfig, state: PreviewState): Array<{ name: string; data: Uint8Array }> {
+	const entries: Array<{ name: string; data: Uint8Array }> = [];
+	const samples = [...state.samples].sort((a, b) => a.index - b.index);
+	samples.forEach((sample, n) => {
+		const views: Array<{ kind: string; label: string }> = [];
+		for (const idx of sample.refFrames || []) {
+			const ref = state.references.find((r) => r.index === idx);
+			if (ref) views.push({ kind: `ref:${idx}`, label: ref.label });
+		}
+		views.push({ kind: "source", label: "Source" });
+		for (const f of sample.vsFrames || []) views.push({ kind: `vs:${f.index}`, label: f.label || `VS step ${f.index + 1}` });
+		for (const f of sample.prepareFrames || []) views.push({ kind: `pf:${f.kind}`, label: f.label || f.kind });
+		views.push({ kind: "encode", label: "Encode" });
+
+		const seen = new Set<string>();
+		let position = 0;
+		for (const view of views) {
+			const file = resolvePreviewArtifact(config, state.jobId, sample.index, view.kind);
+			if (!file || seen.has(file)) continue;
+			seen.add(file);
+			entries.push({ name: comparisonFileName(n, samples.length, position++, view.label), data: readFileSync(file) });
+		}
+	});
+
+	const digits = Math.max(2, String(samples.length).length);
+	const lines = [
+		...(state.references.length ? ["References:", ...state.references.map((r) => `${r.label}: ${r.name}`), ""] : []),
+		"Samples (time in the source):",
+		...samples.map((sample, n) => {
+			const scores = Object.entries(sample.scores ?? {})
+				.map(([metric, s]) => `${metric} ${s.mean.toFixed(2)} (5% low ${s.p5.toFixed(2)})`)
+				.join(" | ");
+			return `${String(n + 1).padStart(digits, "0")}. ${formatArchiveTime(sample.timestampSec)}  ${Math.round(sample.encodedBitrateKbps)} kb/s${scores ? `  ${scores}` : ""}`;
+		}),
+		"",
+	];
+	entries.push({ name: "preview.txt", data: new TextEncoder().encode(lines.join("\n")) });
+	return entries;
 }
 
 export function deletePreviewDir(config: AppConfig, jobId: string): void {

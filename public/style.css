@@ -2708,6 +2708,10 @@ a.btn {
 	font-size: 0.73rem;
 }
 
+.repair-audit-track-download {
+	margin-left: auto;
+}
+
 .repair-audit-track-meta {
 	margin-top: 7px;
 }

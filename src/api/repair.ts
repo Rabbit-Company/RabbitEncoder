@@ -36,8 +36,33 @@ const SUBTITLE_EXTENSIONS: Record<string, string> = {
 	"S_HDMV/PGS": "sup",
 };
 
+/** File extension mkvextract writes for an audio codec, keyed by Matroska codec ID. AAC IDs carry a profile suffix. */
+const AUDIO_EXTENSIONS: Record<string, string> = {
+	A_AAC: "aac",
+	A_AC3: "ac3",
+	A_EAC3: "eac3",
+	A_DTS: "dts",
+	A_TRUEHD: "thd",
+	A_MLP: "mlp",
+	A_FLAC: "flac",
+	A_OPUS: "opus",
+	A_VORBIS: "ogg",
+	"A_MPEG/L2": "mp2",
+	"A_MPEG/L3": "mp3",
+	"A_PCM/INT/LIT": "wav",
+	"A_PCM/INT/BIG": "wav",
+	"A_PCM/FLOAT/IEEE": "wav",
+	A_ALAC: "caf",
+	A_TTA1: "tta",
+	A_WAVPACK4: "wv",
+};
+
+export function audioExtension(codecId: string): string | undefined {
+	return AUDIO_EXTENSIONS[codecId] ?? (codecId.startsWith("A_AAC/") ? "aac" : codecId.startsWith("A_AC3/") ? "ac3" : undefined);
+}
+
 /** "Show - 01.mkv", track 24 in "slv" gives "Show - 01.24.slv.ass". */
-export function subtitleDownloadName(mkvPath: string, trackId: number, language: string, extension: string): string {
+export function trackDownloadName(mkvPath: string, trackId: number, language: string, extension: string): string {
 	const stem = basename(mkvPath, extname(mkvPath));
 	const lang = language.replace(/[^A-Za-z0-9-]/g, "") || "und";
 	return `${stem}.${trackId}.${lang}.${extension}`;
@@ -199,7 +224,7 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			const result = await run(["mkvextract", path, "tracks", `${trackId}:${out}`], { signal: c.req.signal });
 			if (result.code !== 0 || !existsSync(out)) throw new Error(`mkvextract failed: ${(result.stderr || result.stdout).slice(-500)}`);
 			const data = readFileSync(out);
-			const name = subtitleDownloadName(path, trackId, track.properties.language_ietf || track.properties.language || "und", extension);
+			const name = trackDownloadName(path, trackId, track.properties.language_ietf || track.properties.language || "und", extension);
 			return new Response(data, {
 				headers: {
 					"Content-Type": extension === "sup" ? "application/octet-stream" : "text/plain; charset=utf-8",
@@ -210,6 +235,42 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			return c.json({ error: error?.message || String(error) }, 400);
 		} finally {
 			rmSync(temp, { recursive: true, force: true });
+		}
+	});
+
+	app.post("/api/repair/audio-download", async (c) => {
+		const temp = join(config.tempDir, `audio-download-${randomUUID()}`);
+		const cleanup = () => rmSync(temp, { recursive: true, force: true });
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as { path?: unknown; trackId?: unknown };
+			const path = resolveAllowedMkv(body.path, config, "MKV");
+			const trackId = body.trackId;
+			if (typeof trackId !== "number" || !Number.isInteger(trackId) || trackId < 0) throw new Error("Invalid audio track");
+			const identified = await identifyMatroska(path, c.req.signal);
+			const track = (identified.tracks || []).find((t) => t.id === trackId && t.type === "audio");
+			if (!track) throw new Error(`Audio track ${trackId} not found`);
+			const extension = audioExtension(track.properties.codec_id || "");
+			if (!extension) throw new Error(`Downloading ${track.properties.codec_id || track.codec} audio is not supported`);
+
+			mkdirSync(temp, { recursive: true });
+			const out = join(temp, `track.${extension}`);
+			const result = await run(["mkvextract", path, "tracks", `${trackId}:${out}`], { signal: c.req.signal });
+			if (result.code !== 0 || !existsSync(out)) throw new Error(`mkvextract failed: ${(result.stderr || result.stdout).slice(-500)}`);
+			const file = Bun.file(out);
+			const name = trackDownloadName(path, trackId, track.properties.language_ietf || track.properties.language || "und", extension);
+			// Lossless tracks run to gigabytes, so stream the file and remove it once it is sent.
+			const stream = file.stream().pipeThrough(new TransformStream({ flush: cleanup }));
+			c.req.signal?.addEventListener("abort", cleanup, { once: true });
+			return new Response(stream, {
+				headers: {
+					"Content-Type": "application/octet-stream",
+					"Content-Length": String(file.size),
+					"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+				},
+			});
+		} catch (error: any) {
+			cleanup();
+			return c.json({ error: error?.message || String(error) }, 400);
 		}
 	});
 

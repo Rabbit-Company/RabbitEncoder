@@ -195,6 +195,16 @@ export async function downloadSubtitleTrack(path: string, trackId: number): Prom
 	await saveResponse(res, `track-${trackId}.txt`);
 }
 
+/** Extract one audio track from an MKV and save it through the browser. */
+export async function downloadAudioTrack(path: string, trackId: number): Promise<void> {
+	const res = await authFetch(`${API}/api/repair/audio-download`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, trackId }),
+	});
+	await saveResponse(res, `track-${trackId}.audio`);
+}
+
 export async function fetchRepairInspection(options: { jobId?: string; targetPath?: string; sourcePath?: string }): Promise<RepairInspection> {
 	const query = new URLSearchParams();
 	if (options.jobId) query.set("jobId", options.jobId);

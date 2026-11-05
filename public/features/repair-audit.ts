@@ -6,7 +6,7 @@ import type {
 	RepairAuditTrack,
 	RepairFolderAudit,
 } from "../types";
-import { createRepairAuditGroupJobs, fetchRepairFolderAudit, removeRepairAuditLanguages } from "../api/client";
+import { createRepairAuditGroupJobs, downloadAudioTrack, downloadSubtitleTrack, fetchRepairFolderAudit, removeRepairAuditLanguages } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker, openRepairPaths } from "./repair";
@@ -133,6 +133,7 @@ function renderTrack(track: RepairAuditTrack): string {
 		<div class="repair-audit-track-main">
 			<span class="sub-track-id">${track.type === "audio" ? "Audio" : "Subtitle"} #${track.id}</span>
 			<strong>${escapeHtml(track.title || "Untitled")}</strong>
+			<button class="btn btn-ghost btn-sm repair-audit-track-download" type="button" data-audit-download="${track.id}" title="Save this ${track.type === "audio" ? "audio" : "subtitle"} track as a file">Download</button>
 		</div>
 		<div class="repair-audit-track-meta">
 			<span>${escapeHtml(track.language)}</span>
@@ -417,8 +418,31 @@ export function closeRepairAuditIfOutside(event: MouseEvent): void {
 	if (event.target === event.currentTarget) closeRepairAudit();
 }
 
+async function downloadAuditTrack(button: HTMLButtonElement): Promise<void> {
+	const file = selectedFile();
+	const track = file?.tracks.find((t) => t.id === Number(button.dataset.auditDownload));
+	if (!file || !track) return;
+	const status = byId("repair-audit-status");
+	status.textContent = "";
+	button.disabled = true;
+	button.textContent = "Downloading...";
+	try {
+		await (track.type === "audio" ? downloadAudioTrack : downloadSubtitleTrack)(file.path, track.id);
+	} catch (error) {
+		status.textContent = errorMessage(error);
+	} finally {
+		button.disabled = false;
+		button.textContent = "Download";
+	}
+}
+
 export function handleRepairAuditClick(event: MouseEvent): void {
 	if (queueingGroup) return;
+	const download = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-audit-download]") : null;
+	if (download) {
+		if (!download.disabled) void downloadAuditTrack(download);
+		return;
+	}
 	const element =
 		event.target instanceof Element
 			? event.target.closest<HTMLElement>("[data-audit-select], [data-audit-edit-group], [data-audit-cancel-group], [data-audit-queue-group]")
