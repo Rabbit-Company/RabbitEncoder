@@ -7,6 +7,7 @@ import { alignmentProblem, describeTiming } from "../pipeline/repair-timing";
 import {
 	buildReleaseRepairPlan,
 	mkvFilesIn,
+	releaseFilesIn,
 	planReleaseSubtitles,
 	scanReleaseSubtitles,
 	type ReleaseFolder,
@@ -61,6 +62,29 @@ function resolveChoices(raw: unknown, sources: string[], config: AppConfig): Non
 	return out;
 }
 
+/** Release folders and single release files, each folder with the numbering offset typed for it. */
+export function resolveReleaseFolders(raw: unknown, config: AppConfig): ReleaseFolder[] {
+	if (!Array.isArray(raw) || !raw.length) throw new Error("Choose at least one release folder or file");
+	if (raw.length > MAX_SOURCE_DIRS) throw new Error(`Choose at most ${MAX_SOURCE_DIRS} release folders or files`);
+	const seen = new Set<string>();
+	const folders: ReleaseFolder[] = [];
+	for (const item of raw as unknown[]) {
+		const folder = typeof item === "string" ? { path: item } : (item as { path?: unknown; offset?: unknown });
+		// A single release file is paired the same way as a folder holding only it.
+		const path =
+			typeof folder?.path === "string" && /\.mkv$/i.test(folder.path.trim())
+				? resolveAllowedMkv(folder.path, config, "Release")
+				: resolveAllowedDirectory(folder?.path, config);
+		if (seen.has(path)) continue;
+		seen.add(path);
+		const offset = folder.offset === undefined || folder.offset === null || folder.offset === "" ? undefined : Number(folder.offset);
+		if (offset !== undefined && (!Number.isInteger(offset) || offset < 1 || offset > 5000))
+			throw new Error("A numbering offset must be a whole number from 1 to 5000");
+		folders.push({ path, ...(offset !== undefined ? { offset } : {}) });
+	}
+	return folders;
+}
+
 export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void {
 	app.post("/api/release-subs/scan", async (c) => {
 		try {
@@ -69,21 +93,8 @@ export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void
 				? raw.targets.map((path) => resolveAllowedMkv(path, config, "Encoded target"))
 				: mkvFilesIn(resolveAllowedDirectory(raw.targetDir, config));
 			if (!targets.length) throw new Error("Choose at least one encoded MKV");
-			if (!Array.isArray(raw.sourceDirs) || !raw.sourceDirs.length) throw new Error("Choose at least one folder of other releases");
-			if (raw.sourceDirs.length > MAX_SOURCE_DIRS) throw new Error(`Choose at most ${MAX_SOURCE_DIRS} folders of other releases`);
-			const seen = new Set<string>();
-			const sourceDirs: ReleaseFolder[] = [];
-			for (const item of raw.sourceDirs as unknown[]) {
-				const folder = typeof item === "string" ? { path: item } : (item as { path?: unknown; offset?: unknown });
-				const path = resolveAllowedDirectory(folder?.path, config);
-				if (seen.has(path)) continue;
-				seen.add(path);
-				const offset = folder.offset === undefined || folder.offset === null || folder.offset === "" ? undefined : Number(folder.offset);
-				if (offset !== undefined && (!Number.isInteger(offset) || offset < 1 || offset > 5000))
-					throw new Error("A numbering offset must be a whole number from 1 to 5000");
-				sourceDirs.push({ path, ...(offset !== undefined ? { offset } : {}) });
-			}
-			if (targets.length > MAX_FILES || sourceDirs.some((dir) => mkvFilesIn(dir.path).length > MAX_FILES))
+			const sourceDirs = resolveReleaseFolders(raw.sourceDirs, config);
+			if (targets.length > MAX_FILES || sourceDirs.some((dir) => releaseFilesIn(dir.path).length > MAX_FILES))
 				throw new Error(`Copying subtitles from releases is limited to ${MAX_FILES} files per folder`);
 			const scan = await scanReleaseSubtitles({ targets: [...new Set(targets)], sourceDirs, options: planOptions(config, raw), signal: c.req.signal });
 			return c.json(scan);

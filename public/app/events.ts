@@ -208,6 +208,7 @@ import {
 	readRepairBatchLayouts,
 } from "../features/repair-batch";
 import {
+	addReleaseSubsSourceFiles,
 	addReleaseSubsSourceFolder,
 	closeReleaseSubs,
 	closeReleaseSubsIfOutside,
@@ -218,10 +219,12 @@ import {
 	handleReleaseSubsSourcesInput,
 	openReleaseSubs,
 	pickReleaseSubsTargetFolder,
+	pickReleaseSubsTargetVideos,
 	queueReleaseSubs,
 	scanReleaseSubs,
 } from "../features/release-subs";
 import {
+	addReleaseAudioSourceFiles,
 	addReleaseAudioSourceFolder,
 	closeReleaseAudio,
 	closeReleaseAudioIfOutside,
@@ -231,6 +234,7 @@ import {
 	handleReleaseAudioSourcesInput,
 	openReleaseAudio,
 	pickReleaseAudioTargetFolder,
+	pickReleaseAudioTargetVideos,
 	queueReleaseAudio,
 	scanReleaseAudio,
 } from "../features/release-audio";
@@ -240,6 +244,7 @@ import {
 	handleAudioTracksChoice,
 	openAudioTracks,
 	pickAudioTracksFolder,
+	pickAudioTracksVideos,
 	queueAudioTracks,
 	scanAudioTracks,
 } from "../features/audio-tracks";
@@ -273,6 +278,7 @@ import {
 	handleFontCheckClick,
 	openFontCheck,
 	pickFontCheckFolder,
+	pickFontCheckVideos,
 	queueFontCheckFixes,
 	toggleFontCheckScan,
 } from "../features/font-check";
@@ -311,6 +317,8 @@ export function initEventListeners() {
 	byId("release-subs-modal").addEventListener("click", closeReleaseSubsIfOutside);
 	byId("release-subs-pick-target-btn").addEventListener("click", pickReleaseSubsTargetFolder);
 	byId("release-subs-add-source-btn").addEventListener("click", addReleaseSubsSourceFolder);
+	byId("release-subs-add-source-file-btn").addEventListener("click", addReleaseSubsSourceFiles);
+	byId("release-subs-pick-videos-btn").addEventListener("click", pickReleaseSubsTargetVideos);
 	byId("release-subs-sources").addEventListener("click", handleReleaseSubsSourcesClick);
 	byId("release-subs-sources").addEventListener("input", handleReleaseSubsSourcesInput);
 	byId("release-subs-preferred").addEventListener("input", handleReleaseSubsOptionChange);
@@ -325,6 +333,8 @@ export function initEventListeners() {
 	byId("release-audio-modal").addEventListener("click", closeReleaseAudioIfOutside);
 	byId("release-audio-pick-target-btn").addEventListener("click", pickReleaseAudioTargetFolder);
 	byId("release-audio-add-source-btn").addEventListener("click", addReleaseAudioSourceFolder);
+	byId("release-audio-add-source-file-btn").addEventListener("click", addReleaseAudioSourceFiles);
+	byId("release-audio-pick-videos-btn").addEventListener("click", pickReleaseAudioTargetVideos);
 	byId("release-audio-sources").addEventListener("click", handleReleaseAudioSourcesClick);
 	byId("release-audio-sources").addEventListener("input", handleReleaseAudioSourcesInput);
 	byId("release-audio-scan-btn").addEventListener("click", scanReleaseAudio);
@@ -336,6 +346,7 @@ export function initEventListeners() {
 	byId("audio-tracks-cancel-btn").addEventListener("click", closeAudioTracks);
 	byId("audio-tracks-modal").addEventListener("click", closeAudioTracksIfOutside);
 	byId("audio-tracks-pick-btn").addEventListener("click", pickAudioTracksFolder);
+	byId("audio-tracks-pick-videos-btn").addEventListener("click", pickAudioTracksVideos);
 	byId("audio-tracks-scan-btn").addEventListener("click", scanAudioTracks);
 	byId("audio-tracks-types").addEventListener("change", handleAudioTracksChoice);
 	byId("audio-tracks-queue-btn").addEventListener("click", queueAudioTracks);
@@ -344,6 +355,7 @@ export function initEventListeners() {
 	byId("fontcheck-cancel-btn").addEventListener("click", closeFontCheck);
 	byId("fontcheck-modal").addEventListener("click", closeFontCheckIfOutside);
 	byId("fontcheck-pick-btn").addEventListener("click", pickFontCheckFolder);
+	byId("fontcheck-pick-videos-btn").addEventListener("click", pickFontCheckVideos);
 	byId("fontcheck-scan-btn").addEventListener("click", () => void toggleFontCheckScan());
 	byId("fontcheck-queue-btn").addEventListener("click", () => void queueFontCheckFixes());
 	byId("fontcheck-results").addEventListener("change", handleFontCheckChange);

@@ -28,7 +28,8 @@ type PickerPurpose =
 	| "hdr-source"
 	| "subtitle-search"
 	| "subtitle-ocr"
-	| "translate-target";
+	| "translate-target"
+	| "mkv-videos";
 
 /** Purposes that list every video, not only MKV files. */
 const allMediaPurpose = (purpose: PickerPurpose): boolean =>
@@ -543,6 +544,14 @@ export function openHdrTargetPicker(onChoose: (path: string) => void | Promise<v
 export function openHdrSourcePicker(onChoose: (path: string) => void | Promise<void>): void {
 	pickerFileCallback = onChoose;
 	void openRepairPicker("hdr-source");
+}
+
+/** Chooses any number of MKV files: single episodes, or every video of a folder with Select videos. */
+export function openMkvVideosPicker(selected: string[], title: string, onChoose: (paths: string[]) => void | Promise<void>): void {
+	pickerFilesCallback = onChoose;
+	pickerSelectedPaths.clear();
+	for (const path of selected) pickerSelectedPaths.add(path);
+	void openRepairPicker("mkv-videos", title);
 }
 
 export function openSubtitleSearchPicker(selected: string[], onChoose: (paths: string[]) => void | Promise<void>): void {

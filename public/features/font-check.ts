@@ -2,7 +2,7 @@ import type { FontCheckMissing, FontCheckProgress, FontCheckResult, SubtitleFile
 import { cancelFontCheck, createFontCheckJobs, fetchFontCheck, fetchFonts, startFontCheck, uploadLibraryFont, uploadSubtitleFont } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
-import { openRepairFolderPicker } from "./repair";
+import { openMkvVideosPicker, openRepairFolderPicker } from "./repair";
 import { update } from "./polling";
 
 /** How a missing font is fixed: an uploaded or library font named like it, or another font the subtitles point at instead. */
@@ -17,7 +17,9 @@ interface LibraryFamily {
 
 const CLOSEST = "__closest__";
 
+/** A folder to check, or the videos chosen one by one. Only one of them is set. */
 let folder = "";
+let videos: string[] = [];
 let scanId = "";
 let progress: FontCheckProgress | null = null;
 let result: FontCheckResult | null = null;
@@ -132,14 +134,30 @@ function reach(): { files: number; unreachable: number } {
 	return { files, unreachable };
 }
 
+const folderOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
+
+function selectionHtml(): string {
+	const named = (name: string, title: string, where: string) =>
+		`<span class="repair-file-name" title="${escapeHtml(title)}">${escapeHtml(name)}</span><span class="repair-file-folder">${escapeHtml(where)}</span>`;
+	if (folder) return named(fileName(folder), folder, folder);
+	if (videos.length === 1) return named(fileName(videos[0]!), videos[0]!, folderOf(videos[0]!));
+	if (videos.length) {
+		const folders = [...new Set(videos.map(folderOf))];
+		return named(`${videos.length} videos`, videos.map(fileName).join("\n"), folders.length === 1 ? folders[0]! : `${folders.length} folders`);
+	}
+	return '<span class="repair-file-empty">No folder or videos selected</span>';
+}
+
 function renderFolder(): void {
-	byId("fontcheck-selection").innerHTML = folder
-		? `<span class="repair-file-name" title="${escapeHtml(folder)}">${escapeHtml(fileName(folder))}</span><span class="repair-file-folder">${escapeHtml(folder)}</span>`
-		: '<span class="repair-file-empty">No folder selected</span>';
+	byId("fontcheck-selection").innerHTML = selectionHtml();
+	byId("fontcheck-pick-videos-btn").textContent = videos.length ? "Change videos..." : "Choose videos...";
 	const scan = buttonById("fontcheck-scan-btn");
-	scan.disabled = !folder || queueing;
+	scan.disabled = !(folder || videos.length) || queueing;
 	scan.textContent = scanning() ? "Cancel" : result ? "Check again" : "Check fonts";
-	inputById("fontcheck-recursive").disabled = scanning();
+	// Subfolders only mean something for a folder.
+	const recursive = inputById("fontcheck-recursive");
+	recursive.disabled = scanning();
+	recursive.closest("label")!.style.display = videos.length ? "none" : "";
 }
 
 function renderProgress(): void {
@@ -295,9 +313,21 @@ export function pickFontCheckFolder(): void {
 	openRepairFolderPicker((path) => {
 		reset();
 		folder = path;
+		videos = [];
 		setError("");
 		render();
 	}, "Choose the folder to check");
+}
+
+/** One video, a few, or every video of a folder, chosen in the picker. */
+export function pickFontCheckVideos(): void {
+	openMkvVideosPicker(videos, "Choose videos to check", (paths) => {
+		reset();
+		videos = paths;
+		folder = "";
+		setError("");
+		render();
+	});
 }
 
 export async function toggleFontCheckScan(): Promise<void> {
@@ -308,13 +338,11 @@ export async function toggleFontCheckScan(): Promise<void> {
 		await cancelFontCheck(id).catch(() => {});
 		return;
 	}
-	if (!folder) return;
-	const keepFolder = folder;
+	if (!folder && !videos.length) return;
 	reset();
-	folder = keepFolder;
 	setError("");
 	try {
-		progress = await startFontCheck({ folder, recursive: inputById("fontcheck-recursive").checked });
+		progress = await startFontCheck(folder ? { folder, recursive: inputById("fontcheck-recursive").checked } : { targets: videos, recursive: false });
 		scanId = progress.id;
 		render();
 		void poll();
@@ -409,7 +437,7 @@ export async function queueFontCheckFixes(): Promise<void> {
 			? ` ${plural(queued.unreachable.length, "video")} kept a missing font, as it lacks the font that was chosen instead.`
 			: "";
 		byId("fontcheck-summary").textContent =
-			`Queued ${queued.jobIds.length} font fix${queued.jobIds.length === 1 ? "" : "es"}. Follow their progress in the job list, then check the folder again.${note}`;
+			`Queued ${queued.jobIds.length} font fix${queued.jobIds.length === 1 ? "" : "es"}. Follow their progress in the job list, then check the fonts again.${note}`;
 		result = null;
 		fixes.clear();
 		uploads.clear();

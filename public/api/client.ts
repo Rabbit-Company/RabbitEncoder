@@ -265,7 +265,8 @@ export async function fetchRepairBatchSuggestion(pair: { targetPath: string; sou
 }
 
 export async function fetchReleaseScan(options: {
-	targetDir: string;
+	targetDir?: string;
+	targets?: string[];
 	sourceDirs: Array<{ path: string; offset?: number }>;
 	preferredSources: string[];
 	replaceWorse: boolean;
@@ -306,7 +307,11 @@ export async function createReleaseSubtitleJobs(options: {
 	return data;
 }
 
-export async function fetchReleaseAudioScan(options: { targetDir: string; sourceDirs: Array<{ path: string; offset?: number }> }): Promise<ReleaseAudioScan> {
+export async function fetchReleaseAudioScan(options: {
+	targetDir?: string;
+	targets?: string[];
+	sourceDirs: Array<{ path: string; offset?: number }>;
+}): Promise<ReleaseAudioScan> {
 	const response = await authFetch(`${API}/api/release-audio/scan`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -332,7 +337,11 @@ export async function createReleaseAudioJobs(options: {
 	return data;
 }
 
-export async function fetchAudioTracksScan(options: { targetDir: string; choices: Record<string, AudioTrackChoice> }): Promise<AudioTracksScan> {
+export async function fetchAudioTracksScan(options: {
+	targetDir?: string;
+	targets?: string[];
+	choices: Record<string, AudioTrackChoice>;
+}): Promise<AudioTracksScan> {
 	const response = await authFetch(`${API}/api/audio-tracks/scan`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -1217,14 +1226,14 @@ export async function createSubtitleFileJobs(request: SubtitleFilesJobRequest): 
 	return data;
 }
 
-export async function startFontCheck(options: { folder: string; recursive: boolean }): Promise<FontCheckProgress> {
+export async function startFontCheck(options: { folder?: string; targets?: string[]; recursive: boolean }): Promise<FontCheckProgress> {
 	const response = await authFetch(`${API}/api/font-check/scan`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(options),
 	});
 	const data = await response.json();
-	if (!response.ok) throw new Error(data?.error || "Could not check the folder");
+	if (!response.ok) throw new Error(data?.error || "Could not check the fonts");
 	return data;
 }
 

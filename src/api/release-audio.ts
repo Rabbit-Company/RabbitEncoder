@@ -11,36 +11,18 @@ import {
 	type ReleaseAudioFile,
 	type ReleaseAudioOptions,
 } from "../pipeline/release-audio";
-import { mkvFilesIn, type ReleaseFolder } from "../pipeline/release-subs";
+import { mkvFilesIn, releaseFilesIn } from "../pipeline/release-subs";
 import { addAudioJob, getAllJobs } from "../queue/store";
 import { resolveAllowedDirectory, resolveAllowedMkv } from "./repair";
+import { resolveReleaseFolders } from "./release-subs";
 
 const MAX_FILES = 500;
-const MAX_SOURCE_DIRS = 10;
 const MAX_ROW_SOURCES = 10;
 
 function resolveSources(raw: unknown, config: AppConfig): string[] {
 	if (!Array.isArray(raw)) throw new Error("Each episode needs its list of releases");
 	if (raw.length > MAX_ROW_SOURCES) throw new Error(`An episode can take audio from at most ${MAX_ROW_SOURCES} releases`);
 	return [...new Set(raw.map((path) => resolveAllowedMkv(path, config, "Release")))];
-}
-
-function resolveFolders(raw: unknown, config: AppConfig): ReleaseFolder[] {
-	if (!Array.isArray(raw) || !raw.length) throw new Error("Choose at least one folder of other releases");
-	if (raw.length > MAX_SOURCE_DIRS) throw new Error(`Choose at most ${MAX_SOURCE_DIRS} folders of other releases`);
-	const seen = new Set<string>();
-	const folders: ReleaseFolder[] = [];
-	for (const item of raw as unknown[]) {
-		const folder = typeof item === "string" ? { path: item } : (item as { path?: unknown; offset?: unknown });
-		const path = resolveAllowedDirectory(folder?.path, config);
-		if (seen.has(path)) continue;
-		seen.add(path);
-		const offset = folder.offset === undefined || folder.offset === null || folder.offset === "" ? undefined : Number(folder.offset);
-		if (offset !== undefined && (!Number.isInteger(offset) || offset < 1 || offset > 5000))
-			throw new Error("A numbering offset must be a whole number from 1 to 5000");
-		folders.push({ path, ...(offset !== undefined ? { offset } : {}) });
-	}
-	return folders;
 }
 
 /** Choices per cell from the grid: a source track, or null to leave the cell as the video has it. */
@@ -72,8 +54,8 @@ export function registerReleaseAudioRoutes(app: Web, config: AppConfig): void {
 				? raw.targets.map((path) => resolveAllowedMkv(path, config, "Video"))
 				: mkvFilesIn(resolveAllowedDirectory(raw.targetDir, config));
 			if (!targets.length) throw new Error("Choose at least one MKV");
-			const sourceDirs = resolveFolders(raw.sourceDirs, config);
-			if (targets.length > MAX_FILES || sourceDirs.some((dir) => mkvFilesIn(dir.path).length > MAX_FILES))
+			const sourceDirs = resolveReleaseFolders(raw.sourceDirs, config);
+			if (targets.length > MAX_FILES || sourceDirs.some((dir) => releaseFilesIn(dir.path).length > MAX_FILES))
 				throw new Error(`Copying audio from releases is limited to ${MAX_FILES} files per folder`);
 			const scan = await scanReleaseAudio({
 				targets: [...new Set(targets)],

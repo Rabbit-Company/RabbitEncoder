@@ -2,14 +2,16 @@ import type { ReleaseAudioCandidate, ReleaseAudioCell, ReleaseAudioRow, ReleaseA
 import { createReleaseAudioJobs, fetchReleaseAudioScan, fetchReleaseCheck } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
-import { openRepairFolderPicker } from "./repair";
+import { openMkvVideosPicker, openRepairFolderPicker } from "./repair";
 import { update } from "./polling";
 
 const MAX_RELEASE_FOLDERS = 10;
 
+/** A folder of videos, or the videos chosen one by one. Only one of them is set. */
 let targetDir = "";
-/** Release folders, each with the numbering offset typed for it, empty for automatic. */
-let releaseDirs: Array<{ path: string; offset: string }> = [];
+let targetVideos: string[] = [];
+/** Release folders and files, each folder with the numbering offset typed for it, empty for automatic. */
+let releaseDirs: Array<{ path: string; offset: string; file?: boolean }> = [];
 let scan: ReleaseAudioScan | null = null;
 /** What each cell takes, by episode then column: a candidate's id, or "" to leave the cell as the video has it. */
 let selections = new Map<string, Map<string, string>>();
@@ -38,7 +40,7 @@ function setError(message: string): void {
 }
 
 const currentOptions = () => ({
-	targetDir,
+	...(targetDir ? { targetDir } : { targets: targetVideos }),
 	sourceDirs: releaseDirs.map((dir) => ({ path: dir.path, ...(dir.offset.trim() ? { offset: Number(dir.offset) } : {}) })),
 });
 const isStale = () => !!scan && scannedWith !== JSON.stringify(currentOptions());
@@ -47,24 +49,43 @@ function folderHtml(path: string): string {
 	return `<span class="repair-file-name" title="${escapeHtml(path)}">${escapeHtml(fileName(path))}</span><span class="repair-file-folder">${escapeHtml(path)}</span>`;
 }
 
+const folderOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
+
+function targetHtml(): string {
+	if (targetDir) return folderHtml(targetDir);
+	if (targetVideos.length === 1)
+		return `<span class="repair-file-name" title="${escapeHtml(targetVideos[0])}">${escapeHtml(fileName(targetVideos[0]!))}</span><span class="repair-file-folder">${escapeHtml(folderOf(targetVideos[0]!))}</span>`;
+	if (targetVideos.length) {
+		const folders = [...new Set(targetVideos.map(folderOf))];
+		return `<span class="repair-file-name" title="${escapeHtml(targetVideos.map(fileName).join("\n"))}">${targetVideos.length} videos</span><span class="repair-file-folder">${escapeHtml(folders.length === 1 ? folders[0] : `${folders.length} folders`)}</span>`;
+	}
+	return '<span class="repair-file-empty">No videos selected</span>';
+}
+
 function renderFolders(): void {
-	byId("release-audio-target-selection").innerHTML = targetDir ? folderHtml(targetDir) : '<span class="repair-file-empty">No videos folder selected</span>';
+	byId("release-audio-target-selection").innerHTML = targetHtml();
 	byId("release-audio-sources").innerHTML = releaseDirs.length
 		? releaseDirs
 				.map(
 					(dir, i) => `<div class="release-subs-source">
-						<div class="repair-file-selection">${folderHtml(dir.path)}</div>
-						<label class="release-subs-offset" title="For a release numbered across seasons: what it adds to the episode number, such as 12 when S02E01 is episode 13. Empty finds it from the file names.">Offset
+						<div class="repair-file-selection">${dir.file ? `<span class="repair-file-name" title="${escapeHtml(dir.path)}">${escapeHtml(fileName(dir.path))}</span><span class="repair-file-folder">${escapeHtml(folderOf(dir.path))}</span>` : folderHtml(dir.path)}</div>
+						${
+							dir.file
+								? ""
+								: `<label class="release-subs-offset" title="For a release numbered across seasons: what it adds to the episode number, such as 12 when S02E01 is episode 13. Empty finds it from the file names.">Offset
 							<input type="number" min="1" max="5000" class="repair-input" data-release-offset="${i}" placeholder="auto" value="${escapeHtml(dir.offset)}">
-						</label>
+						</label>`
+						}
 						<button class="btn btn-ghost btn-sm" type="button" data-release-remove-dir="${i}">Remove</button>
 					</div>`,
 				)
 				.join("")
-		: '<span class="repair-file-empty">No release folders added</span>';
+		: '<span class="repair-file-empty">No releases added</span>';
 	buttonById("release-audio-add-source-btn").disabled = releaseDirs.length >= MAX_RELEASE_FOLDERS;
+	buttonById("release-audio-add-source-file-btn").disabled = releaseDirs.length >= MAX_RELEASE_FOLDERS;
+	byId("release-audio-pick-videos-btn").textContent = targetVideos.length ? "Change videos..." : "Choose videos...";
 	const button = buttonById("release-audio-scan-btn");
-	button.disabled = scanning || !targetDir || !releaseDirs.length;
+	button.disabled = scanning || !(targetDir || targetVideos.length) || !releaseDirs.length;
 	button.textContent = scanning ? "Reading releases..." : scan ? "Read releases again" : "Read releases";
 }
 
@@ -165,7 +186,7 @@ function plannedRows() {
 function renderGrid(): void {
 	const grid = byId("release-audio-grid");
 	if (!scan) {
-		grid.innerHTML = '<div class="repair-empty">Choose the videos folder and at least one folder of other releases, then read them.</div>';
+		grid.innerHTML = '<div class="repair-empty">Choose a folder of videos or single videos, and at least one release folder or file, then read them.</div>';
 		byId("release-audio-summary").textContent = "";
 		byId("release-audio-unmatched").innerHTML = "";
 		renderQueueButton();
@@ -179,7 +200,7 @@ function renderGrid(): void {
 		.join("");
 	grid.innerHTML = scan.rows.length
 		? `<table class="release-grid"><thead><tr><th class="release-row-head" scope="col">Episode</th>${head}</tr></thead><tbody>${scan.rows.map(renderRow).join("")}</tbody></table>`
-		: '<div class="repair-empty">The videos folder has no MKV files.</div>';
+		: '<div class="repair-empty">There are no MKV files to add audio to.</div>';
 
 	const planned = plannedRows();
 	const tracks = planned.reduce((n, r) => n + r.changes, 0);
@@ -189,9 +210,11 @@ function renderGrid(): void {
 	if (unpaired) parts.push(`${unpaired} without a release`);
 	if (isStale()) parts.push("the folders changed, read the releases again");
 	byId("release-audio-summary").textContent = parts.join(" | ");
-	byId("release-audio-unmatched").innerHTML = scan.unmatchedSources.length
-		? `<details class="repair-layout-files"><summary>${scan.unmatchedSources.length} release file${scan.unmatchedSources.length === 1 ? "" : "s"} matched no video</summary>${scan.unmatchedSources.map((p) => `<div>${escapeHtml(fileName(p))}</div>`).join("")}</details>`
-		: "";
+	// With videos chosen one by one, the other episodes of a release folder are left out on purpose.
+	byId("release-audio-unmatched").innerHTML =
+		scan.unmatchedSources.length && targetDir
+			? `<details class="repair-layout-files"><summary>${scan.unmatchedSources.length} release file${scan.unmatchedSources.length === 1 ? "" : "s"} matched no video</summary>${scan.unmatchedSources.map((p) => `<div>${escapeHtml(fileName(p))}</div>`).join("")}</details>`
+			: "";
 	renderQueueButton();
 }
 
@@ -220,6 +243,27 @@ export function closeReleaseAudioIfOutside(event: MouseEvent): void {
 export function pickReleaseAudioTargetFolder(): void {
 	openRepairFolderPicker((path) => {
 		targetDir = path;
+		targetVideos = [];
+		renderFolders();
+		renderGrid();
+	});
+}
+
+/** One episode, a few, or every video of a folder, chosen in the picker. */
+export function pickReleaseAudioTargetVideos(): void {
+	openMkvVideosPicker(targetVideos, "Choose videos to add audio to", (paths) => {
+		targetVideos = paths;
+		targetDir = "";
+		renderFolders();
+		renderGrid();
+	});
+}
+
+/** Release files added one by one, such as the one release of a movie in a folder of others. */
+export function addReleaseAudioSourceFiles(): void {
+	openMkvVideosPicker([], "Choose release files", (paths) => {
+		for (const path of paths)
+			if (!releaseDirs.some((dir) => dir.path === path) && releaseDirs.length < MAX_RELEASE_FOLDERS) releaseDirs.push({ path, offset: "", file: true });
 		renderFolders();
 		renderGrid();
 	});

@@ -12,6 +12,7 @@ import {
 	planReleaseAudio,
 	releaseAudioDefaults,
 	runReleaseAudioJob,
+	scanReleaseAudio,
 	syncedAudioArgs,
 	type ReleaseAudioFile,
 	type ReleaseAudioOptions,
@@ -440,4 +441,48 @@ describe("buildReleaseAudioMkvmergeArgs", () => {
 		expect(Math.abs(hit.lag)).toBeLessThanOrEqual(2);
 		expect(hit.score).toBeGreaterThan(0.9);
 	}, 120_000);
+});
+
+(hasReleaseTools ? describe : describe.skip)("choosing single videos and release files", () => {
+	const root = mkdtempSync(join(tmpdir(), "rabbit-release-audio-pick-"));
+	afterAll(() => rmSync(root, { recursive: true, force: true }));
+	const options = releaseAudioDefaults(getDefaultJobSettings());
+
+	async function audioFile(path: string, languages: string[]): Promise<void> {
+		const args = ["ffmpeg", "-v", "error", "-y"];
+		for (const _ of languages) args.push("-f", "lavfi", "-i", "sine=f=400:d=2");
+		languages.forEach((_, i) => args.push("-map", `${i}:a`));
+		args.push("-c:a", "flac");
+		languages.forEach((language, i) => args.push(`-metadata:s:a:${i}`, `language=${language}`));
+		await command([...args, path]);
+	}
+
+	it("pairs one chosen episode with its episode in a release folder", async () => {
+		for (const dir of ["enc", "bd"]) mkdirSync(join(root, dir));
+		for (const n of ["01", "02"]) {
+			await audioFile(join(root, "enc", `Show - S01E${n}.mkv`), ["jpn"]);
+			await audioFile(join(root, "bd", `Show.S01E${n}.BluRay-GRP.mkv`), ["jpn", "eng"]);
+		}
+		const scan = await scanReleaseAudio({ targets: [join(root, "enc", "Show - S01E02.mkv")], sourceDirs: [join(root, "bd")], options });
+		expect(scan.rows.map((r) => [r.targetName, r.sources.map((s) => [s.name, s.method])])).toEqual([
+			["Show - S01E02.mkv", [["Show.S01E02.BluRay-GRP.mkv", "episode"]]],
+		]);
+		expect(scan.rows[0]!.additions.map((a) => a.key)).toEqual(["en:main"]);
+	}, 30_000);
+
+	it("takes a chosen release file from a folder of other releases", async () => {
+		for (const dir of ["movie", "releases"]) mkdirSync(join(root, dir));
+		await audioFile(join(root, "movie", "Movie (2020).mkv"), ["jpn"]);
+		await audioFile(join(root, "releases", "Another Movie (2019).mkv"), ["jpn", "ger"]);
+		await audioFile(join(root, "releases", "Movie.2020.BluRay-GRP.mkv"), ["jpn", "eng"]);
+		const scan = await scanReleaseAudio({
+			targets: [join(root, "movie", "Movie (2020).mkv")],
+			sourceDirs: [join(root, "releases", "Movie.2020.BluRay-GRP.mkv")],
+			options,
+		});
+		expect(scan.rows[0]!.sources.map((s) => s.name)).toEqual(["Movie.2020.BluRay-GRP.mkv"]);
+		expect(scan.rows[0]!.additions.map((a) => a.key)).toEqual(["en:main"]);
+		const folder = await scanReleaseAudio({ targets: [join(root, "movie", "Movie (2020).mkv")], sourceDirs: [join(root, "releases")], options });
+		expect(folder.rows[0]!.sources).toEqual([]);
+	}, 30_000);
 });

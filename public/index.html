@@ -2153,7 +2153,7 @@
 						<div>
 							<h2>Font Check</h2>
 							<div class="repair-subtitle">
-								Find the fonts the subtitles of a folder use but its videos do not carry, then attach them or point the subtitles at a font the videos have.
+								Find the fonts the subtitles of your videos use but the videos do not carry, then attach them or point the subtitles at a font the videos have.
 							</div>
 						</div>
 						<button class="btn-close" id="close-fontcheck-btn">&times;</button>
@@ -2161,9 +2161,12 @@
 					<div class="modal-body repair-audit-body">
 						<div class="repair-file-picker">
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Folder</span>
+								<span class="repair-file-label">Videos</span>
 								<div id="fontcheck-selection" class="repair-file-selection"></div>
-								<button class="btn btn-ghost" type="button" id="fontcheck-pick-btn">Choose folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="fontcheck-pick-btn">Choose folder...</button>
+									<button class="btn btn-ghost" type="button" id="fontcheck-pick-videos-btn">Choose videos...</button>
+								</div>
 							</div>
 						</div>
 						<div class="repair-path-actions">
@@ -2309,14 +2312,20 @@
 					<div class="modal-body repair-audit-body">
 						<div class="repair-file-picker">
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Encodes folder</span>
+								<span class="repair-file-label">Encodes</span>
 								<div id="release-subs-target-selection" class="repair-file-selection"></div>
-								<button class="btn btn-ghost" type="button" id="release-subs-pick-target-btn">Choose folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="release-subs-pick-target-btn">Choose folder...</button>
+									<button class="btn btn-ghost" type="button" id="release-subs-pick-videos-btn">Choose encodes...</button>
+								</div>
 							</div>
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Release folders</span>
+								<span class="repair-file-label">Releases</span>
 								<div id="release-subs-sources" class="release-subs-sources"></div>
-								<button class="btn btn-ghost" type="button" id="release-subs-add-source-btn">Add folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="release-subs-add-source-btn">Add folder...</button>
+									<button class="btn btn-ghost" type="button" id="release-subs-add-source-file-btn">Add file...</button>
+								</div>
 							</div>
 						</div>
 						<div class="release-subs-options">
@@ -2368,14 +2377,20 @@
 					<div class="modal-body repair-audit-body">
 						<div class="repair-file-picker">
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Videos folder</span>
+								<span class="repair-file-label">Videos</span>
 								<div id="release-audio-target-selection" class="repair-file-selection"></div>
-								<button class="btn btn-ghost" type="button" id="release-audio-pick-target-btn">Choose folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="release-audio-pick-target-btn">Choose folder...</button>
+									<button class="btn btn-ghost" type="button" id="release-audio-pick-videos-btn">Choose videos...</button>
+								</div>
 							</div>
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Release folders</span>
+								<span class="repair-file-label">Releases</span>
 								<div id="release-audio-sources" class="release-subs-sources"></div>
-								<button class="btn btn-ghost" type="button" id="release-audio-add-source-btn">Add folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="release-audio-add-source-btn">Add folder...</button>
+									<button class="btn btn-ghost" type="button" id="release-audio-add-source-file-btn">Add file...</button>
+								</div>
 							</div>
 						</div>
 						<div class="release-subs-options">
@@ -2416,8 +2431,8 @@
 						<div>
 							<h2>Audio Tracks</h2>
 							<div class="repair-subtitle">
-								Give a folder of videos the audio an encode with your settings would have, without touching the video. Tracks are encoded to Opus, removed,
-								reordered and renamed as your audio settings say, unless you choose otherwise.
+								Give videos the audio an encode with your settings would have, without touching the video. Tracks are encoded to Opus, removed, reordered and
+								renamed as your audio settings say, unless you choose otherwise.
 							</div>
 						</div>
 						<button class="btn-close" id="close-audio-tracks-btn">&times;</button>
@@ -2425,9 +2440,12 @@
 					<div class="modal-body repair-audit-body">
 						<div class="repair-file-picker">
 							<div class="repair-file-choice">
-								<span class="repair-file-label">Videos folder</span>
+								<span class="repair-file-label">Videos</span>
 								<div id="audio-tracks-target-selection" class="repair-file-selection"></div>
-								<button class="btn btn-ghost" type="button" id="audio-tracks-pick-btn">Choose folder...</button>
+								<div class="repair-file-buttons">
+									<button class="btn btn-ghost" type="button" id="audio-tracks-pick-btn">Choose folder...</button>
+									<button class="btn btn-ghost" type="button" id="audio-tracks-pick-videos-btn">Choose videos...</button>
+								</div>
 							</div>
 						</div>
 						<div class="repair-path-actions">

@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync } from "fs";
 import { randomUUID } from "crypto";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig, FontCheckJobRequest, FontCheckProgress, SubtitleFileFontSource } from "../core/types";
 import { Logger } from "../core/logger";
@@ -11,7 +11,7 @@ import { readFontSource } from "../pipeline/subtitle-files";
 import { normalizeFontName } from "../subtitles/ass-classifier";
 import { addRepairJob, getAllJobs } from "../queue/store";
 import { mkvFiles } from "./hdr";
-import { resolveAllowedDirectory } from "./repair";
+import { resolveAllowedDirectory, resolveAllowedMkv } from "./repair";
 import { resolveFont } from "./subtitle-files";
 
 const TTL_MS = 6 * 3_600_000;
@@ -34,16 +34,33 @@ function prune(): void {
 	}
 }
 
+const MAX_VIDEOS = 2000;
+
+/** The folder all paths share, so a check of single videos is still labelled by where they are. */
+function commonFolder(paths: string[]): string {
+	let folder = dirname(paths[0]!);
+	while (!paths.every((path) => path.startsWith(`${folder}/`)) && folder !== dirname(folder)) folder = dirname(folder);
+	return folder;
+}
+
 const view = ({ controller, startedAt, ...progress }: Scan): FontCheckProgress => progress;
 
 export function registerFontCheckRoutes(app: Web, config: AppConfig): void {
-	/** Starts reading the subtitles of every MKV in a folder for fonts they use but do not carry. */
+	/** Starts reading the subtitles of every MKV in a folder, or of chosen videos, for fonts they use but do not carry. */
 	app.post("/api/font-check/scan", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { folder?: unknown; recursive?: unknown };
-			const folder = resolveAllowedDirectory(raw.folder, config);
-			const paths = mkvFiles(folder, raw.recursive === true);
-			if (!paths.length) throw new Error("The folder has no MKV files");
+			const raw = (await c.req.json()) as { folder?: unknown; targets?: unknown; recursive?: unknown };
+			let folder: string;
+			let paths: string[];
+			if (Array.isArray(raw.targets)) {
+				if (!raw.targets.length || raw.targets.length > MAX_VIDEOS) throw new Error(`Choose from 1 to ${MAX_VIDEOS} videos`);
+				paths = [...new Set(raw.targets.map((path) => resolveAllowedMkv(path, config, "Video")))];
+				folder = commonFolder(paths);
+			} else {
+				folder = resolveAllowedDirectory(raw.folder, config);
+				paths = mkvFiles(folder, raw.recursive === true);
+				if (!paths.length) throw new Error("The folder has no MKV files");
+			}
 			prune();
 			const id = randomUUID();
 			const scan: Scan = { id, done: 0, total: paths.length, current: "", controller: new AbortController(), startedAt: Date.now() };
@@ -65,7 +82,7 @@ export function registerFontCheckRoutes(app: Web, config: AppConfig): void {
 
 	app.get("/api/font-check/scan/:id", (c) => {
 		const scan = scans.get(c.params.id!);
-		if (!scan) return c.json({ error: "The font check has expired. Check the folder again." }, 404);
+		if (!scan) return c.json({ error: "The font check has expired. Check the fonts again." }, 404);
 		return c.json(view(scan));
 	});
 
@@ -82,7 +99,7 @@ export function registerFontCheckRoutes(app: Web, config: AppConfig): void {
 		try {
 			const raw = (await c.req.json()) as Partial<FontCheckJobRequest>;
 			const result = typeof raw.scanId === "string" ? scans.get(raw.scanId)?.result : undefined;
-			if (!result) throw new Error("The font check has expired. Check the folder again.");
+			if (!result) throw new Error("The font check has expired. Check the fonts again.");
 			const requested = raw.library ?? [];
 			if (!Array.isArray(raw.uploads) || !Array.isArray(raw.maps) || !Array.isArray(requested) || raw.uploads.length + raw.maps.length + requested.length > 300)
 				throw new Error("Invalid font fixes");

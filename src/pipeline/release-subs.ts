@@ -1,4 +1,4 @@
-import { readdirSync } from "fs";
+import { readdirSync, statSync } from "fs";
 import { basename, extname, join } from "path";
 import { mapPool } from "../core/concurrency";
 import type {
@@ -362,7 +362,12 @@ export function mkvFilesIn(dir: string): string[] {
 
 export type ReleaseSource = ReleaseRow["sources"][number];
 
-/** Every target's episode in each release folder, and the release files that matched no target. */
+/** The MKVs of a release folder, or the release itself when it is one file. */
+export function releaseFilesIn(path: string): string[] {
+	return statSync(path).isFile() ? [path] : mkvFilesIn(path);
+}
+
+/** Every target's episode in each release folder or file, and the release files that matched no target. */
 export function pairReleaseFolders(
 	targets: string[],
 	folders: Array<string | ReleaseFolder>,
@@ -372,7 +377,7 @@ export function pairReleaseFolders(
 	for (const folder of folders.map((f) => (typeof f === "string" ? { path: f } : f))) {
 		const { pairs, unmatchedSources: unmatched } = pairRepairFiles(
 			targets,
-			mkvFilesIn(folder.path).filter((path) => !targets.includes(path)),
+			releaseFilesIn(folder.path).filter((path) => !targets.includes(path)),
 			{ absoluteOffset: folder.offset },
 		);
 		unmatchedSources.push(...unmatched);

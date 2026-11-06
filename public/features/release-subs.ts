@@ -3,14 +3,16 @@ import { createReleaseSubtitleJobs, fetchReleaseCheck, fetchReleaseScan } from "
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
-import { openRepairFolderPicker } from "./repair";
+import { openMkvVideosPicker, openRepairFolderPicker } from "./repair";
 import { update } from "./polling";
 
 const MAX_RELEASE_FOLDERS = 10;
 
+/** A folder of encodes, or the encodes chosen one by one. Only one of them is set. */
 let targetDir = "";
-/** Release folders, each with the numbering offset typed for it, empty for automatic. */
-let releaseDirs: Array<{ path: string; offset: string }> = [];
+let targetVideos: string[] = [];
+/** Release folders and files, each folder with the numbering offset typed for it, empty for automatic. */
+let releaseDirs: Array<{ path: string; offset: string; file?: boolean }> = [];
 let scan: ReleaseScan | null = null;
 /** What each cell takes, by episode then column: a candidate's id, or "" to leave the cell as the encode has it. */
 let selections = new Map<string, Map<string, string>>();
@@ -46,7 +48,7 @@ function setError(message: string): void {
 }
 
 const currentOptions = () => ({
-	targetDir,
+	...(targetDir ? { targetDir } : { targets: targetVideos }),
 	sourceDirs: releaseDirs.map((dir) => ({ path: dir.path, ...(dir.offset.trim() ? { offset: Number(dir.offset) } : {}) })),
 	preferredSources: parseList(inputById("release-subs-preferred").value),
 	replaceWorse: inputById("release-subs-replace").checked,
@@ -57,24 +59,46 @@ function folderHtml(path: string): string {
 	return `<span class="repair-file-name" title="${escapeHtml(path)}">${escapeHtml(fileName(path))}</span><span class="repair-file-folder">${escapeHtml(path)}</span>`;
 }
 
+const folderOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
+
+function fileHtml(path: string): string {
+	return `<span class="repair-file-name" title="${escapeHtml(path)}">${escapeHtml(fileName(path))}</span><span class="repair-file-folder">${escapeHtml(folderOf(path))}</span>`;
+}
+
+function targetHtml(): string {
+	if (targetDir) return folderHtml(targetDir);
+	if (targetVideos.length === 1) return fileHtml(targetVideos[0]!);
+	if (targetVideos.length) {
+		const folders = [...new Set(targetVideos.map(folderOf))];
+		return `<span class="repair-file-name" title="${escapeHtml(targetVideos.map(fileName).join("\n"))}">${targetVideos.length} encodes</span><span class="repair-file-folder">${escapeHtml(folders.length === 1 ? folders[0] : `${folders.length} folders`)}</span>`;
+	}
+	return '<span class="repair-file-empty">No encodes selected</span>';
+}
+
 function renderFolders(): void {
-	byId("release-subs-target-selection").innerHTML = targetDir ? folderHtml(targetDir) : '<span class="repair-file-empty">No encodes folder selected</span>';
+	byId("release-subs-target-selection").innerHTML = targetHtml();
 	byId("release-subs-sources").innerHTML = releaseDirs.length
 		? releaseDirs
 				.map(
 					(dir, i) => `<div class="release-subs-source">
-						<div class="repair-file-selection">${folderHtml(dir.path)}</div>
-						<label class="release-subs-offset" title="For a release numbered across seasons: what it adds to the episode number, such as 12 when S02E01 is episode 13. Empty finds it from the file names.">Offset
+						<div class="repair-file-selection">${dir.file ? fileHtml(dir.path) : folderHtml(dir.path)}</div>
+						${
+							dir.file
+								? ""
+								: `<label class="release-subs-offset" title="For a release numbered across seasons: what it adds to the episode number, such as 12 when S02E01 is episode 13. Empty finds it from the file names.">Offset
 							<input type="number" min="1" max="5000" class="repair-input" data-release-offset="${i}" placeholder="auto" value="${escapeHtml(dir.offset)}">
-						</label>
+						</label>`
+						}
 						<button class="btn btn-ghost btn-sm" type="button" data-release-remove-dir="${i}">Remove</button>
 					</div>`,
 				)
 				.join("")
-		: '<span class="repair-file-empty">No release folders added</span>';
+		: '<span class="repair-file-empty">No releases added</span>';
 	buttonById("release-subs-add-source-btn").disabled = releaseDirs.length >= MAX_RELEASE_FOLDERS;
+	buttonById("release-subs-add-source-file-btn").disabled = releaseDirs.length >= MAX_RELEASE_FOLDERS;
+	byId("release-subs-pick-videos-btn").textContent = targetVideos.length ? "Change encodes..." : "Choose encodes...";
 	const button = buttonById("release-subs-scan-btn");
-	button.disabled = scanning || !targetDir || !releaseDirs.length;
+	button.disabled = scanning || !(targetDir || targetVideos.length) || !releaseDirs.length;
 	button.textContent = scanning ? "Reading releases..." : scan ? "Read releases again" : "Read releases";
 }
 
@@ -183,7 +207,7 @@ function plannedRows() {
 function renderGrid(): void {
 	const grid = byId("release-subs-grid");
 	if (!scan) {
-		grid.innerHTML = '<div class="repair-empty">Choose the encodes folder and at least one folder of other releases, then read them.</div>';
+		grid.innerHTML = '<div class="repair-empty">Choose a folder of encodes or single encodes, and at least one release folder or file, then read them.</div>';
 		byId("release-subs-summary").textContent = "";
 		byId("release-subs-unmatched").innerHTML = "";
 		renderQueueButton();
@@ -197,7 +221,7 @@ function renderGrid(): void {
 		.join("");
 	grid.innerHTML = scan.rows.length
 		? `<table class="release-grid"><thead><tr><th class="release-row-head" scope="col">Episode</th>${head}</tr></thead><tbody>${scan.rows.map(renderRow).join("")}</tbody></table>`
-		: '<div class="repair-empty">The encodes folder has no MKV files.</div>';
+		: '<div class="repair-empty">There are no MKV files to add subtitles to.</div>';
 
 	const planned = plannedRows();
 	const tracks = planned.reduce((n, r) => n + r.changes, 0);
@@ -207,9 +231,11 @@ function renderGrid(): void {
 	if (unpaired) parts.push(`${unpaired} without a release`);
 	if (isStale()) parts.push("the folders or options changed, read the releases again");
 	byId("release-subs-summary").textContent = parts.join(" | ");
-	byId("release-subs-unmatched").innerHTML = scan.unmatchedSources.length
-		? `<details class="repair-layout-files"><summary>${scan.unmatchedSources.length} release file${scan.unmatchedSources.length === 1 ? "" : "s"} matched no encode</summary>${scan.unmatchedSources.map((p) => `<div>${escapeHtml(fileName(p))}</div>`).join("")}</details>`
-		: "";
+	// With encodes chosen one by one, the other episodes of a release folder are left out on purpose.
+	byId("release-subs-unmatched").innerHTML =
+		scan.unmatchedSources.length && targetDir
+			? `<details class="repair-layout-files"><summary>${scan.unmatchedSources.length} release file${scan.unmatchedSources.length === 1 ? "" : "s"} matched no encode</summary>${scan.unmatchedSources.map((p) => `<div>${escapeHtml(fileName(p))}</div>`).join("")}</details>`
+			: "";
 	renderQueueButton();
 }
 
@@ -243,6 +269,27 @@ export function closeReleaseSubsIfOutside(event: MouseEvent): void {
 export function pickReleaseSubsTargetFolder(): void {
 	openRepairFolderPicker((path) => {
 		targetDir = path;
+		targetVideos = [];
+		renderFolders();
+		renderGrid();
+	});
+}
+
+/** One encode, a few, or every encode of a folder, chosen in the picker. */
+export function pickReleaseSubsTargetVideos(): void {
+	openMkvVideosPicker(targetVideos, "Choose encodes to add subtitles to", (paths) => {
+		targetVideos = paths;
+		targetDir = "";
+		renderFolders();
+		renderGrid();
+	});
+}
+
+/** Release files added one by one, such as the one release of a movie in a folder of others. */
+export function addReleaseSubsSourceFiles(): void {
+	openMkvVideosPicker([], "Choose release files", (paths) => {
+		for (const path of paths)
+			if (!releaseDirs.some((dir) => dir.path === path) && releaseDirs.length < MAX_RELEASE_FOLDERS) releaseDirs.push({ path, offset: "", file: true });
 		renderFolders();
 		renderGrid();
 	});

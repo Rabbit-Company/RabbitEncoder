@@ -2,11 +2,16 @@ import type { AudioTrackAction, AudioTrackChoice, AudioTracksScan, PlannedAudioT
 import { createAudioTracksJobs, fetchAudioTracksScan } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
-import { openRepairFolderPicker } from "./repair";
+import { openMkvVideosPicker, openRepairFolderPicker } from "./repair";
 import { update } from "./polling";
 
+/** A folder of videos, or the videos chosen one by one. Only one of them is set. */
 let targetDir = "";
-let scannedDir = "";
+let targetVideos: string[] = [];
+/** The selection the plan was read for. Another one makes it stale. */
+let scannedFor = "";
+const selection = () => (targetDir ? { targetDir } : { targets: targetVideos });
+const selectionKey = () => JSON.stringify(selection());
 let scan: AudioTracksScan | null = null;
 /** A choice per kind of track, which applies to that track in every file. */
 let choices: Record<string, AudioTrackChoice> = {};
@@ -30,12 +35,25 @@ function setError(message: string): void {
 	error.style.display = message ? "" : "none";
 }
 
+const folderOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
+
+function targetHtml(): string {
+	const named = (name: string, title: string, folder: string) =>
+		`<span class="repair-file-name" title="${escapeHtml(title)}">${escapeHtml(name)}</span><span class="repair-file-folder">${escapeHtml(folder)}</span>`;
+	if (targetDir) return named(fileName(targetDir), targetDir, targetDir);
+	if (targetVideos.length === 1) return named(fileName(targetVideos[0]!), targetVideos[0]!, folderOf(targetVideos[0]!));
+	if (targetVideos.length) {
+		const folders = [...new Set(targetVideos.map(folderOf))];
+		return named(`${targetVideos.length} videos`, targetVideos.map(fileName).join("\n"), folders.length === 1 ? folders[0]! : `${folders.length} folders`);
+	}
+	return '<span class="repair-file-empty">No videos selected</span>';
+}
+
 function renderFolder(): void {
-	byId("audio-tracks-target-selection").innerHTML = targetDir
-		? `<span class="repair-file-name" title="${escapeHtml(targetDir)}">${escapeHtml(fileName(targetDir))}</span><span class="repair-file-folder">${escapeHtml(targetDir)}</span>`
-		: '<span class="repair-file-empty">No videos folder selected</span>';
+	byId("audio-tracks-target-selection").innerHTML = targetHtml();
+	byId("audio-tracks-pick-videos-btn").textContent = targetVideos.length ? "Change videos..." : "Choose videos...";
 	const button = buttonById("audio-tracks-scan-btn");
-	button.disabled = loading || !targetDir;
+	button.disabled = loading || !(targetDir || targetVideos.length);
 	button.textContent = loading ? "Reading tracks..." : scan ? "Read tracks again" : "Read tracks";
 }
 
@@ -93,12 +111,17 @@ function changedFiles(): string[] {
 
 function render(): void {
 	renderFolder();
-	byId("audio-tracks-types").innerHTML = scan ? renderTypes() : '<div class="repair-empty">Choose a folder of videos, then read their tracks.</div>';
+	byId("audio-tracks-types").innerHTML = scan
+		? renderTypes()
+		: '<div class="repair-empty">Choose a folder of videos or single videos, then read their tracks.</div>';
 	byId("audio-tracks-files").innerHTML = renderFiles();
 	const changed = changedFiles().length;
-	const stale = !!scan && scannedDir !== targetDir;
+	const stale = !!scan && scannedFor !== selectionKey();
 	byId("audio-tracks-summary").textContent = scan
-		? [`${changed} of ${scan.files.length} file${scan.files.length === 1 ? "" : "s"} change`, stale ? "the folder changed, read the tracks again" : ""]
+		? [
+				`${changed} of ${scan.files.length} file${scan.files.length === 1 ? "" : "s"} ${changed === 1 ? "changes" : "change"}`,
+				stale ? "the folder changed, read the tracks again" : "",
+			]
 				.filter(Boolean)
 				.join(" | ")
 		: "";
@@ -112,8 +135,8 @@ async function load(): Promise<void> {
 	loading = true;
 	render();
 	try {
-		scan = await fetchAudioTracksScan({ targetDir, choices });
-		scannedDir = targetDir;
+		scan = await fetchAudioTracksScan({ ...selection(), choices });
+		scannedFor = selectionKey();
 	} catch (error) {
 		setError(errorMessage(error));
 	} finally {
@@ -139,12 +162,22 @@ export function closeAudioTracksIfOutside(event: MouseEvent): void {
 export function pickAudioTracksFolder(): void {
 	openRepairFolderPicker((path) => {
 		targetDir = path;
+		targetVideos = [];
+		render();
+	});
+}
+
+/** One episode, a few, or every video of a folder, chosen in the picker. */
+export function pickAudioTracksVideos(): void {
+	openMkvVideosPicker(targetVideos, "Choose videos to redo the audio of", (paths) => {
+		targetVideos = paths;
+		targetDir = "";
 		render();
 	});
 }
 
 export async function scanAudioTracks(): Promise<void> {
-	if (scannedDir !== targetDir) choices = {};
+	if (scannedFor !== selectionKey()) choices = {};
 	await load();
 }
 
