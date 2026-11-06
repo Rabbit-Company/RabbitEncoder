@@ -432,7 +432,7 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio";
 
 /** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
  * the scenes of a Dolby Vision original, or take it from a file. */
@@ -653,6 +653,84 @@ export interface ReleaseCheck {
 	matched: boolean;
 	coveredShare: number;
 	detail: string;
+}
+
+/** One audio track of another release a grid cell can take. */
+export interface ReleaseAudioCandidate {
+	sourcePath: string;
+	trackId: number;
+	codec: string;
+	format: string;
+	language: string;
+	title: string;
+	credit: string | null;
+	channels: number;
+	bitrate: number;
+	lossless: boolean;
+	isOriginal: boolean;
+}
+
+export interface ReleaseAudioCell {
+	key: string;
+	language: string;
+	kind: string;
+	have: { trackId: number; title: string; language: string; format: string }[];
+	candidates: ReleaseAudioCandidate[];
+	action: ReleaseCellAction;
+	chosen?: ReleaseAudioCandidate;
+}
+
+export interface ReleaseAudioRow {
+	targetPath: string;
+	targetName: string;
+	sources: ReleaseRow["sources"];
+	cells: ReleaseAudioCell[];
+}
+
+export interface ReleaseAudioScan {
+	columns: ReleaseColumn[];
+	rows: ReleaseAudioRow[];
+	unmatchedSources: string[];
+}
+
+export type AudioTrackChoice = "auto" | "copy" | "encode" | "remove";
+export type AudioTrackAction = "copy" | "encode" | "remove";
+
+export interface PlannedAudioTrack {
+	trackId: number;
+	signature: string;
+	language: string;
+	kind: string;
+	format: string;
+	currentName: string;
+	suggested: AudioTrackAction;
+	reason: string;
+	action: AudioTrackAction;
+	bitrate: number;
+	position: number | null;
+	trackName: string;
+	isDefault: boolean;
+}
+
+export interface AudioTracksFilePlan {
+	path: string;
+	name: string;
+	tracks: PlannedAudioTrack[];
+	changes: string[];
+}
+
+export interface AudioTracksType {
+	signature: string;
+	label: string;
+	format: string;
+	files: number;
+	suggested: AudioTrackAction | "mixed";
+	reason: string;
+}
+
+export interface AudioTracksScan {
+	types: AudioTracksType[];
+	files: AudioTracksFilePlan[];
 }
 
 export interface RepairBatchPairing {
@@ -954,6 +1032,8 @@ export interface Job {
 	repairPlan?: RepairPlan;
 	hdrPlan?: HdrPlan;
 	grainPlan?: GrainPlan;
+	/** Set on audio jobs that redo a video's own tracks, as opposed to adding tracks from releases. */
+	audioTracksPlan?: unknown;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 

@@ -31,22 +31,18 @@ import {
 } from "../core/process";
 import {
 	detectAudioTrackType,
-	sortAudioStreams,
-	deduplicateAudioStreams,
 	detectSubtitleTrackType,
 	sortSubtitleStreams,
 	analyzeSubtitleStreams,
-	normalizeLanguageGroup,
 	deduplicateSubtitleStreams,
 	filterStreamsByLanguage,
 	sanitizeLanguageTag,
 	filterSubtitleTypes,
-	filterAudioTypes,
-	buildAudioTrackName,
 	isTextSubtitleCodec,
 	DEFAULT_IGNORE_KEYWORD,
 	filterIgnoredTracks,
 } from "../tracks/tracks";
+import { audioDefaults, audioTrackName, canKeepOpus, opusBitrateFor, opusencArgs, selectAudioStreams } from "../audio/audio-step";
 import { planSubtitleTracks, subtitleFlagArgs } from "../tracks/subtitle-plan";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
@@ -1709,49 +1705,8 @@ export async function encodeJob(
 			setStep(S_AUDIO, { status: "active", progress: 0 });
 			updateJob({ status: "encoding_audio" });
 
-			const allAudioStreams = filterIgnoredTracks(probe.audioStreams || [], DEFAULT_IGNORE_KEYWORD, "audio");
-
-			if (opts.precomputed) {
-				// Preview: reuse the whole-source audio selection so every clip keeps identical ordering/naming.
-				audioStreams = opts.precomputed.audioStreams;
-			} else {
-				const allowedAudioLangs = job.settings.audioLanguages || [];
-				const langFiltered = filterStreamsByLanguage(allAudioStreams, allowedAudioLangs, "audio");
-				const skippedLang = allAudioStreams.length - langFiltered.length;
-				if (skippedLang > 0) Logger.info(`[audio] Filtered ${skippedLang} track(s) not in [${allowedAudioLangs.join(", ")}]`);
-
-				const typeFiltered = filterAudioTypes(
-					langFiltered,
-					{
-						removeCommentary: job.settings.removeCommentaryAudio,
-						removeDescriptive: job.settings.removeDescriptiveAudio,
-						removeKaraoke: job.settings.removeKaraokeAudio,
-						dropCompatibility: job.settings.dropCompatibilityAudio,
-					},
-					audioDetect,
-				);
-				const droppedByType = langFiltered.length - typeFiltered.length;
-				if (droppedByType > 0) Logger.info(`[audio] Dropped ${droppedByType} track(s) by type/compatibility filters`);
-
-				const sorted = sortAudioStreams(typeFiltered, {
-					languagePriority: job.settings.audioLanguagePriority,
-					preferUncensored: job.settings.preferUncensoredAudio,
-					detect: audioDetect,
-				});
-
-				audioStreams = job.settings.dedupeAudio
-					? deduplicateAudioStreams(sorted, {
-							collapseChannels: job.settings.keepBestAudioChannelsOnly,
-							codecPriority: job.settings.audioCodecPriority,
-							preferUncensored: job.settings.preferUncensoredAudio,
-							detect: audioDetect,
-						})
-					: sorted;
-
-				if (job.settings.dedupeAudio && sorted.length !== audioStreams.length) {
-					Logger.info(`[audio] Deduplicated ${sorted.length - audioStreams.length} redundant track(s)`);
-				}
-			}
+			// Preview: reuse the whole-source audio selection so every clip keeps identical ordering/naming.
+			audioStreams = opts.precomputed ? opts.precomputed.audioStreams : selectAudioStreams(probe.audioStreams || [], job.settings);
 
 			const sortedTypes = audioStreams.map((s) => `${s.language || "und"}:${detectAudioTrackType(s, audioDetect)}:${s.channels || "?"}ch`);
 			Logger.info(`[audio] Track order: ${sortedTypes.join(", ")}`);
@@ -1785,15 +1740,13 @@ export async function encodeJob(
 					const opusFile = join(tempDir, `audio_${i}.opus`);
 					encodedAudioFiles.push(opusFile);
 
-					const layout = normalizeLayout(stream.channelLayout, stream.channels);
-					const bitrate = getOpusBitrateForLayout(layout, job.settings.audioBitrates);
+					const bitrate = opusBitrateFor(stream, job.settings);
 
 					const delayMs = stream.delayMs;
 					const delaySec = delayMs / 1000;
 
-					const isOpusSource = (stream.codec || "").toLowerCase() === "opus";
 					const sourceKbps = stream.bitrate ? stream.bitrate / 1000 : undefined;
-					const canCopy = isOpusSource && delayMs === 0 && sourceKbps !== undefined && sourceKbps <= bitrate;
+					const canCopy = delayMs === 0 && canKeepOpus(stream, bitrate);
 
 					if (canCopy) {
 						const copyArgs = [
@@ -1820,7 +1773,7 @@ export async function encodeJob(
 						}
 
 						audioJobs.push({ index: i, flacFile, opusFile, bitrate, copy: true });
-						Logger.info(`[audio] Stream ${i} already Opus @ ~${Math.round(sourceKbps)}kbps (<= ${bitrate}kbps target). Copying without re-encode.`);
+						Logger.info(`[audio] Stream ${i} already Opus @ ~${Math.round(sourceKbps ?? 0)}kbps (<= ${bitrate}kbps target). Copying without re-encode.`);
 
 						setStep(S_AUDIO, {
 							progress: 5 + Math.round(((i + 1) / audioStreams.length) * 35),
@@ -1878,15 +1831,7 @@ export async function encodeJob(
 								continue;
 							}
 
-							const opusArgs = ["opusenc", "--bitrate", String(aj.bitrate)];
-							if (job.settings.noPhaseInv) {
-								opusArgs.push("--no-phase-inv");
-							}
-							opusArgs.push("--discard-comments");
-							opusArgs.push("--discard-pictures");
-							opusArgs.push(aj.flacFile, aj.opusFile);
-
-							const opusRes = await run(opusArgs, { signal: stageSignal });
+							const opusRes = await run(opusencArgs(aj.flacFile, aj.opusFile, aj.bitrate, job.settings), { signal: stageSignal });
 							if (opusRes.code !== 0) {
 								throw new Error(`Audio encoding failed for stream ${aj.index}: ${opusRes.stderr || opusRes.stdout}`);
 							}
@@ -2425,22 +2370,19 @@ export async function encodeJob(
 
 		if (!skipAudioEncode) {
 			// Audio tracks
-			const defaultAssigned = new Set<string>();
+			const trackTypes = audioStreams.map((stream) => detectAudioTrackType(stream, audioDetect));
+			const defaults = audioDefaults(audioStreams.map((stream, i) => ({ language: stream.language, trackType: trackTypes[i]! })));
 
 			for (let i = 0; i < audioStreams.length; i++) {
 				const stream = audioStreams[i]!;
-				const trackType = detectAudioTrackType(stream, audioDetect);
-				const lang = stream.language || "und";
-				const langGroup = normalizeLanguageGroup(lang);
-
-				const isDefault = trackType === "main" && !defaultAssigned.has(langGroup);
-				if (isDefault) defaultAssigned.add(langGroup);
+				const trackType = trackTypes[i]!;
+				const isDefault = defaults[i]!;
 
 				if (stream.language) {
 					mkvArgs.push("--language", `0:${sanitizeLanguageTag(stream.language, `audio idx ${stream.index}`)}`);
 				}
 
-				const audioName = buildAudioTrackName(trackType, stream.title);
+				const audioName = audioTrackName(trackType, stream.title);
 				mkvArgs.push("--track-name", `0:${audioName}`);
 				mkvArgs.push("--default-track-flag", `0:${isDefault ? "1" : "0"}`);
 				mkvArgs.push("--forced-display-flag", "0:0");

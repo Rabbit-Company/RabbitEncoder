@@ -217,12 +217,19 @@ export function detectSourceTag(filename: string): string {
 }
 
 /**
+ * A release group after the last tag block, as in `[x264]-Group`. Group names
+ * can be in any script and have spaces, such as `Lolicons Anônimos`, but start
+ * with a letter or digit and hold no brackets.
+ */
+const TRAILING_GROUP = /\]-([\p{L}\p{N}][\p{L}\p{N}\p{M}._&'+ -]*)$/u;
+
+/**
  * Extract release group from the end of a filename.
  * Pattern: `]-GroupName` at the end of the stem.
  */
 export function detectReleaseGroup(filename: string): string | null {
-	const match = filename.match(/\]-([A-Za-z0-9._&-]+)$/);
-	return match?.[1] ?? null;
+	const match = filename.trim().match(TRAILING_GROUP);
+	return match?.[1]?.trim() || null;
 }
 
 /**
@@ -263,7 +270,7 @@ export function extractBaseTitle(stem: string): string {
 	s = s.replace(/\s*\[imdbid-tt\d+\]\s*/gi, " ").trim();
 
 	// Trailing release group: `]-Group` -> `]`
-	s = s.replace(/(\])-[A-Za-z0-9._&-]+$/, "$1");
+	s = s.replace(TRAILING_GROUP, "]");
 
 	// Trailing bracketed / parenthesised tag blocks, peeled one at a time.
 	let prev: string;

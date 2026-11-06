@@ -366,6 +366,7 @@ function renderPicker(): void {
 			.join("");
 	}
 	const chooseButton = buttonById("repair-picker-choose-btn");
+	byId("repair-picker-clear-btn").style.display = pickerFilesCallback && pickerSelectedPaths.size ? "" : "none";
 	if (pickerFilesCallback) {
 		const count = pickerSelectedPaths.size;
 		byId("repair-picker-note").textContent =
@@ -512,6 +513,7 @@ export async function openRepairPicker(purpose: PickerPurpose, title?: string): 
 						? roots.find((root) => root.name.startsWith("Input")) || roots.find((root) => root.name.startsWith("Library")) || roots[0]
 						: roots.find((root) => root.name.startsWith("Output")) || roots.find((root) => root.name.startsWith("Library")) || roots[0];
 			if (preferred) await togglePickerFolder(preferred.path);
+			if (pickerFilesCallback && pickerSelectedPaths.size) await revealPickerSelection();
 		} else byId("repair-picker-content").innerHTML = '<div class="library-empty">No input, output, or library folders are available.</div>';
 	} catch (error) {
 		byId("repair-picker-content").innerHTML = `<div class="library-empty">${escapeHtml(errorMessage(error))}</div>`;
@@ -590,6 +592,26 @@ export function handleRepairPickerClick(event: MouseEvent): void {
 		pickerSelectedPath = action.dataset.path;
 		renderPicker();
 	}
+}
+
+/** Opens the folders that hold the selected videos, so each can be seen and unselected. */
+async function revealPickerSelection(): Promise<void> {
+	for (const path of [...pickerSelectedPaths]) {
+		let current = pickerRoots.find((root) => path.startsWith(root.endsWith("/") ? root : `${root}/`));
+		while (current) {
+			const node = pickerNodes.get(current);
+			if (!node || node.type !== "directory") break;
+			if (!node.expanded) await togglePickerFolder(current);
+			const next: string | undefined = node.children?.find((child) => path.startsWith(`${child}/`));
+			current = next;
+		}
+	}
+}
+
+/** Unselects every video, including ones in folders that are not open. */
+export function clearRepairPickerSelection(): void {
+	pickerSelectedPaths.clear();
+	renderPicker();
 }
 
 export function filterRepairPicker(): void {

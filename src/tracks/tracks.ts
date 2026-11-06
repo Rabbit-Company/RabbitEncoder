@@ -1,8 +1,5 @@
 import type {
-	AudioChannelBitrates,
 	AudioCodecPriority,
-	AudioPreviewResult,
-	AudioPreviewTrack,
 	AudioStreamInfo,
 	AudioTrackType,
 	SubtitleFansubTiebreak,
@@ -19,7 +16,6 @@ import { join } from "path";
 import { readFileSync, unlinkSync, existsSync, statSync } from "fs";
 import { classifyAssLines } from "../subtitles/ass-classifier";
 import { LANG_ALIASES } from "../core/naming";
-import { getOpusBitrateForLayout, normalizeLayout } from "../pipeline/probe";
 import { planTargetLanguages, type KeptSubDescriptor } from "../translate/subtitle-translate";
 
 export const DEFAULT_IGNORE_KEYWORD = "RabbitIgnore";
@@ -2295,99 +2291,6 @@ export async function previewSubtitles(
 			output = combined.map((s) => byIndex.get(s.index)).filter((x): x is SubtitlePreviewTrack => !!x);
 		}
 	}
-
-	return { source, output };
-}
-
-export function previewAudio(
-	sourceStreams: AudioStreamInfo[],
-	bitrates: AudioChannelBitrates,
-	options: {
-		languages?: string[];
-		languagePriority?: string[];
-		collapseChannels?: boolean;
-		dedupe?: boolean;
-		removeCommentary?: boolean;
-		removeDescriptive?: boolean;
-		removeKaraoke?: boolean;
-		dropCompatibility?: boolean;
-		codecPriority?: AudioCodecPriority;
-		preferUncensored?: boolean;
-		renameTracks?: boolean;
-		trackNameFormat?: string;
-		detect?: AudioDetectOptions;
-	} = {},
-): AudioPreviewResult {
-	const detect = options.detect;
-
-	const source: AudioPreviewTrack[] = sourceStreams.map((s) => ({
-		index: s.index,
-		codec: s.codec || "unknown",
-		language: s.language || "und",
-		flag: languageToFlag(s.language),
-		title: s.title || "",
-		trackType: detectAudioTrackType(s, detect),
-		channels: s.channels,
-		channelLayout: normalizeLayout(s.channelLayout, s.channels),
-		bitrate: s.bitrate,
-		isDefault: false,
-		isOriginal: s.isOriginal || false,
-	}));
-
-	const ignoredTracks = filterIgnoredTracks(sourceStreams, DEFAULT_IGNORE_KEYWORD, "audio");
-	const langFiltered = filterStreamsByLanguage(ignoredTracks, options.languages || [], "audio");
-	const typeFiltered = filterAudioTypes(
-		langFiltered,
-		{
-			removeCommentary: options.removeCommentary,
-			removeDescriptive: options.removeDescriptive,
-			removeKaraoke: options.removeKaraoke,
-			dropCompatibility: options.dropCompatibility ?? true,
-		},
-		detect,
-	);
-	const sorted = sortAudioStreams(typeFiltered, {
-		languagePriority: options.languagePriority,
-		preferUncensored: options.preferUncensored,
-		detect,
-	});
-	const finalStreams =
-		(options.dedupe ?? true)
-			? deduplicateAudioStreams(sorted, {
-					collapseChannels: options.collapseChannels,
-					codecPriority: options.codecPriority,
-					preferUncensored: options.preferUncensored,
-					detect,
-				})
-			: sorted;
-
-	const renameTracks = options.renameTracks ?? false;
-	const defaultAssigned = new Set<string>();
-
-	const output: AudioPreviewTrack[] = finalStreams.map((s) => {
-		const trackType = detectAudioTrackType(s, detect);
-		const lang = s.language || "und";
-		const langGroup = normalizeLanguageGroup(lang);
-		const layout = normalizeLayout(s.channelLayout, s.channels);
-
-		const isDefault = trackType === "main" && !defaultAssigned.has(langGroup);
-		if (isDefault) defaultAssigned.add(langGroup);
-
-		return {
-			index: s.index,
-			codec: "opus",
-			language: lang,
-			flag: languageToFlag(lang),
-			title: renameTracks ? buildAudioTrackName(trackType, s.title, options.trackNameFormat) : "",
-			trackType,
-			channels: s.channels,
-			channelLayout: layout,
-			bitrate: s.bitrate,
-			outputBitrate: getOpusBitrateForLayout(layout, bitrates),
-			isDefault,
-			isOriginal: s.isOriginal || false,
-		};
-	});
 
 	return { source, output };
 }

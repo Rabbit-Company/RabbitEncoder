@@ -486,6 +486,7 @@ function updateButtons(): void {
 function renderVideo(): void {
 	const button = byId("subsearch-choose");
 	button.textContent = episodes.length ? "Change videos..." : "Choose videos...";
+	byId("subsearch-clear").style.display = episodes.length ? "" : "none";
 	if (!episodes.length) byId("subsearch-video-selection").innerHTML = '<span class="repair-file-empty">No video selected</span>';
 	else if (!isBatch())
 		byId("subsearch-video-selection").innerHTML =
@@ -569,19 +570,26 @@ export function closeSubtitleSearchIfOutside(event: MouseEvent): void {
 	if (event.target === event.currentTarget) closeSubtitleSearch();
 }
 
+/** Searches these videos from now on, with the title and numbers read from them again. */
+function setVideos(paths: string[]): void {
+	cancelRunning();
+	episodes = paths.map((path) => ({ path, search: null, error: "", choices: new Map(), credits: new Map(), applied: new Set() }));
+	for (const id of ["subsearch-title", "subsearch-year", "subsearch-season", "subsearch-episode", "subsearch-imdb"]) inputById(id).value = "";
+	kindSelect().value = "";
+	setDetectedKind();
+	resetResults();
+	renderVideo();
+}
+
 export function chooseSubtitleSearchVideo(): void {
 	openSubtitleSearchPicker(
 		episodes.map((ep) => ep.path),
-		(paths) => {
-			cancelRunning();
-			episodes = paths.map((path) => ({ path, search: null, error: "", choices: new Map(), credits: new Map(), applied: new Set() }));
-			for (const id of ["subsearch-title", "subsearch-year", "subsearch-season", "subsearch-episode", "subsearch-imdb"]) inputById(id).value = "";
-			kindSelect().value = "";
-			setDetectedKind();
-			resetResults();
-			renderVideo();
-		},
+		setVideos,
 	);
+}
+
+export function clearSubtitleSearchVideos(): void {
+	setVideos([]);
 }
 
 /** Stops a running search. The episodes already searched keep their results. */

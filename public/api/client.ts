@@ -23,6 +23,9 @@ import type {
 	RepairAuditLanguageRemoval,
 	ReleaseCheck,
 	ReleaseScan,
+	ReleaseAudioScan,
+	AudioTracksScan,
+	AudioTrackChoice,
 	RepairBatchPairing,
 	RepairInspection,
 	RepairLayoutTrackPlan,
@@ -300,6 +303,58 @@ export async function createReleaseSubtitleJobs(options: {
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle jobs");
+	return data;
+}
+
+export async function fetchReleaseAudioScan(options: { targetDir: string; sourceDirs: Array<{ path: string; offset?: number }> }): Promise<ReleaseAudioScan> {
+	const response = await authFetch(`${API}/api/release-audio/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the releases");
+	return data;
+}
+
+export async function createReleaseAudioJobs(options: {
+	rows: { targetPath: string; sourcePaths: string[]; choices: Record<string, { sourcePath: string; trackId: number } | null> }[];
+	replaceTarget: boolean;
+	applySettings: boolean;
+}): Promise<{ jobIds: string[]; unchanged: number }> {
+	const response = await authFetch(`${API}/api/release-audio/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the audio jobs");
+	return data;
+}
+
+export async function fetchAudioTracksScan(options: { targetDir: string; choices: Record<string, AudioTrackChoice> }): Promise<AudioTracksScan> {
+	const response = await authFetch(`${API}/api/audio-tracks/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the audio tracks");
+	return data;
+}
+
+export async function createAudioTracksJobs(options: {
+	targets: string[];
+	choices: Record<string, AudioTrackChoice>;
+	replaceTarget: boolean;
+}): Promise<{ jobIds: string[]; unchanged: number }> {
+	const response = await authFetch(`${API}/api/audio-tracks/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the audio jobs");
 	return data;
 }
 

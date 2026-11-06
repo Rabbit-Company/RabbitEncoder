@@ -138,6 +138,7 @@ import {
 import {
 	applySubtitleSearch,
 	chooseSubtitleSearchVideo,
+	clearSubtitleSearchVideos,
 	closeSubtitleSearch,
 	closeSubtitleSearchIfOutside,
 	handleSubtitleSearchResultsChange,
@@ -180,6 +181,7 @@ import {
 	closeRepairPicker,
 	closeRepairPickerIfOutside,
 	chooseRepairPickerFile,
+	clearRepairPickerSelection,
 	clearRepairSource,
 	filterRepairPicker,
 	handleRepairEditorInput,
@@ -219,6 +221,28 @@ import {
 	queueReleaseSubs,
 	scanReleaseSubs,
 } from "../features/release-subs";
+import {
+	addReleaseAudioSourceFolder,
+	closeReleaseAudio,
+	closeReleaseAudioIfOutside,
+	handleReleaseAudioGridChange,
+	handleReleaseAudioGridClick,
+	handleReleaseAudioSourcesClick,
+	handleReleaseAudioSourcesInput,
+	openReleaseAudio,
+	pickReleaseAudioTargetFolder,
+	queueReleaseAudio,
+	scanReleaseAudio,
+} from "../features/release-audio";
+import {
+	closeAudioTracks,
+	closeAudioTracksIfOutside,
+	handleAudioTracksChoice,
+	openAudioTracks,
+	pickAudioTracksFolder,
+	queueAudioTracks,
+	scanAudioTracks,
+} from "../features/audio-tracks";
 import {
 	closeRepairAudit,
 	closeRepairAuditIfOutside,
@@ -295,6 +319,26 @@ export function initEventListeners() {
 	byId("release-subs-grid").addEventListener("change", handleReleaseSubsGridChange);
 	byId("release-subs-grid").addEventListener("click", handleReleaseSubsGridClick);
 	byId("release-subs-queue-btn").addEventListener("click", queueReleaseSubs);
+	byId("open-release-audio-btn").addEventListener("click", openReleaseAudio);
+	byId("close-release-audio-btn").addEventListener("click", closeReleaseAudio);
+	byId("release-audio-cancel-btn").addEventListener("click", closeReleaseAudio);
+	byId("release-audio-modal").addEventListener("click", closeReleaseAudioIfOutside);
+	byId("release-audio-pick-target-btn").addEventListener("click", pickReleaseAudioTargetFolder);
+	byId("release-audio-add-source-btn").addEventListener("click", addReleaseAudioSourceFolder);
+	byId("release-audio-sources").addEventListener("click", handleReleaseAudioSourcesClick);
+	byId("release-audio-sources").addEventListener("input", handleReleaseAudioSourcesInput);
+	byId("release-audio-scan-btn").addEventListener("click", scanReleaseAudio);
+	byId("release-audio-grid").addEventListener("change", handleReleaseAudioGridChange);
+	byId("release-audio-grid").addEventListener("click", handleReleaseAudioGridClick);
+	byId("release-audio-queue-btn").addEventListener("click", queueReleaseAudio);
+	byId("open-audio-tracks-btn").addEventListener("click", openAudioTracks);
+	byId("close-audio-tracks-btn").addEventListener("click", closeAudioTracks);
+	byId("audio-tracks-cancel-btn").addEventListener("click", closeAudioTracks);
+	byId("audio-tracks-modal").addEventListener("click", closeAudioTracksIfOutside);
+	byId("audio-tracks-pick-btn").addEventListener("click", pickAudioTracksFolder);
+	byId("audio-tracks-scan-btn").addEventListener("click", scanAudioTracks);
+	byId("audio-tracks-types").addEventListener("change", handleAudioTracksChoice);
+	byId("audio-tracks-queue-btn").addEventListener("click", queueAudioTracks);
 	byId("open-fontcheck-btn").addEventListener("click", openFontCheck);
 	byId("close-fontcheck-btn").addEventListener("click", closeFontCheck);
 	byId("fontcheck-cancel-btn").addEventListener("click", closeFontCheck);
@@ -337,6 +381,7 @@ export function initEventListeners() {
 	byId("repair-picker-content").addEventListener("click", handleRepairPickerClick);
 	byId("repair-picker-search").addEventListener("input", filterRepairPicker);
 	byId("repair-picker-choose-btn").addEventListener("click", chooseRepairPickerFile);
+	byId("repair-picker-clear-btn").addEventListener("click", clearRepairPickerSelection);
 	byId("repair-tracks").addEventListener("input", handleRepairEditorInput);
 	byId("repair-tracks").addEventListener("change", handleRepairEditorInput);
 	byId("repair-tracks").addEventListener("click", handleRepairTrackMove);
@@ -417,6 +462,7 @@ export function initEventListeners() {
 	byId("subsearch-cancel").addEventListener("click", closeSubtitleSearch);
 	byId("subsearch-modal").addEventListener("click", closeSubtitleSearchIfOutside);
 	byId("subsearch-choose").addEventListener("click", chooseSubtitleSearchVideo);
+	byId("subsearch-clear").addEventListener("click", clearSubtitleSearchVideos);
 	byId("subsearch-kind").addEventListener("change", updateSubtitleSearchKind);
 	byId("subsearch-search").addEventListener("click", () => void runSubtitleSearch());
 	byId("subsearch-results").addEventListener("click", handleSubtitleSearchResultsClick);

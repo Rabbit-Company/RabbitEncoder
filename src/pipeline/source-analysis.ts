@@ -5,13 +5,11 @@ import {
 	filterStreamsByLanguage,
 	filterSubtitleTypes,
 	deduplicateSubtitleStreams,
-	filterAudioTypes,
-	sortAudioStreams,
-	deduplicateAudioStreams,
 	filterIgnoredTracks,
 	DEFAULT_IGNORE_KEYWORD,
 } from "../tracks/tracks";
 import { Logger } from "../core/logger";
+import { selectAudioStreams } from "../audio/audio-step";
 
 export async function analyzeSourceTracks(
 	probe: ProbeResult,
@@ -21,50 +19,7 @@ export async function analyzeSourceTracks(
 	signal: AbortSignal,
 ): Promise<SourceTrackPlan> {
 	// Audio
-	const allAudioStreams = filterIgnoredTracks(probe.audioStreams || [], DEFAULT_IGNORE_KEYWORD, "audio");
-
-	const audioDetect = {
-		commentary: settings.detectCommentaryAudio,
-		descriptive: settings.detectDescriptiveAudio,
-		karaoke: settings.detectKaraokeAudio,
-	};
-
-	const allowedAudioLangs = settings.audioLanguages || [];
-	const langFiltered = filterStreamsByLanguage(allAudioStreams, allowedAudioLangs, "audio");
-	const skippedLang = allAudioStreams.length - langFiltered.length;
-	if (skippedLang > 0) Logger.info(`[audio] Filtered ${skippedLang} track(s) not in [${allowedAudioLangs.join(", ")}]`);
-
-	const typeFiltered = filterAudioTypes(
-		langFiltered,
-		{
-			removeCommentary: settings.removeCommentaryAudio,
-			removeDescriptive: settings.removeDescriptiveAudio,
-			removeKaraoke: settings.removeKaraokeAudio,
-			dropCompatibility: settings.dropCompatibilityAudio,
-		},
-		audioDetect,
-	);
-	const droppedByType = langFiltered.length - typeFiltered.length;
-	if (droppedByType > 0) Logger.info(`[audio] Dropped ${droppedByType} track(s) by type/compatibility filters`);
-
-	const sortedAudio = sortAudioStreams(typeFiltered, {
-		languagePriority: settings.audioLanguagePriority,
-		preferUncensored: settings.preferUncensoredAudio,
-		detect: audioDetect,
-	});
-
-	const audioStreams = settings.dedupeAudio
-		? deduplicateAudioStreams(sortedAudio, {
-				collapseChannels: settings.keepBestAudioChannelsOnly,
-				codecPriority: settings.audioCodecPriority,
-				preferUncensored: settings.preferUncensoredAudio,
-				detect: audioDetect,
-			})
-		: sortedAudio;
-
-	if (settings.dedupeAudio && sortedAudio.length !== audioStreams.length) {
-		Logger.info(`[audio] Deduplicated ${sortedAudio.length - audioStreams.length} redundant track(s)`);
-	}
+	const audioStreams = selectAudioStreams(probe.audioStreams || [], settings);
 
 	// Subtitles
 	const allSubtitleStreams = filterIgnoredTracks(probe.subtitleStreams || [], DEFAULT_IGNORE_KEYWORD, "subtitle");

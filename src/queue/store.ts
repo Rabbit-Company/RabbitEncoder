@@ -4,6 +4,8 @@ import {
 	type Job,
 	type HdrPlan,
 	type GrainPlan,
+	type ReleaseAudioPlan,
+	type AudioTracksPlan,
 	type JobSettings,
 	type AppConfig,
 	type DenoiseBackend,
@@ -49,6 +51,8 @@ import { runRepairJob, sanitizeRepairPlan } from "../pipeline/repair";
 import { describeHdrPlan, runHdrJob, sanitizeHdrPlan } from "../pipeline/hdr-tool";
 import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/grain-tool";
 import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
+import { describeReleaseAudioPlan, runReleaseAudioJob, sanitizeReleaseAudioPlan } from "../pipeline/release-audio";
+import { describeAudioTracksPlan, runAudioTracksJob, sanitizeAudioTracksPlan } from "../pipeline/audio-tracks";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { cleanPreferredSources } from "../subsearch/naming";
 import { compareQueuedJobs, queuePriority } from "./priority";
@@ -599,6 +603,66 @@ export function addSubtitleAddJob(plan: SubtitleAddPlan): Job {
 	return job;
 }
 
+/** Queues audio tracks from other releases to be added to a video. Paths must already be checked. */
+export function addAudioJob(rawPlan: ReleaseAudioPlan): Job {
+	const audioPlan = sanitizeReleaseAudioPlan(rawPlan);
+	for (const existing of jobs.values()) {
+		if (existing.inputPath === audioPlan.targetPath && !["done", "error", "cancelled"].includes(existing.status))
+			throw new Error(`${basename(audioPlan.targetPath)} already has an unfinished job. Finish or remove it first.`);
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "audio",
+		filename: `Audio: ${basename(audioPlan.targetPath)}`,
+		inputPath: audioPlan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: describeReleaseAudioPlan(audioPlan),
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		audioPlan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
+/** Queues a video's audio to be redone as an encode would. Paths must already be checked. */
+export function addAudioTracksJob(rawPlan: AudioTracksPlan): Job {
+	const audioTracksPlan = sanitizeAudioTracksPlan(rawPlan);
+	for (const existing of jobs.values()) {
+		if (existing.inputPath === audioTracksPlan.targetPath && !["done", "error", "cancelled"].includes(existing.status))
+			throw new Error(`${basename(audioTracksPlan.targetPath)} already has an unfinished job. Finish or remove it first.`);
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "audio",
+		filename: `Audio: ${basename(audioTracksPlan.targetPath)}`,
+		inputPath: audioTracksPlan.targetPath,
+		relativePath: "",
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: describeAudioTracksPlan(audioTracksPlan),
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		audioTracksPlan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
 /** Queues a change to the film grain of an AV1 MKV. Paths must already be checked. */
 export function addGrainJob(rawPlan: GrainPlan): Job {
 	const grainPlan = { ...sanitizeGrainPlan(rawPlan), targetPath: rawPlan.targetPath };
@@ -875,6 +939,9 @@ async function processQueue() {
 			await runGrainJob(next, appConfig, updateFn, controller.signal);
 		} else if (next.kind === "subtitles") {
 			await runSubtitleAddJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.kind === "audio") {
+			if (next.audioTracksPlan) await runAudioTracksJob(next, appConfig, updateFn, controller.signal);
+			else await runReleaseAudioJob(next, appConfig, updateFn, controller.signal);
 		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {

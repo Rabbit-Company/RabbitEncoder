@@ -302,7 +302,7 @@ export interface JobSettings {
 	dedupeAudio: boolean;
 	/** Ordered language priority for audio. "*" = the rest, alphabetically. */
 	audioLanguagePriority: string[];
-	/** Rewrite audio track names to the clean format. When false, names are blanked. */
+	/** No longer used: encodes and the audio tools always write clean names. Kept so older settings and settings codes still load. */
 	renameAudioTracks: boolean;
 	/** Title-regex classification toggles. */
 	detectCommentaryAudio: boolean;
@@ -523,7 +523,54 @@ export interface JobStep {
 	finishedAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio";
+
+/** An audio track of another release to add to a video, synced to it by the audio both share. */
+export interface ReleaseAudioAddition {
+	/** Index into the plan's `sources`. */
+	sourceIndex: number;
+	trackId: number;
+	language: string;
+	trackName: string;
+	isOriginal: boolean;
+	isCommentary: boolean;
+	isVisualImpaired: boolean;
+	isHearingImpaired: boolean;
+	/** Audio tracks of the target this one replaces, by mkvmerge track ID. They stay when this track cannot be synced. */
+	replaces: number[];
+}
+
+/** One audio track a video keeps, in the order it ends up in. */
+export interface AudioTracksPlanTrack {
+	trackId: number;
+	/** Copied as it is, or encoded to Opus at `bitrate` kbps. */
+	action: "copy" | "encode";
+	bitrate: number;
+	language: string;
+	trackName: string;
+	isDefault: boolean;
+	isOriginal: boolean;
+	isCommentary: boolean;
+	isVisualImpaired: boolean;
+	isHearingImpaired: boolean;
+}
+
+/** Redoes the audio of a video as an encode would: tracks left out are removed, the rest are copied or encoded and reordered. */
+export interface AudioTracksPlan {
+	targetPath: string;
+	tracks: AudioTracksPlanTrack[];
+	replaceTarget: boolean;
+}
+
+/** Adds audio tracks from other releases to a video, and removes the ones they replace. */
+export interface ReleaseAudioPlan {
+	targetPath: string;
+	sources: string[];
+	additions: ReleaseAudioAddition[];
+	replaceTarget: boolean;
+	/** Encode added tracks to Opus, and order, name and flag all audio, as an encode does with the job's settings. */
+	applySettings?: boolean;
+}
 
 /** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
  * the scenes of a Dolby Vision original, or take it from a file. */
@@ -1052,6 +1099,8 @@ export interface Job {
 	hdrPlan?: HdrPlan;
 	grainPlan?: GrainPlan;
 	subtitleAddPlan?: SubtitleAddPlan;
+	audioPlan?: ReleaseAudioPlan;
+	audioTracksPlan?: AudioTracksPlan;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 }
 

@@ -443,7 +443,6 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		settings.audioCodecPriority ?? "lossless-first",
 		(v) => (settings.audioCodecPriority = v),
 	);
-	renderLabeledToggle(el("rename-audio-tracks"), settings.renameAudioTracks ?? false, "Rename tracks to clean format", (v) => (settings.renameAudioTracks = v));
 	renderLanguagePriorityInput(el("audio-lang-priority"), settings.audioLanguagePriority ?? ["jpn", "eng", "*"], (v) => (settings.audioLanguagePriority = v));
 
 	// Audio type detection

@@ -25,7 +25,8 @@ import {
 	updateJobSettings,
 } from "../queue/store";
 import { probeFile } from "../pipeline/probe";
-import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewAudio, previewSubtitles } from "../tracks/tracks";
+import { previewAudio } from "../audio/audio-step";
+import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
 import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
@@ -259,24 +260,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		}
 
 		try {
-			const result = previewAudio(audioStreams, job.settings.audioBitrates, {
-				languages: job.settings.audioLanguages || [],
-				languagePriority: job.settings.audioLanguagePriority,
-				collapseChannels: job.settings.keepBestAudioChannelsOnly,
-				dedupe: job.settings.dedupeAudio,
-				removeCommentary: job.settings.removeCommentaryAudio,
-				removeDescriptive: job.settings.removeDescriptiveAudio,
-				removeKaraoke: job.settings.removeKaraokeAudio,
-				dropCompatibility: job.settings.dropCompatibilityAudio,
-				codecPriority: job.settings.audioCodecPriority,
-				preferUncensored: job.settings.preferUncensoredAudio,
-				renameTracks: job.settings.renameAudioTracks,
-				detect: {
-					commentary: job.settings.detectCommentaryAudio,
-					descriptive: job.settings.detectDescriptiveAudio,
-					karaoke: job.settings.detectKaraokeAudio,
-				},
-			});
+			const result = previewAudio(audioStreams, job.settings);
 			return c.json(result);
 		} catch (err: any) {
 			return c.json({ error: `Preview failed: ${err.message || err}` }, 500);

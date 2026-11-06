@@ -1987,6 +1987,12 @@ a.btn {
 	border-color: var(--accent);
 }
 
+.repair-file-picker {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
 .repair-file-choice {
 	display: flex;
 	flex-direction: column;
@@ -2176,6 +2182,11 @@ a.btn {
 	gap: 12px;
 	font-size: 0.72rem;
 	color: var(--text-2);
+}
+
+.repair-path-actions > .btn {
+	flex-shrink: 0;
+	white-space: nowrap;
 }
 
 .repair-track-transfer {
@@ -5663,6 +5674,17 @@ a.btn {
 	z-index: 3;
 }
 
+.release-col label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+.release-col input[type="checkbox"] {
+	margin: 0;
+}
+
 .release-col.is-excluded {
 	color: var(--text-2);
 }
@@ -5695,8 +5717,9 @@ a.btn {
 }
 
 .release-cell-select {
-	width: 100%;
+	width: 180px;
 	font-size: 0.74rem;
+	text-overflow: ellipsis;
 }
 
 .release-cell.is-have {
@@ -5717,6 +5740,95 @@ a.btn {
 
 .release-cell.is-skip .release-cell-select {
 	color: var(--text-2);
+}
+
+.audio-tracks-types td {
+	vertical-align: middle;
+}
+
+.audio-tracks-types .audio-tracks-files {
+	text-align: center;
+	color: var(--text-1);
+}
+
+.audio-tracks-suggested {
+	min-width: 220px;
+}
+
+.audio-tracks-files-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+	gap: 12px;
+}
+
+.audio-tracks-file {
+	padding: 12px;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	min-width: 0;
+}
+
+.audio-tracks-file-head {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-bottom: 8px;
+}
+
+.audio-tracks-changes {
+	font-size: 0.72rem;
+	color: var(--accent);
+}
+
+.audio-tracks-changes.is-unchanged {
+	color: var(--text-2);
+}
+
+.audio-tracks-list {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.76rem;
+}
+
+.audio-tracks-list li {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.audio-tracks-pos {
+	color: var(--text-2);
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.audio-tracks-track {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.audio-tracks-list li.is-removed {
+	color: var(--text-2);
+}
+
+.audio-tracks-list li.is-removed .audio-tracks-track {
+	text-decoration: line-through;
+}
+
+.audio-tracks-format,
+.audio-tracks-tags {
+	color: var(--text-2);
+}
+
+.audio-tracks-tags {
+	text-align: right;
+	white-space: nowrap;
 }
 
 .release-subs-offset {

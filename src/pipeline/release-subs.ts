@@ -360,23 +360,16 @@ export function mkvFilesIn(dir: string): string[] {
 		.map((name) => join(dir, name));
 }
 
-/**
- * Pairs every target with its episode in each source folder, reads the
- * subtitle tracks of all of them and plans what each target lacks. Only
- * track lists are read, so it stays quick on whole seasons.
- */
-export async function scanReleaseSubtitles(input: {
-	targets: string[];
-	/** Release folders, each with the offset its numbering across seasons has when given by hand. */
-	sourceDirs: Array<string | ReleaseFolder>;
-	options: ReleaseSubsOptions;
-	signal?: AbortSignal;
-}): Promise<ReleaseScan> {
-	const { targets, options, signal } = input;
-	const sourceDirs = input.sourceDirs.map((folder) => (typeof folder === "string" ? { path: folder } : folder));
-	const pairedSources = new Map<string, ReleaseRow["sources"]>(targets.map((t) => [t, []]));
+export type ReleaseSource = ReleaseRow["sources"][number];
+
+/** Every target's episode in each release folder, and the release files that matched no target. */
+export function pairReleaseFolders(
+	targets: string[],
+	folders: Array<string | ReleaseFolder>,
+): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[] } {
+	const pairedSources = new Map<string, ReleaseSource[]>(targets.map((t) => [t, []]));
 	const unmatchedSources: string[] = [];
-	for (const folder of sourceDirs) {
+	for (const folder of folders.map((f) => (typeof f === "string" ? { path: f } : f))) {
 		const { pairs, unmatchedSources: unmatched } = pairRepairFiles(
 			targets,
 			mkvFilesIn(folder.path).filter((path) => !targets.includes(path)),
@@ -390,6 +383,23 @@ export async function scanReleaseSubtitles(input: {
 				.push({ path: pair.sourcePath, name: pair.sourceName, method: pair.method, ...(pair.offset !== undefined ? { offset: pair.offset } : {}) });
 		}
 	}
+	return { pairedSources, unmatchedSources };
+}
+
+/**
+ * Pairs every target with its episode in each source folder, reads the
+ * subtitle tracks of all of them and plans what each target lacks. Only
+ * track lists are read, so it stays quick on whole seasons.
+ */
+export async function scanReleaseSubtitles(input: {
+	targets: string[];
+	/** Release folders, each with the offset its numbering across seasons has when given by hand. */
+	sourceDirs: Array<string | ReleaseFolder>;
+	options: ReleaseSubsOptions;
+	signal?: AbortSignal;
+}): Promise<ReleaseScan> {
+	const { targets, options, signal } = input;
+	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs);
 	const files = [...new Set([...targets, ...[...pairedSources.values()].flat().map((s) => s.path)])];
 	const inspected = new Map<string, RepairInspectionFile>();
 	await mapPool(files, 4, async (path) => {

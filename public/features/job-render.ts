@@ -387,6 +387,8 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
 	if (job.kind === "subtitles") meta += `<span>Subtitles added, video and audio copied</span>`;
+	if (job.kind === "audio")
+		meta += job.audioTracksPlan ? `<span>Audio tracks redone, video copied</span>` : `<span>Audio added from another release, video copied</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
 		const manual = !ENCODERS[job.settings.encoder]?.usesAutoBoost || job.settings.manualQuality;
 		const rate = manual ? `CRF ${job.settings.manualCrf}, preset ${job.settings.manualPreset}` : `${job.settings.quality}, ${job.settings.finalSpeed}`;
@@ -551,7 +553,7 @@ export function renderJobCard(job: Job): string {
 		actions = `
 			${isToolJob(job) ? "" : bitrateBtn}
 			${isToolJob(job) ? "" : liveBtn}
-			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" ? "" : repairBtn}
+			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;
@@ -855,9 +857,9 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	return html;
 }
 
-/** Repairs, HDR metadata and film grain changes, and added subtitles copy the video instead of encoding it, so they have no encode settings or previews. */
+/** Repairs, HDR metadata and film grain changes, and added subtitles and audio copy the video instead of encoding it, so they have no encode settings or previews. */
 function isToolJob(job: Job): boolean {
-	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles";
+	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio";
 }
 
 export function renderJobsList(jobs: Job[]): string {

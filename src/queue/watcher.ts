@@ -1,5 +1,5 @@
 import { watch, readdirSync, existsSync, statSync } from "fs";
-import { join, extname, relative, dirname } from "path";
+import { join, extname, relative, dirname, basename } from "path";
 import { addJob } from "./store";
 import { Logger } from "../core/logger";
 import { MEDIA_EXTENSIONS } from "../core/types";
@@ -8,6 +8,19 @@ const COOLDOWN_SEC = parseInt(process.env.FILE_COOLDOWN || "300");
 const POLL_INTERVAL = 10;
 
 const knownFiles = new Set<string>();
+
+/** Copies written by Rabbit's tools, such as `Show.repaired.mkv` or `Show.audio (2).mkv`. */
+const TOOL_COPY = /\.(?:repaired|audio|subtitles-edited)(?: \(\d+\))?\.mkv$/i;
+
+/**
+ * Files Rabbit writes next to a video: the hidden staging files of its tools
+ * and the copies they save. They are already done, so encoding them again is
+ * never wanted.
+ */
+export function isRabbitToolFile(path: string): boolean {
+	const name = basename(path);
+	return /^\.rabbit-/.test(name) || TOOL_COPY.test(name);
+}
 
 export function startWatcher(inputDir: string) {
 	if (existsSync(inputDir)) {
@@ -18,7 +31,7 @@ export function startWatcher(inputDir: string) {
 		const watcher = watch(inputDir, { recursive: true }, (event, filename) => {
 			if (!filename) return;
 			const ext = extname(filename).toLowerCase();
-			if (!MEDIA_EXTENSIONS.has(ext)) return;
+			if (!MEDIA_EXTENSIONS.has(ext) || isRabbitToolFile(filename)) return;
 
 			const fullPath = join(inputDir, filename);
 			if (knownFiles.has(fullPath)) return;
@@ -49,7 +62,7 @@ function scanDirectory(dir: string, inputRoot: string) {
 			}
 
 			const ext = extname(entry.name).toLowerCase();
-			if (!MEDIA_EXTENSIONS.has(ext)) continue;
+			if (!MEDIA_EXTENSIONS.has(ext) || isRabbitToolFile(entry.name)) continue;
 
 			if (knownFiles.has(fullPath)) continue;
 
