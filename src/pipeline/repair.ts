@@ -30,7 +30,7 @@ import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
-import { detectSubtitleTrackType, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
+import { detectSubtitleTrackType, normalizeBibliographicLanguage, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
 import { planSubtitleTracks } from "../tracks/subtitle-plan";
 import { resolveUniqueOutputPath } from "./output";
 import { probeFile } from "./probe";
@@ -465,44 +465,55 @@ export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" |
 	const audioCount = edit.expectedTracks.filter((track) => track.type === "audio").length;
 	if (edit.subtitles.length !== subtitleCount) throw new Error("Group edits must preserve every subtitle track");
 	if (edit.audio && edit.audio.length !== audioCount) throw new Error("Group edits must preserve every audio track");
-	if (!subtitleCount && !edit.audio?.length) throw new Error("The group has no tracks to edit");
+	if (!subtitleCount && !edit.audio?.length && !edit.audioOrder) throw new Error("The group has no tracks to edit");
+	const audioOrder = groupOrder(edit.audioOrder, audioCount, "audio");
+	const subtitleOrder = groupOrder(edit.subtitleOrder, subtitleCount, "subtitle");
 	return files.map((file) => {
 		if (auditSignature(file) !== expectedSignature) throw new Error(`${basename(file.path)} metadata changed since the audit. Audit the folder again.`);
+		const fileAudio = file.tracks.filter((track) => track.type === "audio");
+		const fileSubtitles = file.tracks.filter((track) => track.type === "subtitles");
 		// Only audio tracks that actually change are touched, so the rest keep their stored tags exactly.
-		const audioTracks = file.tracks
-			.filter((track) => track.type === "audio")
-			.flatMap((track, index): RepairAudioTrackPlan[] => {
-				const metadata = edit.audio?.[index];
-				if (!metadata) return [];
-				const next = audioMetadataOf({ ...track, ...metadata });
-				return JSON.stringify(next) === JSON.stringify(audioMetadataOf(track)) ? [] : [{ trackId: track.id, ...next }];
-			});
+		const audioTracks = fileAudio.flatMap((track, index): RepairAudioTrackPlan[] => {
+			const metadata = edit.audio?.[index];
+			if (!metadata) return [];
+			const next = audioMetadataOf({ ...track, ...metadata });
+			return JSON.stringify(next) === JSON.stringify(audioMetadataOf(track)) ? [] : [{ trackId: track.id, ...next }];
+		});
 		return sanitizeRepairPlan({
 			targetPath: file.path,
 			replaceTarget: edit.replaceTarget,
 			...(audioTracks.length ? { audioTracks } : {}),
-			tracks: file.tracks
-				.filter((track) => track.type === "subtitles")
-				.map((track, order) => {
-					const metadata = edit.subtitles[order]!;
-					return {
-						title: metadata.title,
-						language: metadata.language,
-						isDefault: metadata.isDefault,
-						isForced: metadata.isForced,
-						isEnabled: metadata.isEnabled,
-						isHearingImpaired: metadata.isHearingImpaired,
-						isOriginal: metadata.isOriginal,
-						isCommentary: metadata.isCommentary,
-						source: "target",
-						trackId: track.id,
-						mode: "copy",
-						order,
-						compression: "preserve",
-					};
-				}),
+			...(audioOrder ? { audioOrder: audioOrder.map((index) => fileAudio[index]!.id) } : {}),
+			// Metadata stays at each track's first position, the order only says where it goes.
+			tracks: (subtitleOrder ?? fileSubtitles.map((_, index) => index)).map((index, order) => {
+				const metadata = edit.subtitles[index]!;
+				return {
+					title: metadata.title,
+					language: metadata.language,
+					isDefault: metadata.isDefault,
+					isForced: metadata.isForced,
+					isEnabled: metadata.isEnabled,
+					isHearingImpaired: metadata.isHearingImpaired,
+					isOriginal: metadata.isOriginal,
+					isCommentary: metadata.isCommentary,
+					source: "target",
+					trackId: fileSubtitles[index]!.id,
+					mode: "copy",
+					order,
+					compression: "preserve",
+				};
+			}),
 		});
 	});
+}
+
+/** A new order of a group's tracks by position, or null when it keeps the current one. */
+function groupOrder(raw: unknown, count: number, kind: string): number[] | null {
+	if (raw === undefined) return null;
+	const order = Array.isArray(raw) ? raw.map(Number) : [];
+	const valid = order.length === count && order.every((index) => Number.isInteger(index) && index >= 0 && index < count) && new Set(order).size === count;
+	if (!valid) throw new Error(`The ${kind} order must name every ${kind} track of the group once`);
+	return order.some((index, position) => index !== position) ? order : null;
 }
 
 function tagSeconds(value: string | undefined): number {
@@ -610,6 +621,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	tracks.sort((a, b) => a.order - b.order);
 	tracks.forEach((track, index) => (track.order = index));
 	const audioTracks = sanitizeAudioTracks(raw.audioTracks);
+	const audioOrder = sanitizeAudioOrder(raw.audioOrder);
 	const fontFix = sanitizeFontFix(raw.fontFix);
 	return {
 		targetPath,
@@ -619,6 +631,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...sourceFields,
 		tracks,
 		...(audioTracks.length ? { audioTracks } : {}),
+		...(audioOrder ? { audioOrder } : {}),
 		...(fontFix ? { fontFix } : {}),
 	};
 }
@@ -703,6 +716,28 @@ function sanitizeAudioTracks(raw: unknown): RepairAudioTrackPlan[] {
 	});
 }
 
+function sanitizeAudioOrder(raw: unknown): number[] | null {
+	if (raw === undefined) return null;
+	if (!Array.isArray(raw) || raw.length > MAX_REPAIR_TRACKS) throw new Error("Invalid audio order");
+	const order = raw.map(Number);
+	if (order.some((id) => !Number.isInteger(id) || id < 0) || new Set(order).size !== order.length) throw new Error("Invalid audio order");
+	return order;
+}
+
+/** The target's audio tracks in the order the plan wants them. */
+export function orderedTargetAudio(plan: Pick<RepairPlan, "audioOrder">, target: MkvIdentification): MkvTrack[] {
+	const audio = (target.tracks || []).filter((track) => track.type === "audio");
+	if (!plan.audioOrder) return audio;
+	const ordered = plan.audioOrder.map((id) => audio.find((track) => track.id === id));
+	if (ordered.length !== audio.length || ordered.some((track) => !track)) throw new Error("The audio order must name every audio track of the target once");
+	return ordered as MkvTrack[];
+}
+
+function audioOrderChanged(plan: Pick<RepairPlan, "audioOrder">, target: MkvIdentification): boolean {
+	const audio = (target.tracks || []).filter((track) => track.type === "audio");
+	return orderedTargetAudio(plan, target).some((track, index) => track !== audio[index]);
+}
+
 function audioTrackOptions(plan: RepairAudioTrackPlan): string[] {
 	const id = plan.trackId;
 	return [
@@ -734,7 +769,7 @@ function targetAudioTrack(target: MkvIdentification, plan: RepairAudioTrackPlan)
 }
 
 function assertAudioPlanApplied(plan: RepairPlan, outputAudio: MkvTrack[], target: MkvIdentification): void {
-	const targetAudio = (target.tracks || []).filter((track) => track.type === "audio");
+	const targetAudio = orderedTargetAudio(plan, target);
 	for (const expected of plan.audioTracks ?? []) {
 		const index = targetAudio.indexOf(targetAudioTrack(target, expected));
 		const properties = outputAudio[index]?.properties;
@@ -788,7 +823,10 @@ function trackOptions(plan: RepairSubtitleTrackPlan, trackId: number, original?:
 function languageMatches(planLanguage: string, properties: MkvTrackProperties): boolean {
 	const ietf = properties.language_ietf || "";
 	if (planLanguage.includes("-")) return ietf.toLowerCase() === planLanguage.toLowerCase();
-	return normalizeLanguageGroup(ietf || properties.language || "und") === normalizeLanguageGroup(planLanguage);
+	// mkvmerge writes "ger" as "ger" and "de", so either element may carry the code the plan used.
+	const group = (lang: string) => normalizeLanguageGroup(normalizeBibliographicLanguage(lang));
+	const stored = [ietf, properties.language || ""].filter(Boolean);
+	return (stored.length ? stored : ["und"]).some((lang) => group(lang) === group(planLanguage));
 }
 
 function assertSubtitlePlanApplied(plan: RepairPlan, outputTracks: MkvTrack[], target: MkvIdentification, sources: MkvIdentification[]): void {
@@ -823,6 +861,7 @@ function findTrack(identified: MkvIdentification, plan: RepairSubtitleTrackPlan)
 export function isMetadataOnlyRepair(plan: RepairPlan, target: MkvIdentification): boolean {
 	const originalSubtitles = (target.tracks || []).filter((track) => track.type === "subtitles");
 	return (
+		!audioOrderChanged(plan, target) &&
 		plan.tracks.length === originalSubtitles.length &&
 		plan.tracks.every(
 			(track, index) =>
@@ -832,7 +871,7 @@ export function isMetadataOnlyRepair(plan: RepairPlan, target: MkvIdentification
 }
 
 export function buildRepairMkvpropeditArgs(path: string, plan: RepairPlan, target: MkvIdentification): string[] {
-	if (!isMetadataOnlyRepair(plan, target)) throw new Error("mkvpropedit can only be used when the subtitle set, order, and compression are unchanged");
+	if (!isMetadataOnlyRepair(plan, target)) throw new Error("mkvpropedit can only be used when the track set, order, and compression are unchanged");
 	const args = ["mkvpropedit", path];
 	// language= writes both the legacy and the IETF element. language-ietf= alone leaves players that read the legacy one on the old value.
 	for (const track of plan.audioTracks ?? []) {
@@ -1172,7 +1211,12 @@ export function buildRepairMkvmergeArgs(options: {
 	const fileIndexOfSource = new Map(usedSources.map((index, i) => [index, i + 1]));
 	const firstPreparedFileIndex = usedSources.length + 1;
 
-	const targetNonSubs = (target.tracks || []).filter((track) => track.type !== "subtitles").map((track) => `0:${track.id}`);
+	// Audio takes the planned order in the places the target's audio held.
+	const audioInOrder = orderedTargetAudio(plan, target);
+	let nextAudio = 0;
+	const targetNonSubs = (target.tracks || [])
+		.filter((track) => track.type !== "subtitles")
+		.map((track) => `0:${track.type === "audio" ? audioInOrder[nextAudio++]!.id : track.id}`);
 	const plannedOrder = plan.tracks.map((track) => {
 		if (isDirect(track)) return `${track.source === "target" ? 0 : fileIndexOfSource.get(sourceIndexOf(track))}:${track.trackId}`;
 		const index = preparedIndex(track);
@@ -1658,7 +1702,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		checkCancelled();
 		const targetVideo = (targetId.tracks || []).filter((track) => track.type === "video").map((track) => track.properties.codec_id || track.codec);
 		const outputVideo = (verified.tracks || []).filter((track) => track.type === "video").map((track) => track.properties.codec_id || track.codec);
-		const targetAudio = (targetId.tracks || []).filter((track) => track.type === "audio").map((track) => track.properties.codec_id || track.codec);
+		const targetAudio = orderedTargetAudio(plan, targetId).map((track) => track.properties.codec_id || track.codec);
 		const outputAudio = (verified.tracks || []).filter((track) => track.type === "audio").map((track) => track.properties.codec_id || track.codec);
 		const outputSubs = (verified.tracks || []).filter((track) => track.type === "subtitles");
 		if (JSON.stringify(targetVideo) !== JSON.stringify(outputVideo)) throw new Error("Verification failed: target video tracks changed during repair");

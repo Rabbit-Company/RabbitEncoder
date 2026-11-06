@@ -879,6 +879,8 @@ export interface RepairPlan {
 	tracks: RepairSubtitleTrackPlan[];
 	/** Metadata for the target's own audio tracks. Audio tracks left out keep theirs. */
 	audioTracks?: RepairAudioTrackPlan[];
+	/** Every audio track ID of the target in the order wanted. Leave out to keep the order. */
+	audioOrder?: number[];
 	/** Fonts the target's subtitles use but it does not carry. */
 	fontFix?: RepairFontFix;
 }
@@ -1008,6 +1010,10 @@ export interface RepairAuditGroupEdit {
 	subtitles: RepairAuditSubtitleMetadata[];
 	/** Every audio track in order. Leave out to keep the audio as it is. */
 	audio?: RepairAuditAudioMetadata[];
+	/** The positions of the audio tracks in the order wanted, such as [1, 0]. Leave out to keep the order. */
+	audioOrder?: number[];
+	/** The positions of the subtitle tracks in the order wanted. Leave out to keep the order. */
+	subtitleOrder?: number[];
 	replaceTarget: boolean;
 }
 

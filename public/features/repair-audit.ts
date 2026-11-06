@@ -19,6 +19,9 @@ let groupSubtitles: RepairAuditSubtitleMetadata[] = [];
 let groupAudio: RepairAuditAudioMetadata[] = [];
 let originalSubtitles = "";
 let originalAudio = "";
+/** First positions of the group's tracks in the order wanted. Metadata stays at the first position. */
+let audioOrder: number[] = [];
+let subtitleOrder: number[] = [];
 let queueingGroup = false;
 const queuedPaths = new Set<string>();
 /** Subtitle languages ticked for removal. */
@@ -56,8 +59,24 @@ function audioMetadata(track: RepairAuditTrack): RepairAuditAudioMetadata {
 	};
 }
 
-function groupEdited(): { audio: boolean; subtitles: boolean } {
-	return { audio: JSON.stringify(groupAudio) !== originalAudio, subtitles: JSON.stringify(groupSubtitles) !== originalSubtitles };
+const reordered = (order: number[]): boolean => order.some((index, position) => index !== position);
+
+function groupEdited(): { audio: boolean; subtitles: boolean; audioOrder: boolean; subtitleOrder: boolean } {
+	return {
+		audio: JSON.stringify(groupAudio) !== originalAudio,
+		subtitles: JSON.stringify(groupSubtitles) !== originalSubtitles,
+		audioOrder: reordered(audioOrder),
+		subtitleOrder: reordered(subtitleOrder),
+	};
+}
+
+const anyGroupEdit = (edited: ReturnType<typeof groupEdited>): boolean => Object.values(edited).some(Boolean);
+
+function moveButtons(kind: "audio" | "subtitle", index: number, position: number, count: number): string {
+	if (count < 2) return "";
+	const button = (direction: "up" | "down", disabled: boolean) =>
+		`<button class="btn btn-ghost btn-sm" type="button" data-audit-move="${direction}" data-audit-kind="${kind}" data-audit-track="${index}" title="Move ${direction}" ${disabled ? "disabled" : ""}>${direction === "up" ? "↑" : "↓"}</button>`;
+	return `<div class="repair-order">${button("up", position === 0)}${button("down", position === count - 1)}</div>`;
 }
 
 function subtitleMetadata(track: RepairAuditTrack): RepairAuditSubtitleMetadata {
@@ -177,10 +196,12 @@ function renderGroupEditor(): void {
 	if (!representative) return;
 	const tracks = representative.tracks.filter((track) => track.type === "subtitles");
 	const audioTracks = representative.tracks.filter((track) => track.type === "audio");
-	const audioRows = groupAudio
+	const moved = (index: number, position: number) => (index === position ? "" : `<span class="repair-audit-moved">was ${index + 1}</span>`);
+	const audioRows = audioOrder
+		.map((index, position) => [groupAudio[index]!, index, position] as const)
 		.map(
-			(track, index) => `<div class="repair-track">
-			<div class="repair-track-head"><span class="sub-track-id">Audio ${index + 1}</span><span class="repair-codec">${escapeHtml(audioTracks[index]?.codec)}</span></div>
+			([track, index, position]) => `<div class="repair-track">
+			<div class="repair-track-head"><span class="sub-track-id">Audio ${position + 1}</span><span class="repair-codec">${escapeHtml(audioTracks[index]?.codec)}</span>${moved(index, position)}${moveButtons("audio", index, position, audioOrder.length)}</div>
 			<div class="repair-track-fields repair-audit-metadata-fields">
 				<label>Track name<input class="repair-input" data-audit-kind="audio" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
 				${languageField("audio", index, track.language)}
@@ -189,10 +210,11 @@ function renderGroupEditor(): void {
 		</div>`,
 		)
 		.join("");
-	const subtitleRows = groupSubtitles
+	const subtitleRows = subtitleOrder
+		.map((index, position) => [groupSubtitles[index]!, index, position] as const)
 		.map(
-			(track, index) => `<div class="repair-track">
-			<div class="repair-track-head"><span class="sub-track-id">Subtitle ${index + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span></div>
+			([track, index, position]) => `<div class="repair-track">
+			<div class="repair-track-head"><span class="sub-track-id">Subtitle ${position + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span>${moved(index, position)}${moveButtons("subtitle", index, position, subtitleOrder.length)}</div>
 			<div class="repair-track-fields repair-audit-metadata-fields">
 				<label>Subtitle name<input class="repair-input" data-audit-kind="subtitle" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
 				${languageField("subtitle", index, track.language)}
@@ -214,8 +236,8 @@ function renderGroupEditor(): void {
 				<option value="copies">New .repaired.mkv copies</option>
 			</select>
 		</label>
-		<p class="repair-subtitle">Existing files are updated after verification. Track order and compression are preserved.</p>
-		<div class="repair-audit-group-actions"><button class="btn btn-ghost" type="button" data-audit-cancel-group>Cancel</button><button class="btn btn-primary" id="repair-audit-group-queue" type="button" data-audit-queue-group disabled>Queue changes for ${files.length} file${files.length === 1 ? "" : "s"}</button></div>
+		<p class="repair-subtitle">Existing files are updated after verification. Use the arrows to reorder tracks. Compression is preserved.</p>
+		<div class="repair-audit-group-actions"><button class="btn btn-ghost" type="button" data-audit-cancel-group>Cancel</button><button class="btn btn-primary" id="repair-audit-group-queue" type="button" data-audit-queue-group ${anyGroupEdit(groupEdited()) ? "" : "disabled"}>Queue changes for ${files.length} file${files.length === 1 ? "" : "s"}</button></div>
 	</fieldset>`;
 	buttonById("repair-audit-open-btn").disabled = true;
 }
@@ -377,6 +399,8 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	editingGroup = null;
 	groupSubtitles = [];
 	groupAudio = [];
+	audioOrder = [];
+	subtitleOrder = [];
 	queuedPaths.clear();
 	removeLanguages.clear();
 	languagesOpen = null;
@@ -445,9 +469,19 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 	}
 	const element =
 		event.target instanceof Element
-			? event.target.closest<HTMLElement>("[data-audit-select], [data-audit-edit-group], [data-audit-cancel-group], [data-audit-queue-group]")
+			? event.target.closest<HTMLElement>(
+					"[data-audit-select], [data-audit-edit-group], [data-audit-cancel-group], [data-audit-queue-group], [data-audit-move]",
+				)
 			: null;
 	if (!element || (element instanceof HTMLButtonElement && element.disabled)) return;
+	if (element.dataset.auditMove) {
+		moveGroupTrack(
+			element.dataset.auditKind === "audio" ? "audio" : "subtitle",
+			Number(element.dataset.auditTrack),
+			element.dataset.auditMove === "up" ? -1 : 1,
+		);
+		return;
+	}
 	if (element.hasAttribute("data-audit-edit-group")) {
 		editingGroup = Number(element.dataset.auditEditGroup);
 		const tracks = groupFiles()[0]?.tracks || [];
@@ -455,6 +489,8 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 		groupAudio = tracks.filter((track) => track.type === "audio").map(audioMetadata);
 		originalSubtitles = JSON.stringify(groupSubtitles);
 		originalAudio = JSON.stringify(groupAudio);
+		audioOrder = groupAudio.map((_, index) => index);
+		subtitleOrder = groupSubtitles.map((_, index) => index);
 		byId("repair-audit-status").textContent = "";
 		renderDetails();
 		return;
@@ -472,6 +508,20 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 	selectedPath = element.dataset.auditSelect;
 	renderFileList();
 	renderDetails();
+}
+
+function moveGroupTrack(kind: "audio" | "subtitle", index: number, step: number): void {
+	const order = kind === "audio" ? audioOrder : subtitleOrder;
+	const from = order.indexOf(index);
+	const to = from + step;
+	if (from < 0 || to < 0 || to >= order.length) return;
+	[order[from], order[to]] = [order[to]!, order[from]!];
+	const saveMode = (byId("repair-audit-group-save-mode") as HTMLSelectElement).value;
+	renderGroupEditor();
+	(byId("repair-audit-group-save-mode") as HTMLSelectElement).value = saveMode;
+	byId("repair-audit-details")
+		.querySelector<HTMLButtonElement>(`[data-audit-move="${step < 0 ? "up" : "down"}"][data-audit-kind="${kind}"][data-audit-track="${index}"]:not(:disabled)`)
+		?.focus();
 }
 
 export function handleRepairAuditInput(event: Event): void {
@@ -499,14 +549,13 @@ export function handleRepairAuditInput(event: Event): void {
 			track[flag] = input.checked;
 		}
 	}
-	const edited = groupEdited();
-	buttonById("repair-audit-group-queue").disabled = !edited.audio && !edited.subtitles;
+	buttonById("repair-audit-group-queue").disabled = !anyGroupEdit(groupEdited());
 }
 
 async function queueAuditGroup(): Promise<void> {
 	const files = groupFiles();
 	const edited = groupEdited();
-	if (queueingGroup || !files.length || (!edited.audio && !edited.subtitles)) return;
+	if (queueingGroup || !files.length || !anyGroupEdit(edited)) return;
 	const currentAudit = audit;
 	const replaceTarget = (byId("repair-audit-group-save-mode") as HTMLSelectElement).value === "existing";
 	queueingGroup = true;
@@ -520,6 +569,8 @@ async function queueAuditGroup(): Promise<void> {
 			expectedTracks: files[0]!.tracks,
 			subtitles: groupSubtitles,
 			...(edited.audio ? { audio: groupAudio } : {}),
+			...(edited.audioOrder ? { audioOrder } : {}),
+			...(edited.subtitleOrder ? { subtitleOrder } : {}),
 			replaceTarget,
 		});
 		if (audit === currentAudit) {

@@ -1841,11 +1841,11 @@ a.btn {
 
 /* Subtitle repair / remux */
 .repair-modal {
-	width: min(1120px, calc(100vw - 32px));
+	width: min(1440px, calc(100vw - 32px));
 }
 
 .subtitle-editor-modal {
-	width: min(1080px, calc(100vw - 32px));
+	width: min(1440px, calc(100vw - 32px));
 }
 .subtitle-editor-file-row,
 .subtitle-editor-navigation {
@@ -2229,8 +2229,13 @@ a.btn {
 .repair-transfer-actions {
 	display: flex;
 	flex-direction: column;
+	flex-shrink: 0;
 	align-items: flex-end;
 	gap: 6px;
+}
+
+.repair-transfer-actions > .btn {
+	white-space: nowrap;
 }
 
 .repair-transfer-arrow {
@@ -2327,6 +2332,11 @@ a.btn {
 	margin-left: auto;
 }
 
+.repair-audit-moved {
+	font-size: 0.7rem;
+	color: var(--text-2);
+}
+
 .repair-track-fields {
 	display: grid;
 	grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.55fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
@@ -2363,7 +2373,7 @@ a.btn {
 
 /* Folder-wide MKV metadata audit */
 .repair-audit-modal {
-	width: min(1180px, calc(100vw - 32px));
+	width: min(1440px, calc(100vw - 32px));
 }
 
 .repair-audit-body {
@@ -5742,6 +5752,16 @@ a.btn {
 	color: var(--text-2);
 }
 
+.audio-tracks-types {
+	width: 100%;
+}
+
+.audio-tracks-types th:nth-child(2),
+.audio-tracks-types th:nth-child(4) {
+	width: 1%;
+	white-space: nowrap;
+}
+
 .audio-tracks-types td {
 	vertical-align: middle;
 }
@@ -5757,7 +5777,7 @@ a.btn {
 
 .audio-tracks-files-list {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
 	gap: 12px;
 }
 

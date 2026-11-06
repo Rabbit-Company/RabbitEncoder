@@ -377,7 +377,7 @@ function renderPicker(): void {
 		return;
 	}
 	byId("repair-picker-note").textContent = pickerSelectedPath || (pickerPurpose === "folder" ? "Select one folder" : "Select one MKV file");
-	chooseButton.textContent = "Use selected file";
+	chooseButton.textContent = pickerPurpose === "folder" ? "Use selected folder" : "Use selected file";
 	chooseButton.disabled = !pickerSelectedPath;
 }
 

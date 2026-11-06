@@ -872,6 +872,10 @@ export interface RepairAuditGroupEdit {
 	subtitles: RepairAuditSubtitleMetadata[];
 	/** Every audio track in order. Leave out to keep the audio as it is. */
 	audio?: RepairAuditAudioMetadata[];
+	/** The positions of the audio tracks in the order wanted. Leave out to keep the order. */
+	audioOrder?: number[];
+	/** The positions of the subtitle tracks in the order wanted. Leave out to keep the order. */
+	subtitleOrder?: number[];
 	replaceTarget: boolean;
 }
 
