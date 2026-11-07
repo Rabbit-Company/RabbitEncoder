@@ -12,7 +12,7 @@ import { isPreviewMetric, type PreviewMeasureOptions } from "../pipeline/preview
 import { resolveAllowedMediaFile } from "./repair";
 import { buildZip } from "../core/zip";
 import { isStillStyle, STILL_STYLES } from "../core/still-style";
-import { viewablePng } from "../video/screenshot";
+import { viewablePng, intoBitDepthFolders } from "../video/screenshot";
 
 function parseMeasureOptions(metrics: unknown, withGrain: unknown, allowNone: boolean): PreviewMeasureOptions | string {
 	if (!Array.isArray(metrics) || !metrics.every(isPreviewMetric)) return "metrics must be a list of ssimulacra2, xpsnr and vmaf";
@@ -111,10 +111,11 @@ export function registerPreviewRoutes(app: Web, config: AppConfig): void {
 		return c.json({ ok: true, cancelled: true });
 	});
 
-	app.get("/api/jobs/:id/preview/download", (c) => {
+	app.get("/api/jobs/:id/preview/download", async (c) => {
 		const state = getPreviewState(c.params.id!);
 		if (!state || state.status === "running" || !state.samples.length) return c.json({ error: "No finished preview to download" }, 404);
-		const zip = buildZip(previewArchiveEntries(config, state), new Date(state.finishedAt ?? Date.now()));
+		const entries = await intoBitDepthFolders(previewArchiveEntries(config, state), c.req.signal);
+		const zip = buildZip(entries, new Date(state.finishedAt ?? Date.now()));
 		const base = (getJob(state.jobId)?.filename ?? state.jobId).replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}._-]+/gu, "_");
 		const name = `preview_${base}.zip`;
 		return new Response(zip, {

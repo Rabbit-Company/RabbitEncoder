@@ -21,7 +21,7 @@ import {
 } from "../compare/compare";
 import { METRIC_NAMES, type MetricName } from "../compare/metrics";
 import { DEFAULT_STILL_STYLE, isStillStyle, STILL_STYLES } from "../core/still-style";
-import { viewablePng } from "../video/screenshot";
+import { viewablePng, intoBitDepthFolders } from "../video/screenshot";
 
 const MAX_SOURCES = 8;
 const MAX_FRAMES = 50;
@@ -143,10 +143,11 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 		return new Response(Bun.file(served), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=86400" } });
 	});
 
-	app.get("/api/compare/:id/download", (c) => {
+	app.get("/api/compare/:id/download", async (c) => {
 		const session = getSession(root, c.params.id!);
 		if (!session || session.status !== "done") return c.json({ error: "Comparison not found or not finished" }, 404);
-		const zip = buildZip(comparisonArchiveEntries(root, session), new Date(session.createdAt));
+		const entries = await intoBitDepthFolders(comparisonArchiveEntries(root, session), c.req.signal);
+		const zip = buildZip(entries, new Date(session.createdAt));
 		const name = `compare_${session.sources.map((s) => s.label.replace(/[^\p{L}\p{N}._-]+/gu, "_")).join("_vs_")}.zip`;
 		return new Response(zip, {
 			headers: { "Content-Type": "application/zip", "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}` },

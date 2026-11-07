@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { run } from "../../src/core/process";
 import { captureFrame } from "../../src/pipeline/preview-encoder";
 import { STILL_STYLES } from "../../src/core/still-style";
-import { viewablePng } from "../../src/video/screenshot";
+import { viewablePng, intoBitDepthFolders } from "../../src/video/screenshot";
 
 const COLOR = { range: "tv" as const, space: "bt709", transfer: null, primaries: null, chromaLocation: null };
 
@@ -107,5 +107,15 @@ async function meanRgb16(png: string): Promise<[number, number, number]> {
 		const [a, b] = await Promise.all([meanRgb16(still), meanRgb(view)]);
 		for (let c = 0; c < 3; c++) expect(Math.abs(a[c]! - b[c]!)).toBeLessThan(0.05);
 		expect(await viewablePng(view)).toBe(view);
+
+		const entries = await intoBitDepthFolders([
+			{ name: "01_1_Source.png", data: readFileSync(still), path: still },
+			{ name: "01_2_Encode.png", data: readFileSync(view), path: view },
+			{ name: "preview.txt", data: new Uint8Array() },
+		]);
+		expect(entries.map((e) => e.name)).toEqual(["16bit/01_1_Source.png", "8bit/01_1_Source.png", "8bit/01_2_Encode.png", "preview.txt"]);
+		expect(entries[0]!.data).toEqual(new Uint8Array(readFileSync(still)));
+		expect(entries[1]!.data).toEqual(new Uint8Array(readFileSync(view)));
+		expect(entries.every((e) => !("path" in e))).toBe(true);
 	}, 60_000);
 });

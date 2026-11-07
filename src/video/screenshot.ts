@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readSync, renameSync, rmSync, statSync } from "fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync } from "fs";
 import { Logger } from "../core/logger";
 import { run } from "../core/process";
 import type { StillStyle } from "../core/still-style";
@@ -162,6 +162,36 @@ export async function viewablePng(path: string, signal?: AbortSignal): Promise<s
 	}
 	renameSync(tmp, view);
 	return view;
+}
+
+/**
+ * Sorts the stills into a 16bit and an 8bit folder, the 8bit one holding the
+ * dithered copy of each 16-bit still under the same name. Image hosts such as
+ * slow.pics warn about 48-bit PNGs and browsers show them undithered, so the
+ * 8bit folder is the one to upload. Stills that are 8-bit already only go in
+ * the 8bit folder. Other files stay at the top.
+ */
+export async function intoBitDepthFolders(
+	entries: Array<{ name: string; data: Uint8Array; path?: string }>,
+	signal?: AbortSignal,
+): Promise<Array<{ name: string; data: Uint8Array }>> {
+	const deep: Array<{ name: string; data: Uint8Array }> = [];
+	const eight: Array<{ name: string; data: Uint8Array }> = [];
+	const rest: Array<{ name: string; data: Uint8Array }> = [];
+	for (const { name, data, path } of entries) {
+		if (!path || !name.endsWith(".png")) {
+			rest.push({ name, data });
+			continue;
+		}
+		const view = await viewablePng(path, signal);
+		if (view === path) {
+			eight.push({ name: `8bit/${name}`, data });
+			continue;
+		}
+		deep.push({ name: `16bit/${name}`, data });
+		eight.push({ name: `8bit/${name}`, data: readFileSync(view) });
+	}
+	return [...deep, ...eight, ...rest];
 }
 
 let libplaceboProbe: Promise<boolean> | null = null;

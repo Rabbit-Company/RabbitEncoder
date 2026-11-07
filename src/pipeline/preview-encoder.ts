@@ -556,8 +556,8 @@ function formatArchiveTime(sec: number): string {
  * Every still of every sample, named like the compare tool's archive so the
  * files sort sample by sample, each sample's views in the order the card shows them.
  */
-export function previewArchiveEntries(config: AppConfig, state: PreviewState): Array<{ name: string; data: Uint8Array }> {
-	const entries: Array<{ name: string; data: Uint8Array }> = [];
+export function previewArchiveEntries(config: AppConfig, state: PreviewState): Array<{ name: string; data: Uint8Array; path?: string }> {
+	const entries: Array<{ name: string; data: Uint8Array; path?: string }> = [];
 	const samples = [...state.samples].sort((a, b) => a.index - b.index);
 	samples.forEach((sample, n) => {
 		const views: Array<{ kind: string; label: string }> = [];
@@ -576,7 +576,7 @@ export function previewArchiveEntries(config: AppConfig, state: PreviewState): A
 			const file = resolvePreviewArtifact(config, state.jobId, sample.index, view.kind);
 			if (!file || seen.has(file)) continue;
 			seen.add(file);
-			entries.push({ name: comparisonFileName(n, samples.length, position++, view.label), data: readFileSync(file) });
+			entries.push({ name: comparisonFileName(n, samples.length, position++, view.label), data: readFileSync(file), path: file });
 		}
 	});
 

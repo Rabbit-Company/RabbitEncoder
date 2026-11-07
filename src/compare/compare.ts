@@ -977,12 +977,13 @@ export function comparisonFileName(frame: number, frameCount: number, source: nu
 }
 
 /** Every captured image with its download name, plus a text file listing the timestamps and offsets. */
-export function comparisonArchiveEntries(root: string, session: CompareSession): Array<{ name: string; data: Uint8Array }> {
-	const entries: Array<{ name: string; data: Uint8Array }> = [];
+export function comparisonArchiveEntries(root: string, session: CompareSession): Array<{ name: string; data: Uint8Array; path?: string }> {
+	const entries: Array<{ name: string; data: Uint8Array; path?: string }> = [];
 	session.frames.forEach((frame, f) =>
 		frame.images.forEach((has, s) => {
 			const file = imagePath(root, session.id, f, s);
-			if (has && existsSync(file)) entries.push({ name: comparisonFileName(f, session.frames.length, s, session.sources[s]!.label), data: readFileSync(file) });
+			if (has && existsSync(file))
+				entries.push({ name: comparisonFileName(f, session.frames.length, s, session.sources[s]!.label), data: readFileSync(file), path: file });
 		}),
 	);
 	const lines = [
