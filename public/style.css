@@ -2830,7 +2830,9 @@ a.btn {
 	gap: 16px;
 }
 #bitrate-modal .bitrate-chart-wrap {
-	min-height: 260px;
+	flex: none;
+	height: clamp(160px, 42vh, 420px);
+	min-height: 0;
 }
 .bitrate-quality {
 	display: flex;
