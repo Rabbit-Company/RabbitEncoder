@@ -2309,7 +2309,7 @@ export async function encodeJob(
 				? [
 						"<Simple>",
 						"<Name>REGRAIN</Name>",
-						`<Simple><Name>VERSION</Name><String>${escapeXml(config.regrain.version || "unknown")}</String></Simple>`,
+						`<Simple><Name>VERSION</Name><String>${escapeXml(config.regrain.version ? `v${config.regrain.version}` : "unknown")}</String></Simple>`,
 						"</Simple>",
 					]
 				: []),
@@ -2319,7 +2319,7 @@ export async function encodeJob(
 				? [
 						"<Simple>",
 						"<Name>RETONE</Name>",
-						`<Simple><Name>VERSION</Name><String>${escapeXml(config.retone.version || "unknown")}</String></Simple>`,
+						`<Simple><Name>VERSION</Name><String>${escapeXml(config.retone.version ? `v${config.retone.version}` : "unknown")}</String></Simple>`,
 						"</Simple>",
 					]
 				: []),
