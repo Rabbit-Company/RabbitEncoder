@@ -191,8 +191,8 @@ RUN mkdir -p /root/.config/vsrepo \
 	&& vsrepo install ffms2 fmtc
 
 # av-denoise (GPU denoisers behind the avd-* denoise engines). Self-contained binary.
-ARG AV_DENOISE_VERSION=0.6.0
-ARG AV_DENOISE_SHA256=97b94d904e9ae66ef593eb7c091e6eecc78258dbb834d9a44eebaa81f35b6f82
+ARG AV_DENOISE_VERSION=0.6.1
+ARG AV_DENOISE_SHA256=b2ee1d2009c20e5d26e7e1e6b572b617fd8b93165f3bcc789cd16440386c3df6
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/ChillFish8/av-denoise/releases/download/v${AV_DENOISE_VERSION}/av-denoise-linux-x86.tar.gz" \
 	-o /tmp/av-denoise.tar.gz \
