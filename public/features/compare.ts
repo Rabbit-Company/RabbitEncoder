@@ -19,6 +19,8 @@ import {
 	type FrameScores,
 	type MeasureState,
 	type MetricName,
+	INTERVALS,
+	intervalText,
 } from "./compare-measure";
 
 interface SourceRow {
@@ -531,20 +533,6 @@ export function handleCompareKey(event: KeyboardEvent): void {
 	else if (event.key === "ArrowLeft") selectFrame(frame - 1);
 	else return;
 	event.preventDefault();
-}
-
-const INTERVALS: Array<[string, string]> = [
-	["frame", "Every frame"],
-	["0.25", "4 per second"],
-	["0.5", "2 per second"],
-	["1", "1 per second"],
-	["2", "Every 2 seconds"],
-	["5", "Every 5 seconds"],
-	["10", "Every 10 seconds"],
-];
-
-function intervalText(interval: "frame" | number): string {
-	return INTERVALS.find(([v]) => v === String(interval))?.[1].toLowerCase() ?? `every ${interval} s`;
 }
 
 /** The Measure panel: options, progress, the chart with one line per encode, and the summary table. */

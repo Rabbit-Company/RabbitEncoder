@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Web } from "@rabbit-company/web";
 import {
@@ -6,6 +6,8 @@ import {
 	FILM_GRAIN_SAMPLINGS,
 	type AppConfig,
 	type BitrateAnalysisResult,
+	type EncodeMetric,
+	type Job,
 	type FilmGrainRange,
 	type FilmGrainSampling,
 	type JobLiveView,
@@ -32,6 +34,7 @@ import { sampleBitrateOverTime } from "../video/bitrate-sample";
 import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
 import { resolveAllowedMediaFile } from "./repair";
 import { getTelemetry } from "../pipeline/telemetry";
+import { cancelEncodeMeasurement, getEncodeMeasurement, startEncodeMeasurement } from "../pipeline/encode-measure";
 
 /**
  * Completed bitrate-analysis results, keyed by `${jobId}:${mode}[:${metric}]`.
@@ -41,6 +44,33 @@ import { getTelemetry } from "../pipeline/telemetry";
  * a job is removed; otherwise lives for the server process's lifetime.
  */
 const bitrateAnalysisCache = new Map<string, BitrateAnalysisResult>();
+
+const ENCODE_METRICS: EncodeMetric[] = ["ssimulacra2", "xpsnr", "vmaf"];
+
+function encodedOutputPath(job: Job, config: AppConfig): string | null {
+	if (!job.outputFilename) return null;
+	return job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
+}
+
+/** The source is still there and is not the encode itself, which a job that replaces its source can leave. */
+function measurableSource(job: Job, outPath: string | null): boolean {
+	if (!outPath || !existsSync(outPath) || !existsSync(job.inputPath)) return false;
+	try {
+		return realpathSync(job.inputPath) !== realpathSync(outPath);
+	} catch {
+		return false;
+	}
+}
+
+/** Scene CRFs, the measurement and whether the encode can be measured change after the bitrate is cached, so they are added fresh. */
+function withEncodeData(job: Job, result: BitrateAnalysisResult, outPath: string): BitrateAnalysisResult {
+	return {
+		...result,
+		telemetry: getTelemetry(job.id),
+		measurement: getEncodeMeasurement(job.id),
+		canMeasure: measurableSource(job, outPath),
+	};
+}
 
 function clearBitrateAnalysisCache(jobId: string): void {
 	for (const key of bitrateAnalysisCache.keys()) {
@@ -295,12 +325,10 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		try {
 			if (job.status === "done") {
 				const cacheKey = `${job.id}:encoded`;
+				const outPath = encodedOutputPath(job, config);
+				if (!outPath) return c.json({ error: "Output file not available" }, 400);
 				const cached = !forceRefresh && bitrateAnalysisCache.get(cacheKey);
-				if (cached) return c.json(cached);
-
-				if (!job.outputFilename) return c.json({ error: "Output file not available" }, 400);
-
-				const outPath = job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
+				if (cached) return c.json(withEncodeData(job, cached, outPath));
 
 				if (!existsSync(outPath)) return c.json({ error: "Output file no longer accessible" }, 400);
 
@@ -316,7 +344,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 					appliedPlan: job.autoDenoisePlan ?? null,
 				};
 				bitrateAnalysisCache.set(cacheKey, result);
-				return c.json(result);
+				return c.json(withEncodeData(job, result, outPath));
 			}
 
 			if (!existsSync(job.inputPath)) {
@@ -368,6 +396,70 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		} catch (err: any) {
 			if (err?.name === "CancelledError" || signal.aborted) return c.json({ error: "Cancelled" }, 499);
 			return c.json({ error: `Bitrate analysis failed: ${err.message || err}` }, 500);
+		}
+	});
+
+	app.get("/api/jobs/:id/measure", (c) => {
+		const job = getJob(c.params.id!);
+		if (!job) return c.json({ error: "Job not found" }, 404);
+		return c.json({ measurement: getEncodeMeasurement(job.id) });
+	});
+
+	/** Scores the finished encode against its source over the whole video. */
+	app.post("/api/jobs/:id/measure", async (c) => {
+		const job = getJob(c.params.id!);
+		if (!job) return c.json({ error: "Job not found" }, 404);
+		try {
+			if (job.status !== "done") throw new Error("Only a finished encode can be measured");
+			const outPath = encodedOutputPath(job, config);
+			if (!outPath || !existsSync(outPath)) throw new Error("The encoded file is no longer there");
+			if (!measurableSource(job, outPath)) throw new Error("The source is no longer there to measure the encode against");
+			const body = (await c.req.json().catch(() => ({}))) as { interval?: unknown; metrics?: unknown; withGrain?: unknown };
+			const interval = body.interval === "frame" ? "frame" : Number(body.interval);
+			if (interval !== "frame" && (!Number.isFinite(interval) || interval < 0.1 || interval > 60))
+				throw new Error("Measure every frame, or every 0.1 to 60 seconds");
+			const metrics = Array.isArray(body.metrics) ? ENCODE_METRICS.filter((m) => (body.metrics as unknown[]).includes(m)) : [];
+			if (!metrics.length) throw new Error(`Choose at least one of ${ENCODE_METRICS.join(", ")}`);
+			if (body.withGrain !== undefined && typeof body.withGrain !== "boolean") throw new Error("withGrain must be true or false");
+			const measurement = startEncodeMeasurement({
+				jobId: job.id,
+				sourcePath: job.inputPath,
+				encodedPath: outPath,
+				crop: job.cropRect,
+				interval,
+				metrics,
+				withGrain: body.withGrain ?? true,
+			});
+			return c.json({ measurement });
+		} catch (error) {
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+		}
+	});
+
+	app.delete("/api/jobs/:id/measure", (c) =>
+		cancelEncodeMeasurement(c.params.id!) ? c.json({ ok: true }) : c.json({ error: "Nothing is being measured" }, 404),
+	);
+
+	/** The bitrate over time of any video in the media folders, for the Bitrate Analysis tool. */
+	app.get("/api/bitrate-analysis", async (c) => {
+		const signal = c.req.signal;
+		try {
+			const path = resolveAllowedMediaFile(c.query().get("path"), config, "Video");
+			const { size, mtimeMs } = statSync(path);
+			const cacheKey = `file:${path}:${size}:${mtimeMs}`;
+			const cached = c.query().get("refresh") !== "1" && bitrateAnalysisCache.get(cacheKey);
+			if (cached) return c.json({ ...cached, filename: basename(path) });
+
+			const probe = await probeFile(path);
+			const bitrate = await sampleBitrateOverTime(path);
+			if (signal.aborted) return c.json({ error: "Cancelled" }, 499);
+
+			const result: BitrateAnalysisResult = { mode: "file", durationSec: probe.duration, bitrate, noise: null };
+			bitrateAnalysisCache.set(cacheKey, result);
+			return c.json({ ...result, filename: basename(path) });
+		} catch (err: any) {
+			if (signal.aborted) return c.json({ error: "Cancelled" }, 499);
+			return c.json({ error: `Bitrate analysis failed: ${err.message || err}` }, 400);
 		}
 	});
 

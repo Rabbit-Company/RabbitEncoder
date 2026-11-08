@@ -466,7 +466,7 @@ export function renderJobCard(job: Job): string {
     </svg>
   </button>`;
 
-	const bitrateBtn = `<button class="btn-icon" title="Bitrate Analysis" data-id="${job.id}" data-action="bitrate">
+	const bitrateBtn = `<button class="btn-icon" title="${done ? "Encode report: bitrate, scene CRFs and quality" : "Bitrate Analysis"}" data-id="${job.id}" data-action="bitrate">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
     </svg>
@@ -552,7 +552,6 @@ export function renderJobCard(job: Job): string {
 	} else if (done) {
 		actions = `
 			${isToolJob(job) ? "" : bitrateBtn}
-			${isToolJob(job) ? "" : liveBtn}
 			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>

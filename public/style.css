@@ -2818,11 +2818,36 @@ a.btn {
 	min-height: 0;
 	overflow-y: auto;
 }
+#bitrate-modal .modal-body {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
 .bitrate-modal #bitrate-content {
 	display: flex;
 	flex-direction: column;
-	height: 100%;
+	flex: 1 0 auto;
 	gap: 16px;
+}
+#bitrate-modal .bitrate-chart-wrap {
+	min-height: 260px;
+}
+.bitrate-quality {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.bitrate-quality .compare-measure {
+	margin-top: 0;
+}
+.bitrate-source {
+	flex-direction: row;
+	align-items: center;
+	flex: none;
+}
+.bitrate-source .repair-file-selection {
+	flex: 1;
+	width: auto;
 }
 .bitrate-toolbar {
 	display: flex;

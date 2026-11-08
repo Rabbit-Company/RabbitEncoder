@@ -29,11 +29,16 @@ type PickerPurpose =
 	| "subtitle-search"
 	| "subtitle-ocr"
 	| "translate-target"
+	| "bitrate-target"
 	| "mkv-videos";
 
 /** Purposes that list every video, not only MKV files. */
 const allMediaPurpose = (purpose: PickerPurpose): boolean =>
-	purpose === "preview-reference" || purpose === "hdr-source" || purpose === "subtitle-search" || purpose === "translate-target";
+	purpose === "preview-reference" ||
+	purpose === "hdr-source" ||
+	purpose === "subtitle-search" ||
+	purpose === "translate-target" ||
+	purpose === "bitrate-target";
 interface PickerNode extends LibraryEntry {
 	depth: number;
 	parentPath: string | null;
@@ -541,6 +546,11 @@ export function openHdrTargetPicker(onChoose: (path: string) => void | Promise<v
 	void openRepairPicker("hdr-target");
 }
 
+export function openBitrateTargetPicker(onChoose: (path: string) => void | Promise<void>): void {
+	pickerFileCallback = onChoose;
+	void openRepairPicker("bitrate-target", "Choose video to analyze");
+}
+
 export function openHdrSourcePicker(onChoose: (path: string) => void | Promise<void>): void {
 	pickerFileCallback = onChoose;
 	void openRepairPicker("hdr-source");
@@ -644,7 +654,8 @@ export function chooseRepairPickerFile(): void {
 		pickerPurpose === "hdr-source" ||
 		pickerPurpose === "subtitle-search" ||
 		pickerPurpose === "subtitle-ocr" ||
-		pickerPurpose === "translate-target"
+		pickerPurpose === "translate-target" ||
+		pickerPurpose === "bitrate-target"
 	) {
 		const callback = pickerFileCallback;
 		closeRepairPicker();

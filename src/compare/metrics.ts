@@ -33,6 +33,8 @@ export interface MetricVideo {
 	index: string;
 	/** An AV1 video decoded with dav1d and its film grain left out, since the metrics count grain as error. */
 	noGrain?: boolean;
+	/** Part of the picture to score, such as the source of an encode that cropped its black bars. */
+	crop?: { x: number; y: number; w: number; h: number };
 }
 
 /** Exporting the grain parameters is what tells dav1d to leave them unapplied. */
@@ -114,7 +116,10 @@ def without_grain(src, path, first, step):
 
 def source(s, start, step):
     clip = core.ffms2.Source(s["path"], cachefile=s["index"])
-    return without_grain(clip, s["path"], start, step) if s.get("noGrain") else clip
+    if s.get("noGrain"):
+        clip = without_grain(clip, s["path"], start, step)
+    c = s.get("crop")
+    return core.std.CropAbs(clip, width=c["w"], height=c["h"], left=c["x"], top=c["y"]) if c else clip
 
 if hasattr(vs, "Range"):
     RANGE_KEY, RANGES = "_Range", {"full": int(vs.Range.RANGE_FULL), "limited": int(vs.Range.RANGE_LIMITED)}
@@ -249,7 +254,8 @@ function vmafInput(index: number, v: MetricVideo, step: number, count: number | 
 	const end = count ? `:end_frame=${v.start + (count - 1) * step + 1}` : "";
 	const range = v.range ? `:in_range=${ZSCALE_RANGE[v.range]}` : "";
 	const scale = size ? `scale=${size.width}:${size.height}:flags=spline${range}:out_range=tv,` : `scale=flags=spline${range}:out_range=tv,`;
-	return `[${index}:v:0]trim=start_frame=${v.start}${end},setpts=PTS-STARTPTS,${scale}format=yuv420p10le`;
+	const crop = v.crop ? `crop=${v.crop.w}:${v.crop.h}:${v.crop.x}:${v.crop.y},` : "";
+	return `[${index}:v:0]trim=start_frame=${v.start}${end},setpts=PTS-STARTPTS,${crop}${scale}format=yuv420p10le`;
 }
 
 /**

@@ -42,6 +42,21 @@ export const METRIC_GUIDES: Record<MetricName, string> = {
 	vmaf: "VMAF predicts how a viewer rates the video at TV distance, up to about 100. Above 95 is indistinguishable for most viewers, 90 high quality, 80 good, below 70 visibly worse. It can miss banding and fine detail loss that SSIMULACRA2 catches.",
 };
 
+/** How often the whole video is sampled, as select values and labels. */
+export const INTERVALS: Array<[string, string]> = [
+	["frame", "Every frame"],
+	["0.25", "4 per second"],
+	["0.5", "2 per second"],
+	["1", "1 per second"],
+	["2", "Every 2 seconds"],
+	["5", "Every 5 seconds"],
+	["10", "Every 10 seconds"],
+];
+
+export function intervalText(interval: "frame" | number): string {
+	return INTERVALS.find(([v]) => v === String(interval))?.[1].toLowerCase() ?? `every ${interval} s`;
+}
+
 const UNITS: Record<MetricName, string> = { ssimulacra2: "", xpsnr: " dB", vmaf: "" };
 
 /** Categorical slots stepped for the dark surface, by source number, so an encode keeps its colour. */

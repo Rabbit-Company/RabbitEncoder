@@ -1108,6 +1108,8 @@ export interface Job {
 	audioPlan?: ReleaseAudioPlan;
 	audioTracksPlan?: AudioTracksPlan;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
+	/** The crop the encode applied, in pixels of the source, so the source can be measured against the encode. */
+	cropRect?: PreviewCrop;
 }
 
 export interface LanguageDetector {
@@ -1241,8 +1243,41 @@ export interface BitrateNoiseData {
  *   - "encoded" : job is done and its source was cleaned up; only the final
  *                 output's bitrate is available.
  */
+export type EncodeMetric = "ssimulacra2" | "xpsnr" | "vmaf";
+
+export interface EncodeMetricSummary {
+	mean: number;
+	/** 5th percentile, the score the worst 5% of frames fall below. */
+	p5: number;
+	min: number;
+	/** Source frame of the worst score. */
+	minFrame: number;
+	count: number;
+}
+
+/** A finished encode scored against its source over the whole video. */
+export interface EncodeMeasurement {
+	status: "running" | "done" | "error" | "cancelled";
+	progress: number;
+	detail?: string;
+	error?: string;
+	/** "frame", or seconds between samples. */
+	interval: "frame" | number;
+	metrics: EncodeMetric[];
+	withGrain: boolean;
+	/** Source frames between samples, and the source frame of the first one. */
+	step: number;
+	firstFrame: number;
+	fps: number;
+	values: Partial<Record<EncodeMetric, Array<number | null>>>;
+	summary: Partial<Record<EncodeMetric, EncodeMetricSummary>>;
+	startedAt: number;
+	finishedAt?: number;
+}
+
 export interface BitrateAnalysisResult {
-	mode: "source" | "encoded";
+	/** "file" is any video chosen in the Bitrate Analysis tool, without a job. */
+	mode: "source" | "encoded" | "file";
 	durationSec: number;
 	bitrate: BitrateSamplePoint[];
 	noise: BitrateNoiseData | null;
@@ -1250,6 +1285,12 @@ export interface BitrateAnalysisResult {
 	metric?: AutoDenoiseMetric;
 	thresholds?: AutoDenoiseThresholds;
 	appliedPlan?: AutoDenoiseAppliedRange[] | null;
+	/** Scene CRFs and the encode's passes, for a finished Rabbit Boost encode. */
+	telemetry?: JobTelemetry | null;
+	/** Scores against the source, once measured. */
+	measurement?: EncodeMeasurement | null;
+	/** The source is still there, so the encode can be measured against it. */
+	canMeasure?: boolean;
 }
 
 export interface PreviewSampleVsFrame {

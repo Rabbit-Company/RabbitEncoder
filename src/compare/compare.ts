@@ -137,7 +137,7 @@ export interface CompareSession {
 	measure?: MeasureState;
 }
 
-interface VideoInfo {
+export interface VideoInfo {
 	formatStart: number;
 	/** -ss position of the first video frame. */
 	videoStart: number;
@@ -232,7 +232,7 @@ function cleanTag(v: unknown): string | null {
 	return !t || t === "unknown" || t === "N/A" ? null : t;
 }
 
-async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo> {
+export async function probeVideo(path: string, signal: AbortSignal): Promise<VideoInfo> {
 	const res = await run(
 		[
 			"ffprobe",
@@ -832,7 +832,7 @@ export async function addFrame(root: string, id: string, timeSec: number, signal
 
 const VS_MATRIX: Record<string, VsMatrix> = { bt709: 1, bt470bg: 5, smpte170m: 6, bt2020nc: 9 };
 
-function vsColour(info: VideoInfo): { matrix?: VsMatrix; range?: "limited" | "full" } {
+export function vsColour(info: VideoInfo): { matrix?: VsMatrix; range?: "limited" | "full" } {
 	const matrix = info.space ? VS_MATRIX[info.space] : undefined;
 	return { ...(matrix ? { matrix } : {}), ...(info.range ? { range: info.range === "pc" ? "full" : "limited" } : {}) };
 }

@@ -111,11 +111,17 @@ For each file, the engine runs:
 
 ## Live View
 
-The **Live View** button on an encoding or finished job opens a view of everything the job has done and is doing: every step with its timing and result, the elapsed time, and the estimated or final size.
+The **Live View** button on an encoding job opens a view of everything the job has done and is doing: every step with its timing and result, the elapsed time, and the estimated or final size.
 
 With Rabbit Boost, it also shows the bitrate of the fast pass and the final pass second by second, read from the encoder's output while it is written, and the CRF and SSIMULACRA2 score Rabbit Boost planned for each scene. The bitrate expected for each scene is known before the final pass starts, so a scene that would go far over what you want shows up early and the job can be cancelled and its settings fixed. The video size is estimated at every stage: roughly from the fast pass at the base CRF, then from each scene's predicted bitrate once the zones are planned, and from what the final pass has written while it runs. With a maximum bitrate set, the view warns when a scene is expected to go over it or when 5 seconds of the final pass did. Auto-Boost-Essential runs as its own program, so its jobs show only their steps.
 
-With **Follow queue**, which is on when the view is opened on an encoding job, it switches to the next job once the shown one is over, so it can stay open while a whole season encodes. The view of a finished job stays until the job is dismissed.
+With **Follow queue**, which is on when the view is opened on an encoding job, it switches to the next job once the shown one is over, so it can stay open while a whole season encodes.
+
+## Encode Report and Bitrate Analysis
+
+The chart button on a finished job opens its **Encode Report**. It charts the bitrate of the finished file, colored by the auto denoise level each part got. For a Rabbit Boost encode it adds the max bitrate and a second chart of every scene's CRF and fast pass SSIMULACRA2 score, with the scenes the bitrate cap held back marked. While the source is still there, **Measure** scores the encode against it over the whole video with SSIMULACRA2, XPSNR and VMAF, with the crop the encode got, and adds a chart of the score with its mean, 5% low and worst moment. Every chart follows the same zoom. On a queued job the same button shows the source bitrate and the auto denoise thresholds instead.
+
+**Export data** saves everything shown, measurement included, as a `.bitrate-analysis.json`. **Tools > Bitrate Analysis** opens the same view without a job: choose any video to chart its bitrate, or import an exported file to see its charts again after the job is gone.
 
 ## Preview Encoding
 
@@ -428,6 +434,10 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 | `GET`    | `/api/jobs/:id/subtitle-tracks`             | List source subtitle tracks (for the translate-only source picker)             |
 | `GET`    | `/api/jobs/:id/mediainfo`                   | Run `mediainfo` on the source file and return the report                       |
 | `GET`    | `/api/jobs/:id/bitrate-analysis`            | Bitrate + noise/bitrate-metric scene data, cached (`?refresh=1` to re-run)     |
+| `GET`    | `/api/jobs/:id/measure`                     | The finished encode's quality measurement against its source, if any           |
+| `POST`   | `/api/jobs/:id/measure`                     | Score the encode against its source. Body: `interval`, `metrics`, `withGrain`  |
+| `DELETE` | `/api/jobs/:id/measure`                     | Cancel the running measurement                                                 |
+| `GET`    | `/api/bitrate-analysis?path=`               | Bitrate over time of any video in the media folders (`?refresh=1` to re-run)   |
 | `GET`    | `/api/jobs/:id/live`                        | Steps and Rabbit Boost telemetry, telemetry only when newer than `?version=`   |
 | `GET`    | `/api/jobs/:id/preview`                     | Get preview-encode state for a job (`idle`, running, or completed samples)     |
 | `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode. The optional body configures sample count and duration |

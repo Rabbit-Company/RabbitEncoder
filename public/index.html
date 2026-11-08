@@ -252,13 +252,17 @@
 								</svg>
 								Benchmark
 							</button>
-							<button title="Import a downloaded bitrate-analysis.json" class="nav-menu-item" role="menuitem" id="import-bitrate-analysis-btn">
+							<button
+								title="Chart the bitrate of any video over time, or import and export the analysis data"
+								class="nav-menu-item"
+								role="menuitem"
+								id="open-bitrate-analysis-btn"
+							>
 								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-									<polyline points="7 10 12 15 17 10" />
-									<line x1="12" y1="15" x2="12" y2="3" />
+									<path d="M3 3v18h18" />
+									<polyline points="7 15 11 10 14 13 20 6" />
 								</svg>
-								Import Analysis
+								Bitrate Analysis
 							</button>
 							<button title="Upload, preview and remove the fonts subtitles can use" class="nav-menu-item" role="menuitem" id="open-fonts-btn">
 								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2542,6 +2546,16 @@
 						<button class="btn-close" id="close-bitrate-modal-btn">&times;</button>
 					</div>
 					<div class="modal-body">
+						<div class="repair-file-choice bitrate-source" id="bitrate-source" style="display: none">
+							<div id="bitrate-source-selection" class="repair-file-selection"></div>
+							<button class="btn btn-ghost" type="button" id="bitrate-choose-file-btn">Choose video...</button>
+							<button class="btn btn-ghost" type="button" id="bitrate-import-btn" title="Open a .bitrate-analysis.json saved with Export data">
+								Import data...
+							</button>
+						</div>
+						<div id="bitrate-empty" class="sub-preview-loading" style="display: none">
+							Choose a video to chart its bitrate, or import data exported earlier.
+						</div>
 						<div id="bitrate-loading" class="sub-preview-loading">Analyzing...</div>
 						<div id="bitrate-error" class="sub-preview-error" style="display: none"></div>
 						<div id="bitrate-content" style="display: none">
@@ -2561,7 +2575,17 @@
 							<div class="bitrate-chart-wrap">
 								<canvas id="bitrate-canvas"></canvas>
 							</div>
-							<div class="lang-filter-hint">Scroll to zoom, drag to pan.</div>
+							<div id="bitrate-crf-wrap" class="bitrate-chart-wrap" style="display: none">
+								<canvas id="bitrate-crf-canvas"></canvas>
+							</div>
+							<div id="bitrate-quality" class="bitrate-quality" style="display: none">
+								<div id="bitrate-quality-head" class="compare-measure"></div>
+								<div id="bitrate-quality-wrap" class="bitrate-chart-wrap" style="display: none">
+									<canvas id="bitrate-quality-canvas"></canvas>
+								</div>
+								<div id="bitrate-quality-summary"></div>
+							</div>
+							<div class="lang-filter-hint">Scroll to zoom, drag to pan. Every chart follows the same time window.</div>
 							<div id="bitrate-thresholds" class="setting-group" style="display: none">
 								<label>Auto Denoise Thresholds</label>
 								<div id="bitrate-thresholds-grid"></div>
@@ -2570,7 +2594,7 @@
 						</div>
 					</div>
 					<div class="modal-footer">
-						<button class="btn btn-ghost" id="bitrate-download-btn" style="display: none">Download data</button>
+						<button class="btn btn-ghost" id="bitrate-download-btn" style="display: none">Export data</button>
 						<button class="btn btn-primary" id="bitrate-save-btn" style="display: none">Save to job</button>
 						<button class="btn btn-ghost" id="close-bitrate-done-btn">Close</button>
 					</div>

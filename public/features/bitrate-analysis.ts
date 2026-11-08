@@ -1,9 +1,22 @@
 import ChartJS from "../vendor/chart.umd.min.js";
-import type { AutoDenoiseAppliedRange, AutoDenoiseMetric, AutoDenoiseThresholds, BitrateAnalysisResult, Job, NoiseScenePoint } from "../types";
-import { fetchBitrateAnalysis, fetchJobs, patchJobAutoThresholds } from "../api/client";
+import type {
+	AutoDenoiseAppliedRange,
+	AutoDenoiseMetric,
+	AutoDenoiseThresholds,
+	BitrateAnalysisResult,
+	EncodeMeasurement,
+	Job,
+	NoiseScenePoint,
+} from "../types";
+import { fetchBitrateAnalysis, fetchFileBitrateAnalysis, fetchJobs, patchJobAutoThresholds } from "../api/client";
 import { formatBitrate2 } from "./job-render";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
+import { openBitrateTargetPicker } from "./repair";
+import { renderEncodeReport, resetEncodeReport, telemetryStats, type ReportHost } from "./encode-report";
+
+/** Version of the exported file. 1 had no scene CRFs and no measurement. */
+const EXPORT_VERSION = 2;
 
 interface ChartScale {
 	min: number;
@@ -15,7 +28,7 @@ type ChartInstance = {
 	destroy(): void;
 	update(mode?: string): void;
 	data: { datasets: any[] };
-	options: { scales: { x: { min: number; max: number } } };
+	options: any;
 	scales: { x: ChartScale };
 };
 const Chart = ChartJS as unknown as new (ctx: CanvasRenderingContext2D, config: any) => ChartInstance;
@@ -86,7 +99,11 @@ const METRIC_DISPLAY: Record<AutoDenoiseMetric, MetricDisplay> = {
 	},
 };
 
+/** The bitrate chart, which the threshold inputs redraw. */
 let chartInstance: ChartInstance | null = null;
+/** Every time chart in the modal, which zoom and pan together. */
+let charts: ChartInstance[] = [];
+let chartListeners: AbortController | null = null;
 let currentJobId: string | null = null;
 let currentJobFilename = "";
 let currentMetric: AutoDenoiseMetric = "noise";
@@ -95,6 +112,9 @@ let currentDurationSec = 0;
 let currentScenes: NoiseScenePoint[] = [];
 let currentData: BitrateAnalysisResult | null = null;
 let currentIsImported = false;
+/** Opened from Tools, where any video can be chosen and data imported, instead of from a job. */
+let toolMode = false;
+let currentFilePath = "";
 
 /** Aborts the in-flight fetch (if any) — the server ties ffmpeg's lifetime to the request's abort signal, so this also stops the backend analysis pass. */
 let activeAbortController: AbortController | null = null;
@@ -120,8 +140,19 @@ function fmtTime(sec: number): string {
 	return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
 }
 
+const escapeHtml = (value: string): string =>
+	value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+
+function renderSource(name: string, detail: string): void {
+	byId("bitrate-source").style.display = toolMode ? "" : "none";
+	byId("bitrate-source-selection").innerHTML = name
+		? `<span class="repair-file-name" title="${escapeHtml(detail)}">${escapeHtml(name)}</span><span class="repair-file-folder">${escapeHtml(detail)}</span>`
+		: '<span class="repair-file-empty">No video selected</span>';
+}
+
 function resetModalChrome(): void {
 	byId("bitrate-modal").style.display = "";
+	byId("bitrate-empty").style.display = "none";
 	byId("bitrate-loading").style.display = "";
 	byId("bitrate-error").style.display = "none";
 	byId("bitrate-content").style.display = "none";
@@ -129,24 +160,32 @@ function resetModalChrome(): void {
 	buttonById("bitrate-save-btn").style.display = "none";
 	buttonById("bitrate-download-btn").style.display = "none";
 	buttonById("bitrate-refresh-btn").style.display = "none";
+	destroyCharts();
+}
 
-	if (chartInstance) {
-		chartInstance.destroy();
-		chartInstance = null;
-	}
+function destroyCharts(): void {
+	resetEncodeReport();
+	chartListeners?.abort();
+	chartListeners = null;
+	for (const chart of charts) chart.destroy();
+	charts = [];
+	chartInstance = null;
 }
 
 export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boolean } = {}): Promise<void> {
 	abortActiveRequest();
 	currentJobId = jobId;
 	currentIsImported = false;
+	toolMode = false;
+	currentFilePath = "";
 
 	const jobs = await fetchJobs();
 	const job = jobs.find((j) => j.id === jobId);
 	if (!job) return;
 
-	byId("bitrate-modal-title").textContent = `Bitrate Analysis: ${job.filename}`;
+	byId("bitrate-modal-title").textContent = `${job.status === "done" ? "Encode Report" : "Bitrate Analysis"}: ${job.filename}`;
 	resetModalChrome();
+	renderSource("", "");
 	currentJobFilename = job.filename;
 
 	const controller = new AbortController();
@@ -183,24 +222,91 @@ export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boole
 }
 
 export async function handleBitrateRefresh(): Promise<void> {
-	if (!currentJobId || currentIsImported) return;
-	await openBitrateAnalysis(currentJobId, { refresh: true });
+	if (currentIsImported) return;
+	if (currentFilePath) await analyzeBitrateFile(currentFilePath, { refresh: true });
+	else if (currentJobId) await openBitrateAnalysis(currentJobId, { refresh: true });
+}
+
+/** Opens the modal from Tools, empty until a video is chosen or data is imported. */
+export function openBitrateTool(): void {
+	abortActiveRequest();
+	toolMode = true;
+	currentJobId = null;
+	currentFilePath = "";
+	currentIsImported = false;
+	currentData = null;
+	byId("bitrate-modal-title").textContent = "Bitrate Analysis";
+	resetModalChrome();
+	renderSource("", "");
+	byId("bitrate-loading").style.display = "none";
+	byId("bitrate-empty").style.display = "";
+}
+
+export function chooseBitrateFile(): void {
+	openBitrateTargetPicker((path) => analyzeBitrateFile(path));
+}
+
+async function analyzeBitrateFile(path: string, opts: { refresh?: boolean } = {}): Promise<void> {
+	abortActiveRequest();
+	toolMode = true;
+	currentJobId = null;
+	currentFilePath = path;
+	currentIsImported = false;
+	currentData = null;
+
+	const name = path.slice(path.lastIndexOf("/") + 1);
+	byId("bitrate-modal-title").textContent = "Bitrate Analysis";
+	resetModalChrome();
+	renderSource(name, path);
+	currentJobFilename = name;
+
+	const controller = new AbortController();
+	activeAbortController = controller;
+
+	try {
+		const data = await fetchFileBitrateAnalysis(path, { signal: controller.signal, refresh: opts.refresh });
+		if (controller.signal.aborted) return;
+		byId("bitrate-loading").style.display = "none";
+		if (data.error) {
+			byId("bitrate-error").textContent = data.error;
+			byId("bitrate-error").style.display = "";
+			return;
+		}
+		if (data.bitrate.length === 0) {
+			byId("bitrate-error").textContent = "No packets found. The file may be empty or unreadable.";
+			byId("bitrate-error").style.display = "";
+			return;
+		}
+		byId("bitrate-content").style.display = "";
+		buttonById("bitrate-refresh-btn").style.display = "";
+		renderBitrateAnalysis(null, data);
+	} catch (e) {
+		if (controller.signal.aborted) return;
+		byId("bitrate-loading").style.display = "none";
+		byId("bitrate-error").textContent = `Failed: ${errorMessage(e)}`;
+		byId("bitrate-error").style.display = "";
+	} finally {
+		if (activeAbortController === controller) activeAbortController = null;
+	}
 }
 
 /**
- * Load a previously-downloaded `.bitrate-analysis.json` (from the "Download
+ * Load a previously-exported `.bitrate-analysis.json` (from the "Export
  * data" button) and render it directly — no job or server round-trip needed.
  * Lets you keep looking at an episode's analysis after the job that produced
  * it is long gone (queue restart, job removed, etc.).
  */
 export async function openBitrateAnalysisImport(file: File): Promise<void> {
 	abortActiveRequest();
+	toolMode = true;
 	currentJobId = null;
+	currentFilePath = "";
 	currentIsImported = true;
 
 	const label = file.name.replace(/\.bitrate-analysis\.json$/i, "").replace(/\.json$/i, "");
-	byId("bitrate-modal-title").textContent = `Bitrate Analysis: ${label} (imported)`;
+	byId("bitrate-modal-title").textContent = "Bitrate Analysis";
 	resetModalChrome();
+	renderSource(label, `Imported from ${file.name}`);
 
 	try {
 		const text = await file.text();
@@ -219,13 +325,15 @@ export async function openBitrateAnalysisImport(file: File): Promise<void> {
 		}
 
 		const data: BitrateAnalysisResult = {
-			mode: parsed.mode === "encoded" ? "encoded" : "source",
+			mode: parsed.mode === "encoded" || parsed.mode === "file" ? parsed.mode : "source",
 			durationSec: Number(parsed.durationSec) || 0,
 			bitrate: parsed.bitrate,
 			noise: parsed.noise ?? null,
 			metric,
 			thresholds: parsed.thresholds ?? undefined,
 			appliedPlan: parsed.appliedPlan ?? null,
+			telemetry: Array.isArray(parsed.telemetry?.zones) && Number(parsed.telemetry.fps) > 0 ? parsed.telemetry : null,
+			measurement: parsed.measurement?.status === "done" && parsed.measurement.values && Number(parsed.measurement.fps) > 0 ? parsed.measurement : null,
 		};
 		currentJobFilename = typeof parsed.filename === "string" && parsed.filename ? parsed.filename : label;
 
@@ -243,10 +351,7 @@ export async function openBitrateAnalysisImport(file: File): Promise<void> {
 export function closeBitrateAnalysis(): void {
 	abortActiveRequest();
 	byId("bitrate-modal").style.display = "none";
-	if (chartInstance) {
-		chartInstance.destroy();
-		chartInstance = null;
-	}
+	destroyCharts();
 	currentJobId = null;
 	currentJobFilename = "";
 	currentMetric = "noise";
@@ -254,6 +359,8 @@ export function closeBitrateAnalysis(): void {
 	currentScenes = [];
 	currentData = null;
 	currentIsImported = false;
+	toolMode = false;
+	currentFilePath = "";
 }
 
 export function closeBitrateAnalysisIfOutside(e: MouseEvent): void {
@@ -275,7 +382,7 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 	const appliedPlan = !isSource ? (data.appliedPlan ?? null) : null;
 
 	const bitrateDataset: any = {
-		label: isSource ? "Source bitrate" : "Encoded bitrate",
+		label: isSource ? "Source bitrate" : data.mode === "file" ? "Bitrate" : "Encoded bitrate",
 		data: data.bitrate.map((p) => ({ x: p.t, y: p.kbps / 1000 })),
 		borderColor: NO_DENOISE_COLOR,
 		backgroundColor: "transparent",
@@ -297,7 +404,24 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 	const datasets: any[] = [bitrateDataset];
 
 	renderAppliedLegend(legendWrap, appliedPlan);
-	renderBitrateStats(data.bitrate);
+	renderBitrateStats(data.bitrate, telemetryStats(data.telemetry));
+
+	const maxKbps = data.telemetry?.maxKbps ?? 0;
+	if (maxKbps > 0 && currentDurationSec > 0) {
+		datasets.push({
+			label: "Max bitrate",
+			data: [
+				{ x: 0, y: maxKbps / 1000 },
+				{ x: currentDurationSec, y: maxKbps / 1000 },
+			],
+			borderColor: "#e0605b",
+			backgroundColor: "transparent",
+			borderDash: [6, 4],
+			borderWidth: 1,
+			pointRadius: 0,
+			yAxisID: "y",
+		});
+	}
 
 	const hasNoise = isSource && !!data.noise && data.noise.scenes.length > 0;
 
@@ -335,7 +459,9 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 		currentThresholds = null;
 		currentScenes = [];
 		thresholdsWrap.style.display = "none";
-		if (isSource) {
+		if (data.mode === "file") {
+			modeNote.textContent = "Bitrate of the video over time.";
+		} else if (isSource) {
 			modeNote.textContent = "Source bitrate over time. Noise analysis was unavailable for this file.";
 		} else if (appliedPlan && appliedPlan.length > 0) {
 			modeNote.textContent = "Encoded output bitrate over time, colored by the auto-denoise level actually applied at each point.";
@@ -344,10 +470,31 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 		}
 	}
 
-	const canvas = byId<HTMLCanvasElement>("bitrate-canvas");
-	const ctx = canvas.getContext("2d")!;
+	chartListeners = new AbortController();
+	setupZoomButtons();
+	chartInstance = makeTimeChart("bitrate-canvas", datasets, {
+		y: { position: "left", title: { display: true, text: "Bitrate (Mbps)" }, beginAtZero: true },
+		...(hasNoise
+			? { y1: { position: "right", title: { display: true, text: display.axisLabel }, min: 0, max: display.axisMax, grid: { drawOnChartArea: false } } }
+			: {}),
+	});
+	renderEncodeReport(reportHost, currentJobId, data);
 
-	chartInstance = new Chart(ctx, {
+	saveBtn.style.display = hasNoise && job?.status === "queued" ? "" : "none";
+	buttonById("bitrate-download-btn").style.display = data.bitrate.length > 0 ? "" : "none";
+	updateZoomButtonState();
+}
+
+/** Width of the left and right axes on every chart, so their plots line up on the same time axis. */
+const AXIS_WIDTH = 72;
+
+/** A chart on the shared time axis. A chart without a right axis gets an empty one, so it lines up with those that have one. */
+function makeTimeChart(canvasId: string, datasets: any[], scales: any, label?: (item: any) => string, extra: object = {}): ChartInstance {
+	const canvas = byId<HTMLCanvasElement>(canvasId);
+	const fixWidth = (scale: { width: number }) => {
+		scale.width = AXIS_WIDTH;
+	};
+	const chart = new Chart(canvas.getContext("2d")!, {
 		type: "line",
 		data: { datasets },
 		options: {
@@ -355,6 +502,7 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 			maintainAspectRatio: false,
 			animation: false,
 			interaction: { mode: "nearest", axis: "x", intersect: false },
+			...extra,
 			scales: {
 				x: {
 					type: "linear",
@@ -363,32 +511,41 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 					min: viewMin,
 					max: viewMax || undefined,
 				},
-				y: {
-					position: "left",
-					title: { display: true, text: "Bitrate (Mbps)" },
-					beginAtZero: true,
+				y: { ...scales.y, afterFit: fixWidth },
+				y1: {
+					...(scales.y1 ?? { ticks: { display: false }, border: { display: false }, grid: { drawOnChartArea: false, drawTicks: false } }),
+					position: "right",
+					afterFit: fixWidth,
 				},
-				y1: hasNoise
-					? { position: "right", title: { display: true, text: display.axisLabel }, min: 0, max: display.axisMax, grid: { drawOnChartArea: false } }
-					: { display: false },
 			},
 			plugins: {
+				...((extra as { plugins?: object }).plugins ?? {}),
 				legend: { display: true, labels: { boxWidth: 12 } },
 				tooltip: {
 					callbacks: {
 						title: (items: any[]) => (items[0] ? fmtTime(items[0].parsed.x) : ""),
+						...(label ? { label } : {}),
 					},
 				},
 			},
 		},
 	});
-
-	saveBtn.style.display = hasNoise && job?.status === "queued" ? "" : "none";
-	buttonById("bitrate-download-btn").style.display = data.bitrate.length > 0 ? "" : "none";
-
-	setupZoomAndPan(canvas);
-	updateZoomButtonState();
+	charts.push(chart);
+	setupZoomAndPan(canvas, chart);
+	return chart;
 }
+
+const reportHost: ReportHost = {
+	makeChart: (canvasId, datasets, scales, label, extra) => makeTimeChart(canvasId, datasets, scales, label, extra),
+	zoomAround: (sec) => {
+		const span = Math.min(currentDurationSec, 30);
+		const min = Math.max(0, Math.min(sec - span / 2, currentDurationSec - span));
+		setView(min, min + span);
+	},
+	onMeasurement: (m: EncodeMeasurement | null) => {
+		if (currentData) currentData = { ...currentData, measurement: m };
+	},
+};
 
 /** Show/hide the "which color = which denoise level" key, only when we have an applied plan to show. */
 function renderAppliedLegend(container: HTMLElement, plan: AutoDenoiseAppliedRange[] | null): void {
@@ -416,6 +573,7 @@ export function handleBitrateDownload(): void {
 	if (!currentData) return;
 
 	const payload = {
+		version: EXPORT_VERSION,
 		filename: currentJobFilename,
 		mode: currentData.mode,
 		durationSec: currentData.durationSec,
@@ -424,9 +582,12 @@ export function handleBitrateDownload(): void {
 		metric: currentMetric,
 		thresholds: currentData.thresholds ?? null,
 		appliedPlan: currentData.appliedPlan ?? null,
+		telemetry: currentData.telemetry ?? null,
+		measurement: currentData.measurement?.status === "done" ? currentData.measurement : null,
 	};
 
-	const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+	// A measurement of every frame is hundreds of thousands of numbers, so the file is not indented.
+	const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
 	const url = URL.createObjectURL(blob);
 	const safeName = (currentJobFilename || "bitrate-analysis").replace(/\.[^/.]+$/, "");
 	const a = document.createElement("a");
@@ -438,10 +599,16 @@ export function handleBitrateDownload(): void {
 	URL.revokeObjectURL(url);
 }
 
-function renderBitrateStats(bitrate: { t: number; kbps: number }[]): void {
+function renderBitrateStats(bitrate: { t: number; kbps: number }[], extra: Array<[string, string, string?]> = []): void {
 	const container = byId("bitrate-stats");
+	const more = extra
+		.map(
+			([label, value, title]) =>
+				`<div class="bitrate-stat"${title ? ` title="${escapeHtml(title)}"` : ""}><span class="bitrate-stat-label">${escapeHtml(label)}</span><span class="bitrate-stat-value">${escapeHtml(value)}</span></div>`,
+		)
+		.join("");
 	if (bitrate.length === 0) {
-		container.innerHTML = "";
+		container.innerHTML = more;
 		return;
 	}
 
@@ -458,7 +625,7 @@ function renderBitrateStats(bitrate: { t: number; kbps: number }[]): void {
 	const stat = (label: string, kbps: number) =>
 		`<div class="bitrate-stat"><span class="bitrate-stat-label">${label}</span><span class="bitrate-stat-value">${formatBitrate2(Math.round(kbps))}</span></div>`;
 
-	container.innerHTML = stat("Min", min) + stat("Avg", avg) + stat("Max", max);
+	container.innerHTML = stat("Min", min) + stat("Avg", avg) + stat("Max", max) + more;
 }
 
 function buildThresholdDataset(level: ThresholdLevel, value: number) {
@@ -607,14 +774,15 @@ export async function handleBitrateSaveThresholds(): Promise<void> {
 	}
 }
 
-// Zoom and pan
+// Zoom and pan, shared by every chart in the modal.
 function setView(min: number, max: number): void {
 	viewMin = Math.max(0, min);
 	viewMax = Math.min(currentDurationSec, max);
-	if (!chartInstance) return;
-	chartInstance.options.scales.x.min = viewMin;
-	chartInstance.options.scales.x.max = viewMax;
-	chartInstance.update("none");
+	for (const chart of charts) {
+		chart.options.scales.x.min = viewMin;
+		chart.options.scales.x.max = viewMax;
+		chart.update("none");
+	}
 	updateZoomButtonState();
 }
 
@@ -643,65 +811,50 @@ function updateZoomButtonState(): void {
 	if (resetBtn) resetBtn.disabled = viewMin <= 0.001 && viewMax >= currentDurationSec - 0.001;
 }
 
-let dragStartClientX: number | null = null;
-let dragStartView: [number, number] | null = null;
+function setupZoomButtons(): void {
+	buttonById("bitrate-zoom-in-btn").onclick = () => zoomBy(0.7);
+	buttonById("bitrate-zoom-out-btn").onclick = () => zoomBy(1 / 0.7);
+	buttonById("bitrate-zoom-reset-btn").onclick = () => setView(0, currentDurationSec);
+}
 
-function setupZoomAndPan(canvas: HTMLCanvasElement): void {
-	const zoomInBtn = document.getElementById("bitrate-zoom-in-btn") as HTMLButtonElement | null;
-	const zoomOutBtn = document.getElementById("bitrate-zoom-out-btn") as HTMLButtonElement | null;
-	const resetBtn = document.getElementById("bitrate-zoom-reset-btn") as HTMLButtonElement | null;
-
-	if (zoomInBtn) zoomInBtn.onclick = () => zoomBy(0.7);
-	if (zoomOutBtn) zoomOutBtn.onclick = () => zoomBy(1 / 0.7);
-	if (resetBtn) resetBtn.onclick = () => setView(0, currentDurationSec);
-
-	canvas.onwheel = (e: WheelEvent) => {
-		if (!chartInstance) return;
-		e.preventDefault();
-		const rect = canvas.getBoundingClientRect();
-		const xScale = chartInstance.scales.x;
-		let centerFrac = 0.5;
-		if (xScale) {
-			const dataX = xScale.getValueForPixel(e.clientX - rect.left);
+/** Scroll zooms around the pointer and dragging pans, on any chart. The listeners go with the charts. */
+function setupZoomAndPan(canvas: HTMLCanvasElement, chart: ChartInstance): void {
+	const signal = chartListeners?.signal;
+	if (!signal) return;
+	canvas.addEventListener(
+		"wheel",
+		(e: WheelEvent) => {
+			e.preventDefault();
+			const dataX = chart.scales.x.getValueForPixel(e.clientX - canvas.getBoundingClientRect().left);
 			const span = viewMax - viewMin || 1;
-			centerFrac = Math.max(0, Math.min(1, (dataX - viewMin) / span));
-		}
-		zoomBy(e.deltaY > 0 ? 1.15 : 1 / 1.15, centerFrac);
-	};
-
-	canvas.onmousedown = (e: MouseEvent) => {
-		dragStartClientX = e.clientX;
-		dragStartView = [viewMin, viewMax];
-		canvas.style.cursor = "grabbing";
-	};
-
-	// Assigned via property (not addEventListener) so re-opening the modal
-	// replaces the previous handler instead of stacking another one.
-	window.onmousemove = (e: MouseEvent) => {
-		if (dragStartClientX === null || !dragStartView || !chartInstance) return;
-		const xScale = chartInstance.scales.x;
-		if (!xScale) return;
-		const pixelDelta = e.clientX - dragStartClientX;
-		const dataPerPixel = xScale.getValueForPixel(1) - xScale.getValueForPixel(0);
-		const dataDelta = pixelDelta * dataPerPixel;
-
-		let newMin = dragStartView[0] - dataDelta;
-		let newMax = dragStartView[1] - dataDelta;
-		const span = newMax - newMin;
-		if (newMin < 0) {
-			newMin = 0;
-			newMax = span;
-		}
-		if (newMax > currentDurationSec) {
-			newMax = currentDurationSec;
-			newMin = currentDurationSec - span;
-		}
-		setView(newMin, newMax);
-	};
-
-	window.onmouseup = () => {
-		dragStartClientX = null;
-		dragStartView = null;
-		canvas.style.cursor = "";
-	};
+			zoomBy(e.deltaY > 0 ? 1.15 : 1 / 1.15, Math.max(0, Math.min(1, (dataX - viewMin) / span)));
+		},
+		{ signal, passive: false },
+	);
+	canvas.addEventListener(
+		"mousedown",
+		(e: MouseEvent) => {
+			const startX = e.clientX;
+			const start: [number, number] = [viewMin, viewMax];
+			const dataPerPixel = chart.scales.x.getValueForPixel(1) - chart.scales.x.getValueForPixel(0);
+			canvas.style.cursor = "grabbing";
+			const drag = new AbortController();
+			const end = () => {
+				drag.abort();
+				canvas.style.cursor = "";
+			};
+			window.addEventListener(
+				"mousemove",
+				(move: MouseEvent) => {
+					const span = start[1] - start[0];
+					const min = Math.max(0, Math.min(start[0] - (move.clientX - startX) * dataPerPixel, currentDurationSec - span));
+					setView(min, min + span);
+				},
+				{ signal: drag.signal },
+			);
+			window.addEventListener("mouseup", end, { signal: drag.signal });
+			signal.addEventListener("abort", end, { once: true, signal: drag.signal });
+		},
+		{ signal },
+	);
 }

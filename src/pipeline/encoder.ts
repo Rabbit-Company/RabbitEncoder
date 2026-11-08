@@ -752,6 +752,7 @@ export async function encodeJob(
 			totalDuration: probe.duration,
 		});
 		if (sink && prepareFilter?.cropRect) sink.crop = { ...prepareFilter.cropRect };
+		if (!previewMode) updateJob({ cropRect: prepareFilter?.cropRect ? { ...prepareFilter.cropRect } : undefined });
 
 		// av-denoise has no CPU fallback, so stop here rather than after the filter pass.
 		if (prepareFilter?.deferredAvd) {

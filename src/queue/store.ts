@@ -29,6 +29,7 @@ import {
 } from "../core/types";
 import { encodeJob, CancelledError } from "../pipeline/encoder";
 import { deleteTelemetry, initTelemetry, resetTelemetry } from "../pipeline/telemetry";
+import { deleteEncodeMeasurement, initEncodeMeasure } from "../pipeline/encode-measure";
 import { isAlreadyEncoded } from "./library";
 import { Logger } from "../core/logger";
 import { normalizeNlmeansLevelParams, normalizeGradfunLevelParams } from "../video/filters";
@@ -89,6 +90,7 @@ export function initStore(config: AppConfig) {
 	loadSettings();
 	loadQueue();
 	initTelemetry(config.tempDir, new Set(jobs.keys()));
+	initEncodeMeasure(config.tempDir, new Set(jobs.keys()));
 	processQueue();
 }
 
@@ -817,6 +819,7 @@ export function removeJob(id: string): boolean {
 	if (job.status !== "queued" && job.status !== "done" && job.status !== "error" && job.status !== "cancelled") return false;
 	jobs.delete(id);
 	deleteTelemetry(id);
+	deleteEncodeMeasurement(id);
 	clearPreviewFor(id);
 	clearFilmGrainRunFor(id);
 	saveQueue();
@@ -912,6 +915,8 @@ async function processQueue() {
 	// Left from an earlier run of the job, which a retry or a pause does not clear.
 	next.estimatedVideoSize = undefined;
 	next.estimatedFinalSize = undefined;
+	deleteEncodeMeasurement(next.id);
+	next.cropRect = undefined;
 	resetTelemetry(
 		next.id,
 		(next.kind ?? "encode") === "encode" &&
@@ -962,6 +967,7 @@ async function processQueue() {
 			} else {
 				jobs.delete(next.id);
 				deleteTelemetry(next.id);
+				deleteEncodeMeasurement(next.id);
 				Logger.info(`[store] Job ${next.id} cancelled and removed`);
 			}
 		} else {

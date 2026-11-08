@@ -3,6 +3,7 @@ import type {
 	AutoDenoiseMetric,
 	AutoDenoiseThresholds,
 	BitrateAnalysisResult,
+	EncodeMeasurement,
 	FilmGrainSampling,
 	FontCheckJobRequest,
 	FontCheckProgress,
@@ -904,6 +905,42 @@ export async function fetchBitrateAnalysis(
 	const data = await res.json();
 	if (!res.ok) return { ...data, mode: "source", durationSec: 0, bitrate: [], noise: null, error: data?.error || `Request failed (${res.status})` };
 	return data;
+}
+
+export async function fetchFileBitrateAnalysis(
+	path: string,
+	opts: { signal?: AbortSignal; refresh?: boolean } = {},
+): Promise<BitrateAnalysisResult & { filename?: string; error?: string }> {
+	const qs = new URLSearchParams({ path, ...(opts.refresh ? { refresh: "1" } : {}) });
+	const res = await authFetch(`${API}/api/bitrate-analysis?${qs}`, { signal: opts.signal });
+	const data = await res.json();
+	if (!res.ok) return { ...data, mode: "file", durationSec: 0, bitrate: [], noise: null, error: data?.error || `Request failed (${res.status})` };
+	return data;
+}
+
+export async function fetchJobMeasurement(jobId: string, signal?: AbortSignal): Promise<EncodeMeasurement | null> {
+	const res = await authFetch(`${API}/api/jobs/${jobId}/measure`, { signal });
+	const data = await res.json();
+	if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+	return data.measurement ?? null;
+}
+
+export async function startJobMeasurement(
+	jobId: string,
+	options: { interval: "frame" | number; metrics: MetricName[]; withGrain: boolean },
+): Promise<EncodeMeasurement> {
+	const res = await authFetch(`${API}/api/jobs/${jobId}/measure`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await res.json();
+	if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+	return data.measurement;
+}
+
+export async function cancelJobMeasurement(jobId: string): Promise<void> {
+	await authFetch(`${API}/api/jobs/${jobId}/measure`, { method: "DELETE" });
 }
 
 export async function patchJobAutoThresholds(id: string, metric: AutoDenoiseMetric, thresholds: AutoDenoiseThresholds): Promise<Job> {

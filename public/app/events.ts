@@ -20,6 +20,8 @@ import {
 	handleBitrateSaveThresholds,
 	openBitrateAnalysis,
 	openBitrateAnalysisImport,
+	openBitrateTool,
+	chooseBitrateFile,
 } from "../features/bitrate-analysis";
 import { closeLiveView, closeLiveViewIfOutside, openLiveView, toggleLiveFollow, zoomLiveView } from "../features/live-view";
 import { closeJobModal, closeJobModalIfOutside, doRetry, openJobSettings, removeJob, removeJobs, saveJobSettings } from "../features/job-settings";
@@ -781,8 +783,10 @@ export function initEventListeners() {
 	byId("bitrate-download-btn").addEventListener("click", handleBitrateDownload);
 	byId("bitrate-refresh-btn").addEventListener("click", handleBitrateRefresh);
 
+	byId("open-bitrate-analysis-btn").addEventListener("click", openBitrateTool);
+	byId("bitrate-choose-file-btn").addEventListener("click", chooseBitrateFile);
 	const bitrateImportInput = byId<HTMLInputElement>("bitrate-import-input");
-	byId("import-bitrate-analysis-btn").addEventListener("click", () => bitrateImportInput.click());
+	byId("bitrate-import-btn").addEventListener("click", () => bitrateImportInput.click());
 	bitrateImportInput.addEventListener("change", () => {
 		const file = bitrateImportInput.files?.[0];
 		bitrateImportInput.value = "";
