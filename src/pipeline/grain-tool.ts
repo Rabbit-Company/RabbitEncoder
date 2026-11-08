@@ -248,9 +248,9 @@ export function sanitizeGrainPlan(raw: Partial<GrainPlan>): GrainPlan {
 		plan.tablePath = raw.tablePath;
 	}
 	if (plan.action === "measure") {
-		if (plan.batch) throw new Error("A folder cannot measure grain, every file needs its own original");
-		if (typeof raw.sourcePath !== "string" || !raw.sourcePath) throw new Error("Choose the original the video was encoded from");
-		plan.sourcePath = raw.sourcePath;
+		// A folder batch gives every file its own original after this.
+		if (typeof raw.sourcePath === "string" && raw.sourcePath) plan.sourcePath = raw.sourcePath;
+		else if (!plan.batch) throw new Error("Choose the original the video was encoded from");
 		plan.sampling = FILM_GRAIN_SAMPLINGS.includes(raw.sampling as FilmGrainSampling) ? (raw.sampling as FilmGrainSampling) : "all";
 		plan.range = FILM_GRAIN_RANGES.includes(raw.range as FilmGrainRange) ? (raw.range as FilmGrainRange) : "representative";
 		if (raw.justEnough === true) plan.justEnough = true;
@@ -330,6 +330,7 @@ export async function runGrainJob(job: Job, config: AppConfig, updateJob: (parti
 		if (extname(plan.targetPath).toLowerCase() !== ".mkv") throw new Error("Film grain can only be changed in MKV files");
 		if (existsSync(stagePath)) throw new Error(`Staging file already exists: ${stagePath}`);
 		if (plan.tablePath && !existsSync(plan.tablePath)) throw new Error("The uploaded film grain table no longer exists, upload it again");
+		if (plan.action === "measure" && !plan.sourcePath) throw new Error("The video has no original to measure the grain from");
 		if (plan.sourcePath && !existsSync(plan.sourcePath)) throw new Error("The original no longer exists");
 
 		// Analyze

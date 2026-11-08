@@ -4,7 +4,9 @@ import { basename, extname, join, resolve } from "path";
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig, GrainInspectRun, GrainPlan } from "../core/types";
 import { checkFilmGrainTable, exportFilmGrainTable, inspectGrainFile, sanitizeGrainPlan } from "../pipeline/grain-tool";
+import { listMediaFiles } from "../queue/library";
 import { addGrainJob } from "../queue/store";
+import { pairOriginalSources } from "../video/source-pairing";
 import { mkvFiles } from "./hdr";
 import { resolveAllowedDirectory, resolveAllowedMediaFile, resolveAllowedMkv } from "./repair";
 
@@ -147,24 +149,65 @@ export function registerGrainRoutes(app: Web, config: AppConfig): void {
 		}
 	});
 
+	/** The MKVs of a folder paired with their originals in another folder, by episode number or name. */
+	app.post("/api/grain/source-pairs", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { folder?: unknown; recursive?: unknown; sourceFolder?: unknown };
+			const targets = mkvFiles(resolveAllowedDirectory(raw.folder, config), raw.recursive === true);
+			if (targets.length === 0) throw new Error("The folder has no MKV files");
+			const encodes = new Set(targets.map((path) => realpathSync(path)));
+			const sources = [
+				...new Set(
+					listMediaFiles(resolveAllowedDirectory(raw.sourceFolder, config)).flatMap((path) => {
+						try {
+							return [resolveAllowedMediaFile(path, config, "Original")];
+						} catch {
+							return [];
+						}
+					}),
+				),
+			].filter((path) => !encodes.has(path));
+			if (sources.length === 0) throw new Error("The originals folder has no other videos");
+			if (sources.length > 500) throw new Error("Choose an originals folder with at most 500 videos");
+			const pairs = pairOriginalSources(targets, sources).map((pair) => ({ ...pair, targetName: basename(pair.targetPath) }));
+			return c.json({ pairs, sources: sources.map((path) => ({ path, name: basename(path) })) });
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
 	app.post("/api/grain/batch", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { folder?: unknown; recursive?: unknown; plan?: Partial<GrainPlan> };
+			const raw = (await c.req.json()) as { folder?: unknown; recursive?: unknown; plan?: Partial<GrainPlan>; sources?: unknown };
 			const folder = resolveAllowedDirectory(raw.folder, config);
 			const template = sanitizeGrainPlan({ ...(raw.plan ?? {}), targetPath: "", batch: true });
 			if (template.action === "table") template.tablePath = resolveUpload(template.tablePath, config);
+			const sources = raw.sources && typeof raw.sources === "object" ? (raw.sources as Record<string, unknown>) : {};
+			if (template.action === "measure" && !Object.values(sources).some((path) => typeof path === "string" && path))
+				throw new Error("Map at least one video to its original");
 			const files = mkvFiles(folder, raw.recursive === true);
 			if (files.length === 0) throw new Error("The folder has no MKV files");
 			const jobIds: string[] = [];
 			const skipped: string[] = [];
+			let unmapped = 0;
 			for (const file of files) {
+				const source = sources[file];
+				if (template.action === "measure" && (typeof source !== "string" || !source)) {
+					unmapped++;
+					continue;
+				}
 				try {
-					jobIds.push(addGrainJob({ ...template, targetPath: resolveAllowedMkv(file, config, "Video") }).id);
+					const plan = { ...template, targetPath: resolveAllowedMkv(file, config, "Video") };
+					if (template.action === "measure") {
+						plan.sourcePath = resolveAllowedMediaFile(source, config, "Original");
+						if (plan.sourcePath === plan.targetPath) throw new Error("The original is the video itself");
+					}
+					jobIds.push(addGrainJob(plan).id);
 				} catch (error: any) {
 					skipped.push(`${file}: ${error?.message || error}`);
 				}
 			}
-			return c.json({ jobIds, skipped }, 201);
+			return c.json({ jobIds, skipped, unmapped }, 201);
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
 		}

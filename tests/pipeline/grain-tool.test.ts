@@ -36,9 +36,10 @@ describe("Film grain plans", () => {
 		expect(() => sanitizeGrainPlan({ targetPath: "a.mkv", action: "synthetic", iso: 20 })).toThrow("ISO");
 	});
 
-	test("measure from an original, but never in a folder", () => {
+	test("measure from an original, which a folder gives each file later", () => {
 		expect(() => sanitizeGrainPlan({ targetPath: "a.mkv", action: "measure" })).toThrow("original");
-		expect(() => sanitizeGrainPlan({ targetPath: "", action: "measure", sourcePath: "/o.mkv", batch: true })).toThrow("own original");
+		expect(sanitizeGrainPlan({ targetPath: "", action: "measure", batch: true })).not.toHaveProperty("sourcePath");
+		expect(sanitizeGrainPlan({ targetPath: "", action: "measure", sourcePath: "/o.mkv", batch: true }).sourcePath).toBe("/o.mkv");
 		const plan = sanitizeGrainPlan({ targetPath: "a.mkv", action: "measure", sourcePath: "/o.mkv", sampling: "nope" as never, justEnough: true });
 		expect(plan).toEqual({ targetPath: "a.mkv", action: "measure", sourcePath: "/o.mkv", sampling: "all", range: "representative", justEnough: true });
 		expect(describeGrainPlan({ ...plan, range: "full", measureChroma: true })).toBe("Grain measured from the original, just enough, with chroma, full video");

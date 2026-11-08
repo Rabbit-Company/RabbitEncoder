@@ -5266,6 +5266,14 @@ a.btn {
 	margin: 12px 0;
 }
 
+.grain-pairs {
+	margin: 8px 0 12px;
+}
+
+#grain-error {
+	white-space: pre-line;
+}
+
 @media (max-width: 640px) {
 	.hdr-facts {
 		grid-template-columns: 1fr;

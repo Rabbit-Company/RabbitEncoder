@@ -5,6 +5,8 @@ import {
 	createGrainJob,
 	downloadGrainTable,
 	fetchGrainInspectRun,
+	fetchGrainSourcePairs,
+	type GrainSourcePair,
 	startGrainInspection,
 	uploadGrainTable,
 } from "../api/client";
@@ -27,6 +29,13 @@ let inspection: GrainInspection | null = null;
 let inspectRun = 0;
 /** The inspection running on the server for the chosen video. */
 let running: GrainInspectRun | null = null;
+/** Measuring a folder: where the originals are, and which one each video was encoded from. */
+let sourceFolder = "";
+let pairs: GrainSourcePair[] = [];
+let sourceChoices: { path: string; name: string }[] = [];
+let pairing = false;
+/** Bumped on every pairing, so a late answer for another folder is dropped. */
+let pairRun = 0;
 
 const STAGES: Record<GrainInspectRun["progress"]["stage"], string> = {
 	video: "Reading the video",
@@ -89,6 +98,79 @@ function resetForm(): void {
 		justEnough: false,
 		measureChroma: false,
 	});
+	pairRun++;
+	sourceFolder = "";
+	pairs = [];
+	sourceChoices = [];
+	pairing = false;
+}
+
+const mappedPairs = (): GrainSourcePair[] => pairs.filter((pair) => pair.sourcePath);
+
+function duplicateSources(): Set<string> {
+	const seen = new Set<string>();
+	const repeated = new Set<string>();
+	for (const { sourcePath } of mappedPairs()) {
+		if (seen.has(sourcePath)) repeated.add(sourcePath);
+		seen.add(sourcePath);
+	}
+	return repeated;
+}
+
+const METHODS: Record<GrainSourcePair["method"], string> = {
+	episode: "Matched by episode number",
+	filename: "Matched by name",
+	single: "The only original",
+	none: "No match, choose the original",
+};
+
+function pairsHtml(): string {
+	if (pairing) return '<div class="repair-audit-summary">Matching originals...</div>';
+	if (!pairs.length) return "";
+	const duplicates = duplicateSources();
+	const rows = pairs
+		.map((pair, index) => {
+			const choices = [
+				option("", "No original, leave it as it is", pair.sourcePath),
+				...sourceChoices.map((source) => option(source.path, source.name, pair.sourcePath)),
+			].join("");
+			return `<div class="repair-pair-row${pair.sourcePath ? "" : " repair-pair-row-skipped"}">
+				<div class="repair-pair-target"><span class="repair-file-name" title="${escapeHtml(pair.targetPath)}">${escapeHtml(pair.targetName)}</span>
+					<span class="repair-pair-method${pair.method === "none" ? " repair-pair-none" : ""}">${escapeHtml(METHODS[pair.method])}</span></div>
+				<div class="repair-pair-arrow" aria-hidden="true">←</div>
+				<div class="repair-pair-source"><select class="select-input" data-grain-pair="${index}" aria-label="Original for ${escapeHtml(pair.targetName)}">${choices}</select>
+					${duplicates.has(pair.sourcePath) ? '<span class="repair-pair-warning">Original used for more than one video</span>' : ""}</div>
+			</div>`;
+		})
+		.join("");
+	const mapped = mappedPairs().length;
+	return `<div class="repair-audit-summary">${escapeHtml(`${mapped} of ${pairs.length} videos mapped to originals. Videos without one are left as they are.`)}</div>
+		<div class="repair-batch-pairs grain-pairs">${rows}</div>`;
+}
+
+async function pairOriginals(): Promise<void> {
+	const run = ++pairRun;
+	pairs = [];
+	sourceChoices = [];
+	if (!folderPath || !sourceFolder) {
+		pairing = false;
+		renderActions();
+		return;
+	}
+	pairing = true;
+	setError("");
+	renderActions();
+	try {
+		const result = await fetchGrainSourcePairs({ folder: folderPath, recursive: inputById("grain-recursive").checked, sourceFolder });
+		if (run !== pairRun) return;
+		pairs = result.pairs;
+		sourceChoices = result.sources;
+	} catch (error) {
+		if (run !== pairRun) return;
+		setError(errorMessage(error));
+	}
+	pairing = false;
+	renderActions();
 }
 
 /** The inspection's stage and progress. regrain cannot tell how long reading the table takes, so that stage has no percentage. */
@@ -161,7 +243,7 @@ function renderInspection(): void {
 }
 
 function option(value: string, label: string, selected: string): string {
-	return `<option value="${value}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
+	return `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
 function actionHint(): string {
@@ -177,7 +259,7 @@ function actionHint(): string {
 		case "table":
 			return "A table from regrain, aomenc or Download table. Its entries are matched to the video by time, so it must be made for this video or start at its first frame.";
 		case "measure":
-			return "regrain compares the original with this video and puts back the grain the encode lost. The original must have the same frames. A crop and a downscale are found on their own. Quick measures 30 seconds and gives the whole video that grain, Full video gives every scene its own.";
+			return `regrain compares ${scope === "file" ? "the original with this video" : "every video with its original"} and puts back the grain the encode lost. The original must have the same frames. A crop and a downscale are found on their own. Quick measures 30 seconds and gives the whole video that grain, Full video gives every scene its own.`;
 		default:
 			return "";
 	}
@@ -196,8 +278,11 @@ function renderActions(): void {
 		option("keep", "Leave as it is", form.action),
 		option("synthetic", hasGrain && file ? "Replace it with grain of a chosen strength" : "Add grain of a chosen strength", form.action),
 		option("table", hasGrain && file ? "Replace it with a film grain table" : "Add a film grain table", form.action),
-		// Every file needs its own original, so a folder cannot measure.
-		...(file ? [option("measure", hasGrain ? "Replace it with grain measured from the original" : "Add grain measured from the original", form.action)] : []),
+		option(
+			"measure",
+			!file ? "Add grain measured from the originals" : hasGrain ? "Replace it with grain measured from the original" : "Add grain measured from the original",
+			form.action,
+		),
 		...(hasGrain ? [option("remove", "Remove it", form.action)] : []),
 	].join("");
 	const fields =
@@ -220,12 +305,22 @@ function renderActions(): void {
 					}</span>
 					<button class="btn btn-ghost btn-sm" type="button" data-grain-action="upload">Upload table...</button></div>`
 				: form.action === "measure"
-					? `<div class="hdr-action-row grain-option"><span>${
-							form.sourcePath
-								? `<span title="${escapeHtml(form.sourcePath)}">${escapeHtml(fileName(form.sourcePath))}</span>`
-								: '<span class="hdr-note">No original chosen</span>'
-						}</span>
-						<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-source">Choose original...</button></div>
+					? `${
+							file
+								? `<div class="hdr-action-row grain-option"><span>${
+										form.sourcePath
+											? `<span title="${escapeHtml(form.sourcePath)}">${escapeHtml(fileName(form.sourcePath))}</span>`
+											: '<span class="hdr-note">No original chosen</span>'
+									}</span>
+									<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-source">Choose original...</button></div>`
+								: `<div class="hdr-action-row grain-option"><span>${
+										sourceFolder
+											? `<span title="${escapeHtml(sourceFolder)}">${escapeHtml(fileName(sourceFolder))}</span>`
+											: '<span class="hdr-note">No originals folder chosen</span>'
+									}</span>
+									<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-source-folder">Choose originals folder...</button></div>
+									${pairsHtml()}`
+						}
 					<div class="hdr-action-row">
 						<label>Measure <select class="select-input" data-grain-field="range">${option("representative", "Quick (30 s)", form.range)}${option("full", "Full video", form.range)}</select></label>
 						<label>Scan <select class="select-input" data-grain-field="sampling">${option("all", "Every frame", form.sampling)}${option("half", "Half", form.sampling)}${option("quarter", "Quarter", form.sampling)}${option("eighth", "Eighth", form.sampling)}</select></label>
@@ -277,7 +372,9 @@ function updateQueueButton(): void {
 			: form.action === "table"
 				? !!form.uploadPath
 				: form.action === "measure"
-					? !!form.sourcePath
+					? scope === "file"
+						? !!form.sourcePath
+						: !pairing && mappedPairs().length > 0
 					: form.action === "remove";
 	buttonById("grain-queue").disabled = !ready || !actionReady;
 }
@@ -381,10 +478,24 @@ export function chooseGrainFolder(): void {
 		folderPath = path;
 		setResult("");
 		render();
+		if (sourceFolder) void pairOriginals();
 	});
 }
 
+/** Subfolders change which videos there are, so they are paired again. */
+export function handleGrainRecursiveChange(): void {
+	if (sourceFolder) void pairOriginals();
+}
+
 export function handleGrainActionsChange(event: Event): void {
+	const pairSelect = event.target instanceof HTMLSelectElement ? event.target.dataset.grainPair : undefined;
+	if (pairSelect !== undefined) {
+		const pair = pairs[Number(pairSelect)];
+		if (!pair || event.type !== "change") return;
+		pair.sourcePath = (event.target as HTMLSelectElement).value;
+		renderActions();
+		return;
+	}
 	const field = (event.target as HTMLElement).dataset?.grainField as keyof typeof form | undefined;
 	if (!field) return;
 	const input = event.target as HTMLInputElement | HTMLSelectElement;
@@ -406,6 +517,12 @@ export function handleGrainClick(event: MouseEvent): void {
 			form.sourcePath = path;
 			setError("");
 			renderActions();
+		});
+	}
+	if (button.dataset.grainAction === "choose-source-folder") {
+		openRepairFolderPicker((path) => {
+			sourceFolder = path;
+			void pairOriginals();
 		});
 	}
 	if (button.dataset.grainAction === "download") {
@@ -455,10 +572,15 @@ export async function queueGrainChanges(): Promise<void> {
 				folder: folderPath,
 				recursive: inputById("grain-recursive").checked,
 				plan: { ...plan, skipExisting: inputById("grain-skip-existing").checked },
+				...(form.action === "measure" ? { sources: Object.fromEntries(mappedPairs().map((pair) => [pair.targetPath, pair.sourcePath])) } : {}),
 			});
-			setResult(
-				`Queued ${result.jobIds.length} ${result.jobIds.length === 1 ? "file" : "files"}${result.skipped.length ? `, ${result.skipped.length} already have an unfinished job` : ""}.`,
-			);
+			const notes = [
+				`Queued ${result.jobIds.length} ${result.jobIds.length === 1 ? "file" : "files"}`,
+				result.unmapped ? `${result.unmapped} without an original` : "",
+				result.skipped.length ? `${result.skipped.length} not queued` : "",
+			];
+			setResult(`${notes.filter(Boolean).join(", ")}.`);
+			if (result.skipped.length) setError(result.skipped.join("\n"));
 		}
 		await update();
 	} catch (error) {

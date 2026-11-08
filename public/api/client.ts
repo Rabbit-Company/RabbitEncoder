@@ -539,11 +539,36 @@ export async function createGrainJob(plan: GrainPlan): Promise<Job> {
 	return data;
 }
 
+export interface GrainSourcePair {
+	targetPath: string;
+	sourcePath: string;
+	targetName: string;
+	method: "episode" | "filename" | "single" | "none";
+}
+
+/** Pairs the MKVs of a folder with their originals in another folder. */
+export async function fetchGrainSourcePairs(options: {
+	folder: string;
+	recursive: boolean;
+	sourceFolder: string;
+}): Promise<{ pairs: GrainSourcePair[]; sources: { path: string; name: string }[] }> {
+	const response = await authFetch(`${API}/api/grain/source-pairs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not pair the videos with their originals");
+	return data;
+}
+
 export async function createGrainBatch(options: {
 	folder: string;
 	recursive: boolean;
 	plan: Partial<GrainPlan>;
-}): Promise<{ jobIds: string[]; skipped: string[] }> {
+	/** Measure: the original of every video, by the video's path. */
+	sources?: Record<string, string>;
+}): Promise<{ jobIds: string[]; skipped: string[]; unmapped: number }> {
 	const response = await authFetch(`${API}/api/grain/batch`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },

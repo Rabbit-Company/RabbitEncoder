@@ -170,6 +170,7 @@ import {
 	closeGrainToolIfOutside,
 	handleGrainActionsChange,
 	handleGrainClick,
+	handleGrainRecursiveChange,
 	handleGrainUpload,
 	openGrainTool,
 	queueGrainChanges,
@@ -488,6 +489,7 @@ export function initEventListeners() {
 	byId("grain-modal").addEventListener("click", closeGrainToolIfOutside);
 	byId("grain-choose-target").addEventListener("click", chooseGrainTarget);
 	byId("grain-choose-folder").addEventListener("click", chooseGrainFolder);
+	byId("grain-recursive").addEventListener("change", handleGrainRecursiveChange);
 	byId("grain-actions").addEventListener("change", handleGrainActionsChange);
 	byId("grain-actions").addEventListener("input", handleGrainActionsChange);
 	byId("grain-actions").addEventListener("click", handleGrainClick);
