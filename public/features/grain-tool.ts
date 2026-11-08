@@ -268,6 +268,8 @@ function actionHint(): string {
 function renderActions(): void {
 	const container = byId("grain-actions");
 	const file = scope === "file";
+	// A folder that measures lists every video beside its original, which needs the room.
+	byId("grain-dialog").classList.toggle("grain-dialog-pairs", !file && !!folderPath && form.action === "measure");
 	if ((file && (!inspection || !inspection.editable)) || (!file && !folderPath)) {
 		container.innerHTML = "";
 		updateQueueButton();

@@ -5270,6 +5270,10 @@ a.btn {
 	margin: 8px 0 12px;
 }
 
+.modal.grain-dialog-pairs {
+	width: min(1100px, calc(100vw - 32px));
+}
+
 #grain-error {
 	white-space: pre-line;
 }
