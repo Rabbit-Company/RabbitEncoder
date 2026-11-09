@@ -1,5 +1,6 @@
 import { buildSubtitleTrackName, extractGroupFromTitle, extractSourceTag, type SubtitleTrackType } from "../tracks/tracks";
 import { resolveTranslateLang } from "../translate/translate-languages";
+import { PROVIDER_NAMES, type SubtitleProvider } from "./listing";
 
 /** Endings of a release name that are not a group: languages, formats and the halves of tags such as WEB-DL. */
 const NOT_GROUP = /^(?:dl|rip|web|hd|sd|uhd|hdr|sdr|dv|x264|x265|h264|h265|hevc|avc|aac|ac3|eac3|ddp|dts|flac|opus|srt|ass|sub|subs|forced|hi|sdh|cc)$/i;
@@ -17,10 +18,10 @@ export function sceneGroup(release: string): string | null {
 /**
  * What a downloaded subtitle's track name credits, the way native tracks
  * credit their source or group: the streaming source in the release name,
- * its fansub or scene group, the uploader, or OpenSubtitles when nothing names
- * anyone.
+ * its fansub or scene group, the uploader, or the site it came from when
+ * nothing names anyone.
  */
-export function downloadedSubtitleCredit(release: string, uploader: string): string {
+export function downloadedSubtitleCredit(release: string, uploader: string, provider: SubtitleProvider = "opensubtitles"): string {
 	const source = extractSourceTag(release);
 	if (source) return source;
 	// The bracket parser falls back to the whole name, which is no group.
@@ -29,7 +30,7 @@ export function downloadedSubtitleCredit(release: string, uploader: string): str
 	const scene = sceneGroup(release);
 	if (scene) return scene;
 	if (!NO_UPLOADER.test(uploader.trim())) return uploader.trim();
-	return "OpenSubtitles";
+	return PROVIDER_NAMES[provider];
 }
 
 /**
@@ -47,8 +48,8 @@ function releaseName(release: string, fileName: string): string {
 }
 
 /** The credit of a candidate, as its track name would show it. */
-export function candidateCredit(release: string, uploader: string, fileName = ""): string {
-	return downloadedSubtitleCredit(releaseName(release, fileName), uploader);
+export function candidateCredit(release: string, uploader: string, fileName = "", provider?: SubtitleProvider): string {
+	return downloadedSubtitleCredit(releaseName(release, fileName), uploader, provider);
 }
 
 /**
@@ -92,7 +93,14 @@ export function cleanPreferredSources(value: unknown): string[] {
  * name, whether it is a dubtitle. Without a release name the file name is used.
  * A credit entered by hand replaces the one read from the names.
  */
-export function downloadedTrackName(type: SubtitleTrackType, release: string, uploader: string, fileName = "", credit?: string): string {
+export function downloadedTrackName(
+	type: SubtitleTrackType,
+	release: string,
+	uploader: string,
+	fileName = "",
+	credit?: string,
+	provider?: SubtitleProvider,
+): string {
 	const name = releaseName(release, fileName);
-	return buildSubtitleTrackName(type, name, credit?.trim() || downloadedSubtitleCredit(name, uploader));
+	return buildSubtitleTrackName(type, name, credit?.trim() || downloadedSubtitleCredit(name, uploader, provider));
 }

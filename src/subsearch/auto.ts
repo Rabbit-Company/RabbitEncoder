@@ -2,7 +2,9 @@ import { mkdirSync } from "fs";
 import { Logger } from "../core/logger";
 import { CancelledError } from "../core/process";
 import type { JobSettings, ProbeResult } from "../core/types";
-import { accountFrom, searchSubtitles } from "./search";
+import type { SubtitleProvider } from "./listing";
+import { accountsFrom } from "./providers";
+import { searchSubtitles } from "./search";
 
 export interface DownloadedSubtitle {
 	/** Language tag as requested, used for the MKV track. */
@@ -15,13 +17,14 @@ export interface DownloadedSubtitle {
 	release: string;
 	uploader: string;
 	fileName: string;
+	provider: SubtitleProvider;
 	/** One of the most used languages added on top of the target languages. */
 	extra?: boolean;
 }
 
-/** Downloading before translating is on and OpenSubtitles is set up. */
+/** Downloading before translating is on and a subtitle site is set up. */
 export function subtitleDownloadEnabled(settings: JobSettings): boolean {
-	return settings.subtitleDownloadBeforeTranslate !== false && !!accountFrom(settings);
+	return settings.subtitleDownloadBeforeTranslate !== false && !!accountsFrom(settings);
 }
 
 export interface DownloadMissingParams {
@@ -80,6 +83,7 @@ export async function downloadMissingSubtitles(p: DownloadMissingParams): Promis
 				release: best.release,
 				uploader: best.uploader,
 				fileName: best.fileName,
+				provider: best.provider,
 				...(lang.extra ? { extra: true } : {}),
 			});
 		}

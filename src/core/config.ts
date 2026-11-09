@@ -130,6 +130,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	subtitleDownloadLanguages: [],
 	openSubtitlesUsername: "",
 	openSubtitlesPassword: "",
+	subdlApiKey: "",
 	subtitleDownloadMaxTries: 2,
 	subtitleDownloadMinScore: 60,
 	subtitleDownloadPreferredSources: [],

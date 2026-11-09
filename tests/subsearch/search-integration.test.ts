@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { run } from "../../src/core/process";
+import { buildZip } from "../../src/core/zip";
 import { probeFile } from "../../src/pipeline/probe";
 import { getDefaultJobSettings } from "../../src/core/config";
 import { dialogueCues, type Interval } from "../../src/subsearch/cues";
@@ -74,6 +75,7 @@ function srt(cues: Interval[], shiftMs = 0): string {
 	const cues = timeline(100, 11);
 	const realFetch = globalThis.fetch;
 	const downloads: number[] = [];
+	const subdlDownloads: string[] = [];
 	let userChecks = 0;
 
 	beforeAll(async () => {
@@ -121,8 +123,51 @@ function srt(cues: Interval[], shiftMs = 0): string {
 				...extra,
 			},
 		});
+		const encoder = new TextEncoder();
+		const subdlFiles: Record<string, Uint8Array> = {
+			"/subtitle/500-501.zip": buildZip([
+				{ name: "The.Matrix.1999.1080p.BluRay.x264-SD.sl.srt", data: encoder.encode(srt(cues, -2500)) },
+				{ name: "readme.nfo", data: encoder.encode("nothing") },
+			]),
+			"/subtitle/500-502.zip": buildZip([{ name: "Wrong.srt", data: encoder.encode(srt(timeline(100, 99))) }]),
+		};
 		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
 			const url = new URL(String(input));
+			if (url.hostname === "api.subdl.com") {
+				expect(url.pathname).toBe("/api/v1/subtitles");
+				expect(url.searchParams.get("api_key")).toBe("sdkey");
+				expect(url.searchParams.get("film_name")?.toLowerCase()).toBe("the matrix");
+				expect(url.searchParams.get("type")).toBe("movie");
+				expect(url.searchParams.get("languages")).toBe("SL");
+				return Response.json({
+					status: true,
+					results: [{ name: "The Matrix", type: "movie", year: 1999 }],
+					subtitles: [
+						{
+							release_name: "The.Matrix.1999.1080p.BluRay.x264-GROUP",
+							name: "SUBDL.matrix.zip",
+							url: "/subtitle/500-502.zip",
+							language: "SL",
+							hi: false,
+							author: "someone",
+						},
+						{
+							release_name: "The.Matrix.1999.1080p.BluRay.x264-SD",
+							name: "SUBDL.matrix.zip",
+							url: "/subtitle/500-501.zip",
+							language: "SL",
+							hi: false,
+							author: "sduser",
+							subtitlePage: "/s/info/x/y",
+						},
+					],
+				});
+			}
+			if (url.hostname === "dl.subdl.com") {
+				subdlDownloads.push(url.pathname);
+				const bytes = subdlFiles[url.pathname];
+				return bytes ? new Response(Buffer.from(bytes)) : new Response("not found", { status: 404 });
+			}
 			if (url.pathname === "/api/v1/login") return Response.json({ token: "tok", base_url: "api.opensubtitles.com" });
 			if (url.pathname === "/api/v1/infos/user") {
 				userChecks++;
@@ -293,5 +338,54 @@ function srt(cues: Interval[], shiftMs = 0): string {
 			["eng", true],
 		]);
 		expect(result.languages[1]!.bestKey).toBe("os-201");
+	}, 60_000);
+
+	it("searches SubDL on its own and takes the subtitle out of its archive", async () => {
+		const workDir = join(root, "search-subdl");
+		mkdirSync(workDir, { recursive: true });
+		const result = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...getDefaultJobSettings(), subdlApiKey: "sdkey", subtitleDownloadMaxTries: 2 },
+			cacheDir: workDir,
+			workDir,
+		});
+		const sl = result.languages[0]!;
+		expect(sl.candidates.every((c) => c.provider === "subdl")).toBe(true);
+		expect(sl.bestKey).toBe("sd-500-501");
+		const best = sl.candidates.find((c) => c.key === "sd-500-501")!;
+		expect(best.url).toBe("https://subdl.com/s/info/x/y");
+		expect(Math.abs(best.offsetMs! - 2500)).toBeLessThanOrEqual(20);
+		expect(readFileSync(join(workDir, "sd-500-501.srt"), "utf-8")).toContain("Črta številka 0");
+		expect(result.remainingDownloads).toBeUndefined();
+
+		// The archive is cached, so a second search downloads nothing.
+		const before = subdlDownloads.length;
+		await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...getDefaultJobSettings(), subdlApiKey: "sdkey", subtitleDownloadMaxTries: 2 },
+			cacheDir: workDir,
+			workDir,
+		});
+		expect(subdlDownloads.length).toBe(before);
+	}, 60_000);
+
+	it("pools the subtitles of both sites in one language", async () => {
+		const workDir = join(root, "search-both");
+		mkdirSync(workDir, { recursive: true });
+		const result = await searchSubtitles({
+			inputPath: video,
+			probe: await probeFile(video),
+			languages: ["slv"],
+			settings: { ...getDefaultJobSettings(), openSubtitlesUsername: "rabbit", openSubtitlesPassword: "secret", subdlApiKey: "sdkey" },
+			cacheDir: root,
+			workDir,
+		});
+		const keys = result.languages[0]!.candidates.map((c) => c.key);
+		expect(keys).toContain("os-102");
+		expect(keys).toContain("sd-500-501");
 	}, 60_000);
 });

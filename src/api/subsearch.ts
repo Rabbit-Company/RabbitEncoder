@@ -10,8 +10,10 @@ import { identifyMatroska } from "../pipeline/repair";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
 import { candidateCredit, cleanPreferredSources, downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
 import { applyIdentityOverride, identifyMedia, type MediaIdentity } from "../subsearch/identify";
-import { checkOpenSubtitles } from "../subsearch/opensubtitles";
-import { accountFrom, LOGIN_NEEDED, searchSubtitles, tryCandidate, type SubtitleSearchResult } from "../subsearch/search";
+import { checkOpenSubtitles, openSubtitlesApiKey } from "../subsearch/opensubtitles";
+import { accountsFrom, LOGIN_NEEDED } from "../subsearch/providers";
+import { searchSubtitles, tryCandidate, type SubtitleSearchResult } from "../subsearch/search";
+import { checkSubdl } from "../subsearch/subdl";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { buildKeptDescriptors, missingTargetLanguages } from "../translate/translate-step";
 import { resolveAllowedMediaFile } from "./repair";
@@ -113,7 +115,7 @@ function publicSearch(id: string, s: StoredSearch) {
 		...result,
 		languages: result.languages.map((l) => ({
 			...l,
-			candidates: l.candidates.map(({ syncedPath: _, ...c }) => ({ ...c, credit: candidateCredit(c.release, c.uploader, c.fileName) })),
+			candidates: l.candidates.map(({ syncedPath: _, ...c }) => ({ ...c, credit: candidateCredit(c.release, c.uploader, c.fileName, c.provider) })),
 		})),
 	};
 }
@@ -134,14 +136,21 @@ function identityOverride(raw: any): Partial<MediaIdentity> {
 export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void {
 	app.post("/api/subsearch/test", async (c) => {
 		const body = (await c.req.json().catch(() => ({}))) as { username?: string; password?: string };
-		const account = accountFrom({
-			...getAppConfig().defaults,
-			openSubtitlesUsername: body.username ?? "",
-			openSubtitlesPassword: body.password ?? "",
-		});
-		if (!account) return c.json({ ok: false, error: "Enter your username and password" });
+		const username = body.username?.trim();
+		if (!username || !body.password) return c.json({ ok: false, error: "Enter your username and password" });
 		try {
-			return c.json({ ok: true, ...(await checkOpenSubtitles(account)) });
+			return c.json({ ok: true, ...(await checkOpenSubtitles({ apiKey: openSubtitlesApiKey(), username, password: body.password })) });
+		} catch (error) {
+			return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+		}
+	});
+
+	app.post("/api/subsearch/test-subdl", async (c) => {
+		const body = (await c.req.json().catch(() => ({}))) as { apiKey?: string };
+		const apiKey = body.apiKey?.trim();
+		if (!apiKey) return c.json({ ok: false, error: "Enter your API key" });
+		try {
+			return c.json(await checkSubdl({ apiKey }));
 		} catch (error) {
 			return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) });
 		}
@@ -167,7 +176,7 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 			const extraCount = (EXTRA_LANGUAGE_CHOICES as readonly unknown[]).includes(body.extraLanguages) ? (body.extraLanguages as number) : 0;
 			if (!languages.length && !extraCount) throw new Error("Choose at least one language");
 			const settings = getAppConfig().defaults;
-			if (!accountFrom(settings)) throw new Error(LOGIN_NEEDED);
+			if (!accountsFrom(settings)) throw new Error(LOGIN_NEEDED);
 
 			const id = randomUUID();
 			const workDir = join(searchRoot(config), id);
@@ -293,7 +302,14 @@ export function registerSubtitleSearchRoutes(app: Web, config: AppConfig): void 
 				return {
 					file,
 					language: downloadedLanguageTag(lang.language),
-					trackName: downloadedTrackName(candidate.hearingImpaired ? "sdh" : "full", candidate.release, candidate.uploader, candidate.fileName, credit),
+					trackName: downloadedTrackName(
+						candidate.hearingImpaired ? "sdh" : "full",
+						candidate.release,
+						candidate.uploader,
+						candidate.fileName,
+						credit,
+						candidate.provider,
+					),
 					hearingImpaired: candidate.hearingImpaired,
 					...(lang.extra ? { extra: true } : {}),
 				};

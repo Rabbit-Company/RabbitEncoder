@@ -57,7 +57,8 @@ function hasAiProvider(): boolean {
 }
 
 function hasOpenSubtitles(): boolean {
-	return !!appState.defaults?.openSubtitlesUsername?.trim() && !!appState.defaults?.openSubtitlesPassword;
+	const d = appState.defaults;
+	return (!!d?.openSubtitlesUsername?.trim() && !!d?.openSubtitlesPassword) || !!d?.subdlApiKey?.trim();
 }
 
 /** Describes what the batch will use and allows queueing only when it can do something. */
@@ -71,7 +72,7 @@ function renderSources(): void {
 	byId<HTMLSelectElement>("library-translate-extra").disabled = !download.checked;
 	downloadHint.textContent = hasOpenSubtitles()
 		? "Missing languages are downloaded, synced to each video and rated. A subtitle below the minimum rating is not used."
-		: "Log in with your OpenSubtitles.com account under Settings, Subtitle handling, Subtitle download to download subtitles first.";
+		: "Log in with your OpenSubtitles.com account or enter a SubDL API key under Settings, Subtitle handling, Subtitle download to download subtitles first.";
 
 	const el = byId("library-translate-ai");
 	if (!ai.checked) el.textContent = "Languages without a good subtitle are left out.";

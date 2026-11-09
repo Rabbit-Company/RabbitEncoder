@@ -327,6 +327,7 @@ export interface JobSettings {
 	subtitleDownloadLanguages?: string[];
 	openSubtitlesUsername?: string;
 	openSubtitlesPassword?: string;
+	subdlApiKey?: string;
 	/** Most subtitles downloaded and tested per language. Default 2. */
 	subtitleDownloadMaxTries?: number;
 	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */
@@ -887,7 +888,7 @@ export interface SubtitleSearchSample {
 
 export interface SubtitleSearchCandidate {
 	key: string;
-	provider: "opensubtitles";
+	provider: "opensubtitles" | "subdl";
 	release: string;
 	fileName: string;
 	uploader: string;

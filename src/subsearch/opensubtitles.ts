@@ -4,6 +4,7 @@ import pkg from "../../package.json";
 import { Logger } from "../core/logger";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import type { MediaIdentity } from "./identify";
+import type { DownloadedFile, SubtitleListing } from "./listing";
 
 const API_HOST = "api.opensubtitles.com";
 /** Rabbit Encoder's consumer key. Downloads count against each user's own account, not against it. */
@@ -20,28 +21,6 @@ export interface OpenSubtitlesAccount {
 /** The consumer key, which OPENSUBTITLES_API_KEY can replace with one of your own. */
 export function openSubtitlesApiKey(): string {
 	return process.env.OPENSUBTITLES_API_KEY?.trim() || CONSUMER_API_KEY;
-}
-
-/** One subtitle file as OpenSubtitles lists it. */
-export interface SubtitleListing {
-	provider: "opensubtitles";
-	/** Stable key for caching and choosing, unique across providers. */
-	key: string;
-	fileId: number;
-	fileName: string;
-	/** OpenSubtitles language code, such as "sl" or "pt-br". */
-	language: string;
-	release: string;
-	downloads: number;
-	hearingImpaired: boolean;
-	machineTranslated: boolean;
-	foreignPartsOnly: boolean;
-	trustedUploader: boolean;
-	hashMatch: boolean;
-	fps: number;
-	uploader: string;
-	url: string;
-	featureTitle: string;
 }
 
 export class OpenSubtitlesError extends Error {
@@ -245,17 +224,8 @@ function blockDownloads(resetAt: number | undefined): void {
 	Logger.warn(`[subsearch] OpenSubtitles download quota used up until ${new Date(downloadsBlockedUntil).toISOString()}`);
 }
 
-export function isQuotaError(error: unknown): error is OpenSubtitlesError {
+export function isOpenSubtitlesQuotaError(error: unknown): error is OpenSubtitlesError {
 	return error instanceof OpenSubtitlesError && (error.status === 406 || error.status === 407);
-}
-
-export interface DownloadedFile {
-	fileName: string;
-	bytes: Uint8Array;
-	/** True when it came from the cache and used no quota. */
-	cached: boolean;
-	/** Downloads left today, when OpenSubtitles said. */
-	remaining?: number;
 }
 
 function cacheDir(tempDir: string): string {
@@ -264,16 +234,16 @@ function cacheDir(tempDir: string): string {
 	return dir;
 }
 
-/**
- * Downloads a subtitle file. Every download counts against the daily quota,
- * so files are kept and reused. Their content never changes.
- */
 /** The file was downloaded before, so using it costs no quota. */
-export function isCachedListing(l: SubtitleListing, tempDir: string): boolean {
+export function isCachedOpenSubtitles(l: SubtitleListing, tempDir: string): boolean {
 	const dir = join(tempDir, "subtitle-cache", "opensubtitles");
 	return existsSync(join(dir, `${l.fileId}.bin`)) && existsSync(join(dir, `${l.fileId}.json`));
 }
 
+/**
+ * Downloads a subtitle file. Every download counts against the daily quota,
+ * so files are kept and reused. Their content never changes.
+ */
 export async function downloadOpenSubtitles(account: OpenSubtitlesAccount, l: SubtitleListing, tempDir: string, signal?: AbortSignal): Promise<DownloadedFile> {
 	const dir = cacheDir(tempDir);
 	const dataPath = join(dir, `${l.fileId}.bin`);
@@ -290,7 +260,7 @@ export async function downloadOpenSubtitles(account: OpenSubtitlesAccount, l: Su
 			request(account, "POST", "/download", { host: s.host, token: s.token, body: { file_id: l.fileId }, signal }),
 		);
 	} catch (error) {
-		if (isQuotaError(error)) blockDownloads(error.resetAt);
+		if (isOpenSubtitlesQuotaError(error)) blockDownloads(error.resetAt);
 		throw error;
 	}
 	if (!data?.link) throw new OpenSubtitlesError(data?.message || "OpenSubtitles returned no download link");

@@ -1233,6 +1233,19 @@ export async function testOpenSubtitlesAccount(opts: {
 	}
 }
 
+export async function testSubdlKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
+	try {
+		const res = await authFetch(`${API}/api/subsearch/test-subdl`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ apiKey }),
+		});
+		return await res.json();
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 export async function testTranslateConnection(opts: {
 	provider: "openai" | "anthropic";
 	baseUrl?: string;

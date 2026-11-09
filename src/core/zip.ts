@@ -1,4 +1,6 @@
-/** Minimal ZIP writer for already-compressed files such as PNG. Entries are stored, not deflated. */
+/** Minimal ZIP writer for already-compressed files such as PNG, and a reader for downloaded archives. Written entries are stored, not deflated. */
+
+import { inflateRawSync } from "zlib";
 
 export interface ZipEntry {
 	name: string;
@@ -74,6 +76,55 @@ export function buildZip(entries: ZipEntry[], modified = new Date()): Uint8Array
 	for (const part of [...locals, ...centrals, end]) {
 		out.set(part, at);
 		at += part.length;
+	}
+	return out;
+}
+
+export function isZip(bytes: Uint8Array): boolean {
+	return bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+}
+
+/**
+ * Reads the files of a ZIP archive that are stored or deflated, from its
+ * central directory. Folders, encrypted files and other methods are skipped.
+ */
+export function readZip(bytes: Uint8Array, maxEntrySize = 64 * 1024 * 1024): ZipEntry[] {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	let end = -1;
+	for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i--) {
+		if (view.getUint32(i, true) === 0x06054b50) {
+			end = i;
+			break;
+		}
+	}
+	if (end < 0) throw new Error("Not a ZIP archive");
+	const count = view.getUint16(end + 10, true);
+	let at = view.getUint32(end + 16, true);
+	const utf8 = new TextDecoder("utf-8");
+	const latin = new TextDecoder("latin1");
+	const out: ZipEntry[] = [];
+	for (let n = 0; n < count && at + 46 <= bytes.length; n++) {
+		if (view.getUint32(at, true) !== 0x02014b50) break;
+		const flags = view.getUint16(at + 8, true);
+		const method = view.getUint16(at + 10, true);
+		const packed = view.getUint32(at + 20, true);
+		const size = view.getUint32(at + 24, true);
+		const nameLength = view.getUint16(at + 28, true);
+		const skip = nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+		const local = view.getUint32(at + 42, true);
+		const rawName = bytes.subarray(at + 46, at + 46 + nameLength);
+		const name = (flags & 0x0800 ? utf8 : latin).decode(rawName);
+		at += 46 + skip;
+		if (name.endsWith("/") || flags & 0x0001 || size > maxEntrySize) continue;
+		if (local + 30 > bytes.length || view.getUint32(local, true) !== 0x04034b50) continue;
+		const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+		const data = bytes.subarray(start, start + packed);
+		if (method === 0) out.push({ name, data: data.slice() });
+		else if (method === 8) {
+			try {
+				out.push({ name, data: new Uint8Array(inflateRawSync(data, { maxOutputLength: maxEntrySize })) });
+			} catch {}
+		}
 	}
 	return out;
 }

@@ -380,6 +380,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	subtitleDownloadLanguages: strList,
 	openSubtitlesUsername: str(128),
 	openSubtitlesPassword: str(256),
+	subdlApiKey: str(128),
 	subtitleDownloadMaxTries: intIn(1, 10),
 	subtitleDownloadMinScore: intIn(0, 100),
 	subtitleDownloadPreferredSources: (v) => (Array.isArray(v) ? cleanPreferredSources(v) : undefined),

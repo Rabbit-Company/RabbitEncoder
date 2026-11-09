@@ -20,7 +20,7 @@ import { pairOriginalSources } from "../video/source-pairing";
 import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } from "../translate/series-notes";
 import { prepareSeriesNotesForFile } from "../translate/translate-step";
 import { analyzeForTranslate, findTranslateSource } from "../pipeline/translate-only";
-import { accountFrom, LOGIN_NEEDED } from "../subsearch/search";
+import { accountsFrom, LOGIN_NEEDED } from "../subsearch/providers";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { probeFile } from "../pipeline/probe";
 
@@ -165,10 +165,10 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			const defaults = getAppConfig().defaults;
 			const download = body.download !== false;
 			const aiFallback = body.aiFallback !== false;
-			if (download && !accountFrom(defaults)) {
+			if (download && !accountsFrom(defaults)) {
 				if (body.download === true) throw new Error(LOGIN_NEEDED);
 			}
-			const downloading = download && !!accountFrom(defaults);
+			const downloading = download && !!accountsFrom(defaults);
 			if (!downloading && !aiFallback) throw new Error("Choose to download subtitles, translate them with AI, or both");
 			if (aiFallback && (!defaults.translateBaseUrl?.trim() || !defaults.translateModel?.trim()))
 				throw new Error("Set up the AI provider under Settings, Subtitle translation first");

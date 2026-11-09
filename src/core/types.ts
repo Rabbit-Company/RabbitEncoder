@@ -415,6 +415,8 @@ export interface JobSettings {
 	/** OpenSubtitles.com account. Downloads count against its daily quota. */
 	openSubtitlesUsername?: string;
 	openSubtitlesPassword?: string;
+	/** SubDL API key, searched next to OpenSubtitles when set. */
+	subdlApiKey?: string;
 	/** Most subtitles downloaded and tested per language. Cached files do not count. Default 2. */
 	subtitleDownloadMaxTries?: number;
 	/** Lowest rating (0 to 100) a subtitle needs to be used. Default 60. */

@@ -9,22 +9,33 @@ import { alignToReference } from "./align";
 import { dialogueCues, mapCue, retimeDocument, type TextCue } from "./cues";
 import { decodeSubtitleBytes, toSubDocument } from "./formats";
 import { applyIdentityOverride, identifyMedia, movieHash, type MediaIdentity } from "./identify";
+import { PROVIDER_NAMES, type DownloadedFile, type SubtitleListing, type SubtitleProvider } from "./listing";
+import { checkOpenSubtitles, isOpenSubtitlesQuotaError } from "./opensubtitles";
 import {
-	downloadOpenSubtitles,
+	accountsFrom,
+	downloadListing,
 	isCachedListing,
 	isQuotaError,
-	checkOpenSubtitles,
-	openSubtitlesApiKey,
-	openSubtitlesLanguage,
-	searchOpenSubtitles,
-	type DownloadedFile,
-	type OpenSubtitlesAccount,
-	type SubtitleListing,
-} from "./opensubtitles";
+	listingMatches,
+	LOGIN_NEEDED,
+	providerLanguage,
+	searchProviders,
+	type ProviderLanguage,
+	type SubtitleAccounts,
+} from "./providers";
 import { buildReference, type ReferenceTimeline } from "./reference";
 import { EXTRA_LANGUAGE_RESERVE } from "./languages";
 import { cleanPreferredSources, preferredSourceRank } from "./naming";
 import { measureSync, otherEpisode, priorPoints, rateCandidate, releaseEpisode, releaseMatch, type CandidateTraits, type SyncQuality } from "./score";
+
+/** The same language on every provider that knows it. */
+function sameLanguage(a: ProviderLanguage, b: ProviderLanguage): boolean {
+	return a.opensubtitles ? a.opensubtitles === b.opensubtitles : a.subdl === b.subdl;
+}
+
+function providerNames(accounts: SubtitleAccounts): string {
+	return [accounts.openSubtitles && PROVIDER_NAMES.opensubtitles, accounts.subdl && PROVIDER_NAMES.subdl].filter(Boolean).join(" and ");
+}
 
 /** A rating this high ends the search for a language early. */
 const EXCELLENT_RATING = 88;
@@ -41,7 +52,7 @@ export interface SampleLine {
 
 export interface EvaluatedCandidate {
 	key: string;
-	provider: "opensubtitles";
+	provider: SubtitleProvider;
 	release: string;
 	fileName: string;
 	uploader: string;
@@ -103,7 +114,7 @@ interface RankedListing {
 
 export interface SearchSession {
 	opts: SubtitleSearchOptions;
-	account: OpenSubtitlesAccount;
+	accounts: SubtitleAccounts;
 	reference: ReferenceTimeline | null;
 	listings: Map<string, RankedListing>;
 	durationMs: number;
@@ -142,14 +153,7 @@ export interface SubtitleSearchOptions {
 	onProgress?: (message: string) => void;
 }
 
-export const LOGIN_NEEDED = "Log in with your OpenSubtitles.com account under Settings, Subtitle handling, Subtitle download first";
-
-export function accountFrom(settings: JobSettings): OpenSubtitlesAccount | null {
-	const username = settings.openSubtitlesUsername?.trim();
-	const password = settings.openSubtitlesPassword;
-	if (!username || !password) return null;
-	return { apiKey: openSubtitlesApiKey(), username, password };
-}
+export { accountsFrom, LOGIN_NEEDED };
 
 function traitsOf(l: SubtitleListing, fileName: string): CandidateTraits {
 	return {
@@ -269,7 +273,7 @@ async function downloadAndRate(session: SearchSession, r: RankedListing, languag
 	const reference = await referenceOf(session);
 	const progress = session.opts.onProgress ?? (() => {});
 	progress(`Downloading ${languageName}: ${r.l.release || r.l.fileName}`);
-	const file = await downloadOpenSubtitles(session.account, r.l, session.opts.cacheDir, signal);
+	const file = await downloadListing(session.accounts, r.l, session.opts.cacheDir, signal);
 	progress(`Syncing ${languageName}: ${r.l.release || r.l.fileName}`);
 	evaluateDownload(r.candidate, file.bytes, file.fileName, r.l.language, reference, session.durationMs, session.videoFps, r.traits, session.hi, (format) =>
 		join(session.opts.workDir, `${r.l.key}.${format}`),
@@ -312,7 +316,7 @@ export async function tryCandidate(result: SubtitleSearchResult, language: strin
 	} catch (error) {
 		if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 		if (isQuotaError(error)) {
-			result.remainingDownloads = 0;
+			if (isOpenSubtitlesQuotaError(error)) result.remainingDownloads = 0;
 			r.candidate.reason = error.message;
 		} else Object.assign(r.candidate, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
 	}
@@ -382,8 +386,8 @@ export function mergeEpisodeListings(
 export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<SubtitleSearchResult> {
 	const { settings, signal } = opts;
 	const progress = opts.onProgress ?? (() => {});
-	const account = accountFrom(settings);
-	if (!account) throw new Error(LOGIN_NEEDED);
+	const accounts = accountsFrom(settings);
+	if (!accounts) throw new Error(LOGIN_NEEDED);
 
 	const identity = applyIdentityOverride(identifyMedia(opts.identityPath ?? opts.inputPath), opts.identity ?? {});
 	if (!identity.title && !identity.imdbId && !identity.tmdbId && !identity.parentImdbId && !identity.parentTmdbId)
@@ -401,21 +405,23 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 	const videoFps = opts.probe.videoDisplayFps || opts.probe.videoStreamFps || 0;
 
 	const wanted = [...opts.languages.map((tag) => ({ tag, extra: false })), ...(opts.extraLanguages ?? []).map((tag) => ({ tag, extra: true }))]
-		.map(({ tag, extra }) => ({ tag: normalizeTag(tag.trim()), os: openSubtitlesLanguage(tag), lang: resolveTranslateLang(tag), extra }))
-		.filter((w, i, all) => w.os && all.findIndex((x) => x.os === w.os) === i);
-	if (!wanted.length) throw new Error("Choose at least one language OpenSubtitles knows");
+		.map(({ tag, extra }) => ({ tag: normalizeTag(tag.trim()), codes: providerLanguage(tag, accounts), lang: resolveTranslateLang(tag), extra }))
+		.filter((w) => w.codes.opensubtitles || w.codes.subdl)
+		.filter((w, i, all) => all.findIndex((x) => sameLanguage(x.codes, w.codes)) === i);
+	const names = providerNames(accounts);
+	if (!wanted.length) throw new Error(`Choose at least one language ${names} knows`);
 
-	progress("Searching OpenSubtitles");
-	const osLanguages = wanted.map((w) => w.os!);
-	const listings = await searchOpenSubtitles(account, identity, osLanguages, hash, signal);
+	progress(`Searching ${names}`);
+	const codes = wanted.map((w) => w.codes);
+	const listings = await searchProviders(accounts, identity, codes, hash, signal, notes);
 	if (identity.kind === "episode" && identity.episode !== undefined) {
-		const more = await episodeSearches(identity, (id) => searchOpenSubtitles(account, id, osLanguages, hash, signal), signal);
+		const more = await episodeSearches(identity, (id) => searchProviders(accounts, id, codes, hash, signal), signal);
 		listings.push(...mergeEpisodeListings(listings, more.series, more.neighbours, identity.season, identity.episode));
 	}
 
-	const session: SearchSession = { opts, account, reference: null, listings: new Map(), durationMs, videoFps, hi, minScore };
+	const session: SearchSession = { opts, accounts, reference: null, listings: new Map(), durationMs, videoFps, hi, minScore };
 	let remaining: number | undefined;
-	let quotaHit = false;
+	const quotaHit = new Set<SubtitleProvider>();
 	const languages: LanguageResult[] = [];
 	// Extras get what is left above the reserve, read once when the first one comes up.
 	let extraBudget: number | undefined;
@@ -424,22 +430,24 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 	for (const w of wanted) {
 		const result: LanguageResult = { language: w.tag, name: w.lang?.name ?? w.tag, candidates: [], ...(w.extra ? { extra: true } : {}) };
 		languages.push(result);
-		if (w.extra && extraBudget === undefined) {
+		if (w.extra && extraBudget === undefined && accounts.openSubtitles) {
 			try {
-				const left = (await checkOpenSubtitles(account, signal)).remaining ?? remaining ?? 0;
+				const left = (await checkOpenSubtitles(accounts.openSubtitles, signal)).remaining ?? remaining ?? 0;
 				extraBudget = Math.max(0, left - EXTRA_LANGUAGE_RESERVE);
 				if (!extraBudget)
-					notes.push(`More languages were not downloaded, ${left} downloads are left today and ${EXTRA_LANGUAGE_RESERVE} are kept for chosen languages`);
+					notes.push(
+						`More languages were not downloaded from OpenSubtitles, ${left} downloads are left today and ${EXTRA_LANGUAGE_RESERVE} are kept for chosen languages`,
+					);
 			} catch (error) {
 				if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 				extraBudget = 0;
-				notes.push(`More languages were not downloaded, the download quota could not be read`);
+				notes.push(`More languages were not downloaded from OpenSubtitles, its download quota could not be read`);
 			}
 		}
 		const languageTries = w.extra ? 1 : maxTries;
 		// Other episodes go last and preferred sources first, so they are downloaded before the rest.
 		const ranked = listings
-			.filter((l) => l.language === w.os)
+			.filter((l) => listingMatches(l, w.codes))
 			.map((l) => ({ l, traits: traitsOf(l, fileName) }))
 			.map((x) => ({ ...x, prior: priorPoints(x.traits, hi, videoFps), candidate: candidateOf(x.l, priorPoints(x.traits, hi, videoFps)) }))
 			.map((x) => {
@@ -459,7 +467,7 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 			else if (r.l.machineTranslated && !allowMachine) Object.assign(r.candidate, { status: "excluded", reason: "Machine translated" });
 		}
 		if (!ranked.length) {
-			result.note = "OpenSubtitles has no subtitles in this language for the video";
+			result.note = `${names} ${accounts.openSubtitles && accounts.subdl ? "have" : "has"} no subtitles in this language for the video`;
 			continue;
 		}
 
@@ -471,7 +479,10 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 				r.candidate.reason = "Not downloaded, better ones were tried first";
 				continue;
 			}
-			const overBudget = w.extra ? extraSpent >= extraBudget! : opts.downloadBudget !== undefined && spent >= opts.downloadBudget;
+			// The extras budget keeps the small OpenSubtitles quota for chosen languages. SubDL allows far more downloads.
+			const overBudget = w.extra
+				? r.l.provider === "opensubtitles" && extraSpent >= (extraBudget ?? 0)
+				: opts.downloadBudget !== undefined && spent >= opts.downloadBudget;
 			if (overBudget && !isCachedListing(r.l, opts.cacheDir)) {
 				r.candidate.reason = "Not downloaded, keeping downloads for other files";
 				continue;
@@ -481,17 +492,17 @@ export async function searchSubtitles(opts: SubtitleSearchOptions): Promise<Subt
 				const file = await downloadAndRate(session, r, result.name, signal);
 				if (!file.cached) {
 					tries++;
-					if (w.extra) extraSpent++;
-					else spent++;
+					if (!w.extra) spent++;
+					else if (r.l.provider === "opensubtitles") extraSpent++;
 				}
 				if (file.remaining !== undefined) remaining = file.remaining;
 			} catch (error) {
 				if (error instanceof CancelledError || signal?.aborted) throw new CancelledError();
 				// Past the quota only cached files can still be tried, and refusals cost no request.
 				if (isQuotaError(error)) {
-					if (!quotaHit) notes.push(error.message);
-					quotaHit = true;
-					remaining = 0;
+					if (!quotaHit.has(r.l.provider)) notes.push(error.message);
+					quotaHit.add(r.l.provider);
+					if (isOpenSubtitlesQuotaError(error)) remaining = 0;
 					r.candidate.reason = "Download limit reached";
 				} else Object.assign(r.candidate, { status: "failed", reason: error instanceof Error ? error.message : String(error) });
 				continue;

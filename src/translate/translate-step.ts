@@ -223,7 +223,7 @@ async function downloadedTracks(
 		out.push({
 			file,
 			language: downloadedLanguageTag(normalizeTag(d.language)),
-			trackName: downloadedTrackName(trackType, d.release, d.uploader, d.fileName),
+			trackName: downloadedTrackName(trackType, d.release, d.uploader, d.fileName, undefined, d.provider),
 			trackType,
 			flagArgs: computeDownloadedFlagArgs(d.hearingImpaired, false),
 			format: styled.format,
@@ -537,7 +537,7 @@ export async function runTranslateStep(params: RunTranslateStepParams): Promise<
 			(t) => !targetCodes.has(resolveTranslateLang(t)?.code),
 		);
 		if (missing.length || extras.length) {
-			params.onStatus?.(`Searching OpenSubtitles for ${[...missing, ...(extras.length ? [`${extras.length} more languages`] : [])].join(", ")}`);
+			params.onStatus?.(`Searching subtitles for ${[...missing, ...(extras.length ? [`${extras.length} more languages`] : [])].join(", ")}`);
 			const found = await downloadMissingSubtitles({ ...base, languages: missing, extraLanguages: extras });
 			downloaded = await downloadedTracks(found, settings, subtitleStyle, tempDir, signal);
 		}

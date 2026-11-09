@@ -58,7 +58,7 @@ import {
 	wireEncoderControls,
 } from "./settings-controls";
 import { byId } from "../shared/dom";
-import { fetchJobSubtitleTracks, testOcrModel, testOpenSubtitlesAccount, testTranslateConnection } from "../api/client";
+import { fetchJobSubtitleTracks, testOcrModel, testOpenSubtitlesAccount, testSubdlKey, testTranslateConnection } from "../api/client";
 import { appState } from "../state";
 
 export type SettingsFormPrefix = "default" | "job";
@@ -693,6 +693,16 @@ function renderOcrSettings(prefix: SettingsFormPrefix, settings: JobSettings): v
 			testResult.classList.add("error");
 		}
 	};
+	const subdlTestBtn = el("subdl-test") as HTMLButtonElement;
+	subdlTestBtn.onclick = async () => {
+		subdlTestBtn.disabled = true;
+		testResult.textContent = "Testing...";
+		testResult.className = "test-result";
+		const r = await testSubdlKey(settings.subdlApiKey ?? "");
+		subdlTestBtn.disabled = false;
+		testResult.textContent = r.ok ? "✓ SubDL API key works" : `✗ ${r.error}`;
+		testResult.classList.add(r.ok ? "ok" : "error");
+	};
 }
 
 const HEARING_IMPAIRED_LABELS: Record<NonNullable<JobSettings["subtitleDownloadHearingImpaired"]>, string> = {
@@ -719,6 +729,12 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 	};
 	renderTextControl(group(), "Username", settings.openSubtitlesUsername ?? "", "", (v) => (settings.openSubtitlesUsername = v.trim()));
 	renderPasswordControl(group(), "Password", settings.openSubtitlesPassword ?? "", "", (v) => (settings.openSubtitlesPassword = v));
+	const subdlKey = el("subdl-key");
+	subdlKey.innerHTML = "";
+	const keyGroup = document.createElement("div");
+	keyGroup.className = "toggle-group";
+	subdlKey.appendChild(keyGroup);
+	renderPasswordControl(keyGroup, "API key", settings.subdlApiKey ?? "", "", (v) => (settings.subdlApiKey = v.trim()));
 
 	renderLabeledToggle(
 		el("before"),
@@ -735,7 +751,7 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 	const flowHint = document.createElement("div");
 	flowHint.className = "lang-filter-hint";
 	flowHint.textContent =
-		"With Subtitle translation on, each missing target language is first looked up on OpenSubtitles, synced and rated. " +
+		"With Subtitle translation on, each missing target language is first looked up on OpenSubtitles and SubDL, synced and rated. " +
 		"Only languages without a good subtitle are translated. A used up download quota also falls back to translation.";
 	el("ai-fallback").appendChild(flowHint);
 	renderTranslationLanguagesInput(el("languages"), settings.subtitleDownloadLanguages ?? [], (langs) => (settings.subtitleDownloadLanguages = langs), {
@@ -755,7 +771,7 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 	extraHint.className = "lang-filter-hint";
 	extraHint.textContent =
 		"With Subtitle translation on, also downloads up to this many of the languages with the most subtitles on OpenSubtitles, one try each, without AI. " +
-		"A language is kept only if it syncs well. They run only while more than 20 downloads are left today, so in practice they need VIP.";
+		"A language is kept only if it syncs well. From OpenSubtitles they run only while more than 20 downloads are left today, so in practice they need VIP or SubDL.";
 	el("extra").appendChild(extraHint);
 	renderNumberControl(
 		el("tries"),
@@ -817,5 +833,15 @@ function renderSubtitleDownloadSettings(prefix: SettingsFormPrefix, settings: Jo
 			testResult.textContent = `✗ ${r.error}`;
 			testResult.classList.add("error");
 		}
+	};
+	const subdlTestBtn = el("subdl-test") as HTMLButtonElement;
+	subdlTestBtn.onclick = async () => {
+		subdlTestBtn.disabled = true;
+		testResult.textContent = "Testing...";
+		testResult.className = "test-result";
+		const r = await testSubdlKey(settings.subdlApiKey ?? "");
+		subdlTestBtn.disabled = false;
+		testResult.textContent = r.ok ? "✓ SubDL API key works" : `✗ ${r.error}`;
+		testResult.classList.add(r.ok ? "ok" : "error");
 	};
 }

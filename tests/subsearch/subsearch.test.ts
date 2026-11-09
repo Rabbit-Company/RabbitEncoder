@@ -7,7 +7,7 @@ import { dialogueCues, mapCue, retimeDocument, type Interval } from "../../src/s
 import { decodeSubtitleBytes, toSubDocument } from "../../src/subsearch/formats";
 import { measureSync, rateCandidate, releaseMatch } from "../../src/subsearch/score";
 import { evaluateDownload, mergeEpisodeListings, type EvaluatedCandidate } from "../../src/subsearch/search";
-import type { SubtitleListing } from "../../src/subsearch/opensubtitles";
+import type { SubtitleListing } from "../../src/subsearch/listing";
 import { speechFromLoudness } from "../../src/subsearch/reference";
 
 function srt(cues: Interval[], text = (i: number) => `Line ${i}`): string {

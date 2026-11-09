@@ -164,8 +164,10 @@ function ratingClass(rating: number): string {
 	return rating >= 80 ? "good" : rating >= 60 ? "fair" : "poor";
 }
 
+const PROVIDER_LABELS: Record<SubtitleSearchCandidate["provider"], string> = { opensubtitles: "OpenSubtitles", subdl: "SubDL" };
+
 function flags(c: SubtitleSearchCandidate): string {
-	const out: string[] = [];
+	const out: string[] = [`<span class="subsearch-flag" title="Found on ${PROVIDER_LABELS[c.provider]}">${PROVIDER_LABELS[c.provider]}</span>`];
 	if (c.preferred !== undefined) out.push('<span class="subsearch-flag good" title="From one of the preferred sources">preferred</span>');
 	if (c.otherEpisode) out.push('<span class="subsearch-flag poor" title="The release name gives another episode, so it is tried last">other episode</span>');
 	if (c.hashMatch) out.push('<span class="subsearch-flag good" title="Made for this exact file">exact file</span>');
@@ -225,7 +227,7 @@ function candidateRow(ep: Episode, lang: SubtitleSearchLanguage, c: SubtitleSear
 			)
 		: `<span class="hdr-note">${escapeHtml(c.reason ?? (c.status === "untested" ? "Not downloaded" : c.status))}</span>`;
 	const name = c.release || c.fileName;
-	const link = c.url ? ` <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener noreferrer" title="Open on OpenSubtitles">↗</a>` : "";
+	const link = c.url ? ` <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener noreferrer" title="Open on ${PROVIDER_LABELS[c.provider]}">↗</a>` : "";
 	let html = `<tr class="${chosen ? "is-chosen" : ""}${rated ? "" : " is-muted"}">
 		<td><input type="radio" name="subsearch-${escapeHtml(lang.language)}" data-subsearch-choose="${escapeHtml(c.key)}" data-language="${escapeHtml(lang.language)}"${chosen ? " checked" : ""}${rated ? "" : " disabled"} /></td>
 		<td>${rating}</td>
