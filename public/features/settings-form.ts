@@ -693,16 +693,6 @@ function renderOcrSettings(prefix: SettingsFormPrefix, settings: JobSettings): v
 			testResult.classList.add("error");
 		}
 	};
-	const subdlTestBtn = el("subdl-test") as HTMLButtonElement;
-	subdlTestBtn.onclick = async () => {
-		subdlTestBtn.disabled = true;
-		testResult.textContent = "Testing...";
-		testResult.className = "test-result";
-		const r = await testSubdlKey(settings.subdlApiKey ?? "");
-		subdlTestBtn.disabled = false;
-		testResult.textContent = r.ok ? "✓ SubDL API key works" : `✗ ${r.error}`;
-		testResult.classList.add(r.ok ? "ok" : "error");
-	};
 }
 
 const HEARING_IMPAIRED_LABELS: Record<NonNullable<JobSettings["subtitleDownloadHearingImpaired"]>, string> = {
