@@ -1,4 +1,4 @@
-import { LANGUAGES, findLanguage, isLanguageCode, type LanguageEntry } from "./languages";
+import { LANGUAGES, findLanguage, isLanguageCode, isListedLanguage, type LanguageEntry } from "./languages";
 
 /**
  * Turns a text input holding language codes into a searchable picker.
@@ -108,7 +108,10 @@ function score(entry: LanguageEntry, query: string): number {
 function buildOptions(picker: Picker): Option[] {
 	const tokens = readTokens(picker);
 	const query = picker.search.value.trim().toLowerCase();
-	const entries = LANGUAGES.filter((entry) => picker.variants || !entry.variant);
+	const held = tokens
+		.map((token) => (token === "*" ? undefined : findLanguage(token)))
+		.filter((entry): entry is LanguageEntry => !!entry && !isListedLanguage(entry));
+	const entries = [...new Set([...held, ...LANGUAGES])].filter((entry) => picker.variants || !entry.variant);
 	const toOption = (entry: LanguageEntry): Option => ({
 		value: valueOf(picker, entry),
 		name: entry.name,
@@ -119,8 +122,8 @@ function buildOptions(picker: Picker): Option[] {
 		out.push({ value: "*", name: ANY_NAME, selected: tokens.includes("*") });
 	}
 	if (!query) {
-		out.push(...entries.filter((entry) => entry.common).map(toOption));
-		const rest = entries.filter((entry) => !entry.common).map(toOption);
+		out.push(...entries.filter((entry) => entry.common || held.includes(entry)).map(toOption));
+		const rest = entries.filter((entry) => !entry.common && !held.includes(entry)).map(toOption);
 		if (rest[0]) rest[0].divider = true;
 		out.push(...rest);
 		return out;
@@ -131,7 +134,9 @@ function buildOptions(picker: Picker): Option[] {
 		.sort((a, b) => a.score - b.score || a.index - b.index);
 	if (isLanguageCode(query) && !ranked.some((item) => item.score === 0)) {
 		const typed = picker.search.value.trim();
-		out.push({ value: typed, name: `Use “${typed}”`, selected: tokens.includes(typed), custom: true });
+		const variant = findLanguage(typed);
+		if (variant && (picker.variants || !variant.variant)) out.push(toOption(variant));
+		else out.push({ value: typed, name: `Use “${typed}”`, selected: tokens.includes(typed), custom: true });
 	}
 	out.push(...ranked.map((item) => toOption(item.entry)));
 	return out;

@@ -1841,7 +1841,7 @@ a.btn {
 
 /* Subtitle repair / remux */
 .repair-modal {
-	width: min(1440px, calc(100vw - 32px));
+	width: min(1600px, calc(100vw - 32px));
 }
 
 .subtitle-editor-modal {
@@ -2339,7 +2339,7 @@ a.btn {
 
 .repair-track-fields {
 	display: grid;
-	grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.55fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
+	grid-template-columns: minmax(180px, 2fr) minmax(220px, 1fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
 	gap: 8px;
 }
 
@@ -2374,6 +2374,10 @@ a.btn {
 /* Folder-wide MKV metadata audit */
 .repair-audit-modal {
 	width: min(1440px, calc(100vw - 32px));
+}
+
+#repair-audit-modal .repair-audit-modal {
+	width: min(1600px, calc(100vw - 32px));
 }
 
 .repair-audit-body {
@@ -2492,7 +2496,7 @@ a.btn {
 }
 
 .repair-audit-metadata-fields {
-	grid-template-columns: minmax(0, 1.4fr) minmax(200px, 1fr);
+	grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
 }
 
 .repair-audit-section-title {

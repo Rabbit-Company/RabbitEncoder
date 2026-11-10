@@ -203,18 +203,37 @@ zu zul - Zulu
 - und - Undetermined`;
 
 // Tag, English name. Each follows its base language in the list.
-const VARIANTS = `en-US English (United States)
+const VARIANTS = `ar-SA Arabic (Saudi Arabia)
+ar-EG Arabic (Egypt)
+ar-AE Arabic (United Arab Emirates)
+de-DE German (Germany)
+de-AT German (Austria)
+de-CH German (Switzerland)
+en-US English (United States)
 en-GB English (United Kingdom)
+en-AU English (Australia)
+en-CA English (Canada)
 en-JP English (with honorifics)
 es-419 Spanish (Latin America)
 es-ES Spanish (Spain)
+es-MX Spanish (Mexico)
+fr-FR French (France)
 fr-CA French (Canada)
+fr-BE French (Belgium)
+it-IT Italian (Italy)
+ja-JP Japanese (Japan)
+ko-KR Korean (South Korea)
+nl-BE Dutch (Belgium)
 pt-BR Portuguese (Brazil)
 pt-PT Portuguese (Portugal)
+ru-RU Russian (Russia)
 sr-Latn Serbian (Latin)
 sr-Cyrl Serbian (Cyrillic)
 zh-Hans Chinese (Simplified)
-zh-Hant Chinese (Traditional)`;
+zh-Hant Chinese (Traditional)
+zh-CN Chinese (China)
+zh-TW Chinese (Taiwan)
+zh-HK Chinese (Hong Kong)`;
 
 const COMMON = new Set(["en", "ja", "zh", "ko", "es", "fr", "de", "it", "pt", "ru", "ar", "zh-Hans", "zh-Hant", "pt-BR", "es-419"]);
 
@@ -248,9 +267,58 @@ export const LANGUAGES: readonly LanguageEntry[] = buildCatalog();
 const byAlias = new Map<string, LanguageEntry>();
 for (const entry of LANGUAGES) for (const alias of entry.aliases) if (!byAlias.has(alias)) byAlias.set(alias, entry);
 
+const displayNames = (() => {
+	try {
+		return new Intl.DisplayNames(["en"], { type: "language" });
+	} catch {
+		return null;
+	}
+})();
+
+/** Subtags in their usual casing: Latn for scripts, SA for regions. */
+function canonicalTag(base: string, subtags: string[]): string {
+	return [
+		base,
+		...subtags.map((s) => (s.length === 4 ? s[0]!.toUpperCase() + s.slice(1).toLowerCase() : s.length === 2 ? s.toUpperCase() : s.toLowerCase())),
+	].join("-");
+}
+
+/**
+ * A region or script variant the list does not name, such as ar-MA, read
+ * from its tag when its base language is known.
+ */
+function variantOf(code: string): LanguageEntry | undefined {
+	const [first, ...subtags] = code.trim().split(/[-_]/);
+	const base = first ? byAlias.get(first.toLowerCase()) : undefined;
+	if (!base || base.variant || !subtags.length || !isLanguageCode(code.trim())) return undefined;
+	const tag = canonicalTag(base.tag, subtags);
+	const known = byAlias.get(tag.toLowerCase());
+	if (known) return known;
+	let name: string | undefined;
+	try {
+		name = displayNames?.of(tag);
+	} catch {}
+	const entry: LanguageEntry = {
+		name: name && name !== tag ? name : `${base.name} (${subtags.join("-")})`,
+		tag,
+		code3: tag,
+		aliases: [tag.toLowerCase()],
+		variant: true,
+		common: false,
+	};
+	byAlias.set(code.trim().toLowerCase(), entry);
+	byAlias.set(tag.toLowerCase(), entry);
+	return entry;
+}
+
 /** The entry a code stands for, in any of its forms and any casing. */
 export function findLanguage(code: string): LanguageEntry | undefined {
-	return byAlias.get(code.trim().toLowerCase());
+	return byAlias.get(code.trim().toLowerCase()) ?? variantOf(code);
+}
+
+/** Whether the picker list has the entry, rather than it being read from a tag. */
+export function isListedLanguage(entry: LanguageEntry): boolean {
+	return LANGUAGES.includes(entry);
 }
 
 /** A well formed BCP 47 or ISO 639 code, for codes the list does not have. */
