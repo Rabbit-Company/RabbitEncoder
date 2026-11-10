@@ -7,6 +7,7 @@ import {
 	type AppConfig,
 	type RepairAuditGroupEdit,
 	type RepairAuditLanguageRemoval,
+	type RepairAuditSubtitleOrder,
 	type RepairInspectionFile,
 	type RepairPlan,
 	type RepairSourceLayout,
@@ -14,17 +15,21 @@ import {
 import {
 	buildRepairAuditGroupPlans,
 	buildRepairLanguageRemovalPlans,
+	buildRepairSubtitleOrderPlans,
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
 	inspectRepairAuditFile,
 	identifyMatroska,
 	inspectRepairFile,
 	sanitizeRepairPlan,
+	subtitleSortOrder,
+	subtitlesOutOfOrder,
 } from "../pipeline/repair";
 import { run } from "../core/process";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
 import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
-import { addRepairJob, getAllJobs, getJob } from "../queue/store";
+import { addRepairJob, getAllJobs, getAppConfig, getJob } from "../queue/store";
+import type { SubtitleSortOptions } from "../tracks/tracks";
 import { browseFolder } from "../queue/library";
 
 /** File extension for a downloadable subtitle codec. VobSub is left out because it extracts to two files. */
@@ -150,7 +155,20 @@ async function inspectAuditPaths(inputs: { path: string; sourcePath?: string }[]
 			)),
 		);
 	}
-	return groupRepairAuditFiles(files, folderPath);
+	const audit = groupRepairAuditFiles(files, folderPath);
+	const order = subtitleSortOptions();
+	return { ...audit, files: audit.files.map((file) => ({ ...file, subtitlesOutOfOrder: subtitlesOutOfOrder(file.tracks, order) })) };
+}
+
+/** The subtitle order an encode uses, from the default settings. */
+function subtitleSortOptions(): SubtitleSortOptions {
+	const defaults = getAppConfig().defaults;
+	return {
+		sourcePriority: defaults.subtitleSourcePriority,
+		fansubTiebreak: defaults.subtitleFansubTiebreak,
+		formatPriority: defaults.subtitleFormatPriority,
+		languagePriority: defaults.subtitleLanguagePriority,
+	};
 }
 
 function resolveBatchPairs(raw: unknown, config: AppConfig): { targetPath: string; sourcePath: string }[] {
@@ -348,6 +366,52 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			if (c.req.signal.aborted) throw new Error("Language removal request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** Puts the subtitles of the audited files in the order an encode gives them, one repair job per file out of order. */
+	app.post("/api/repair/audit/order-subtitles", async (c) => {
+		try {
+			const raw = (await c.req.json()) as RepairAuditSubtitleOrder;
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(path, config, "Audit file")))];
+			const inspected = await inspectAuditPaths(
+				paths.map((path) => ({ path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairSubtitleOrderPlans(inspected.files, { ...subtitleSortOptions(), replaceTarget: !!raw.replaceTarget });
+			assertNoPendingJobs(
+				plans.map((plan) => plan.targetPath),
+				"ordering subtitles",
+			);
+			if (c.req.signal.aborted) throw new Error("Subtitle ordering request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** The order an encode gives a list of subtitle tracks, as positions in the list. */
+	app.post("/api/repair/sort-subtitles", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { tracks?: unknown };
+			if (!Array.isArray(raw?.tracks) || raw.tracks.length > 200) throw new Error("Send between 0 and 200 subtitle tracks");
+			const text = (v: unknown) => (typeof v === "string" ? v.slice(0, 512) : "");
+			const tracks = raw.tracks.map((t: any) => ({
+				codec: text(t?.codec),
+				language: text(t?.language) || "und",
+				title: text(t?.title),
+				isDefault: t?.isDefault === true,
+				isForced: t?.isForced === true,
+				isHearingImpaired: t?.isHearingImpaired === true,
+				isOriginal: t?.isOriginal === true,
+				isCommentary: t?.isCommentary === true,
+			}));
+			return c.json({ order: subtitleSortOrder(tracks, subtitleSortOptions()) });
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
 		}

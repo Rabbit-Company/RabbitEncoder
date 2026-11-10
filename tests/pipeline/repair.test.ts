@@ -5,6 +5,7 @@ import {
 	buildRepairMkvpropeditArgs,
 	buildRepairAuditGroupPlans,
 	buildRepairLanguageRemovalPlans,
+	buildRepairSubtitleOrderPlans,
 	groupRepairAuditFiles,
 	isMetadataOnlyRepair,
 	repairAuditGroupLabel,
@@ -128,6 +129,36 @@ describe("subtitle repair plans", () => {
 		]);
 		expect(plans[0]!.replaceTarget).toBe(true);
 		expect(() => buildRepairLanguageRemovalPlans(files, { paths: [], languages: ["cs"], replaceTarget: true })).toThrow("None of the files");
+	});
+
+	test("orders subtitles the way an encode does and leaves files already in order alone", () => {
+		const order = { languagePriority: ["eng", "jpn", "*"], formatPriority: "text-first" as const, replaceTarget: false };
+		const files = [
+			{
+				path: "/show/e01.mkv",
+				tracks: [
+					auditTrack("audio", "jpn", "Japanese", { id: 1 }),
+					auditTrack("subtitles", "de", "German", { id: 2 }),
+					auditTrack("subtitles", "en", "Signs & Songs", { id: 3, isForced: true }),
+					auditTrack("subtitles", "en", "English", { id: 4, isDefault: true }),
+					auditTrack("subtitles", "ar-SA", "Arabic", { id: 5 }),
+					auditTrack("subtitles", "en", "English", { id: 6, codec: "HDMV PGS" }),
+					auditTrack("subtitles", "en", "Notes", { id: 7, isCommentary: true }),
+				],
+			},
+			{ path: "/show/e02.mkv", tracks: [auditTrack("subtitles", "en", "English", { id: 2 }), auditTrack("subtitles", "de", "German", { id: 3 })] },
+		];
+		const plans = buildRepairSubtitleOrderPlans(files, order);
+		expect(plans.map((plan) => plan.targetPath)).toEqual(["/show/e01.mkv"]);
+		expect(plans[0]!.tracks.map((track) => [track.trackId, track.order, track.mode, track.isDefault])).toEqual([
+			[4, 0, "copy", true],
+			[6, 1, "copy", false],
+			[3, 2, "copy", false],
+			[7, 3, "copy", false],
+			[5, 4, "copy", false],
+			[2, 5, "copy", false],
+		]);
+		expect(() => buildRepairSubtitleOrderPlans([files[1]!], order)).toThrow("in order already");
 	});
 
 	test("uses spreadsheet-style audit group labels", () => {

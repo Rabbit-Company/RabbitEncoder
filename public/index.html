@@ -1710,7 +1710,17 @@
 											<h3>Repaired encode subtitles</h3>
 											<p>The final subtitle tracks and order. Edit metadata, processing, compression, and flags here.</p>
 										</div>
-										<span id="repair-output-count" class="repair-track-count"></span>
+										<div class="repair-transfer-actions">
+											<span id="repair-output-count" class="repair-track-count"></span>
+											<button
+												id="repair-sort-btn"
+												class="btn btn-ghost btn-sm"
+												type="button"
+												title="Order the tracks the way an encode does: by the language priority, kind, format and source priority in the Default settings"
+											>
+												Order by default settings
+											</button>
+										</div>
 									</div>
 									<div id="repair-tracks" class="repair-tracks"></div>
 								</section>

@@ -827,6 +827,8 @@ export interface RepairAuditFile {
 	groupLabel: string;
 	differences: string[];
 	tracks: RepairAuditTrack[];
+	/** The subtitles are not in the order an encode would give them by the default settings. */
+	subtitlesOutOfOrder?: boolean;
 }
 
 export interface RepairAuditGroup {
@@ -854,6 +856,11 @@ export interface RepairFolderAudit {
 export interface RepairAuditLanguageRemoval {
 	paths: string[];
 	languages: string[];
+	replaceTarget: boolean;
+}
+
+export interface RepairAuditSubtitleOrder {
+	paths: string[];
 	replaceTarget: boolean;
 }
 

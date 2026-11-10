@@ -1,6 +1,14 @@
 import type { RepairInspection, RepairSubtitleTrack, RepairSubtitleTrackPlan, RepairTrackSource } from "../types";
 import type { LibraryEntry } from "../ui/models";
-import { createRepairJob, downloadSubtitleTrack, fetchRepairBrowse, fetchRepairInspection, fetchRepairReplacePlan, fetchRepairRoots } from "../api/client";
+import {
+	createRepairJob,
+	downloadSubtitleTrack,
+	fetchRepairBrowse,
+	fetchRepairInspection,
+	fetchRepairReplacePlan,
+	fetchRepairRoots,
+	fetchSubtitleSortOrder,
+} from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { humanFileSize } from "./library";
@@ -215,6 +223,7 @@ function renderTracks(): void {
 	buttonById("repair-add-all-btn").disabled = availableSourceTracks.length === 0;
 	buttonById("repair-replace-btn").disabled = !inspection?.source || sourceTracks.length === 0;
 	byId("repair-output-count").textContent = `${editableTracks.length} track${editableTracks.length === 1 ? "" : "s"}`;
+	buttonById("repair-sort-btn").disabled = editableTracks.length < 2;
 	byId("repair-editor").style.display = "";
 }
 
@@ -789,6 +798,28 @@ export async function replaceSubtitlesFromSource(): Promise<void> {
 	} finally {
 		button.disabled = !inspection?.source;
 		button.textContent = "Replace from source";
+	}
+}
+
+/** Puts the output tracks in the order an encode gives them, using the titles, languages and flags as edited. */
+export async function sortRepairTracks(): Promise<void> {
+	if (editableTracks.length < 2) return;
+	setError("");
+	const button = buttonById("repair-sort-btn");
+	button.disabled = true;
+	const tracks = [...editableTracks];
+	const keys = (list: EditableTrack[]) => list.map((track) => keyFor(track.source, track.trackId)).join(",");
+	try {
+		const order = await fetchSubtitleSortOrder(tracks);
+		// The list may have changed while the order was fetched.
+		if (keys(tracks) !== keys(editableTracks) || order.length !== tracks.length) return;
+		editableTracks = order.map((index) => tracks[index]!);
+		normalizeTrackOrder();
+		renderTracks();
+	} catch (error) {
+		setError(errorMessage(error));
+	} finally {
+		button.disabled = editableTracks.length < 2;
 	}
 }
 

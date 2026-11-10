@@ -30,7 +30,14 @@ import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
-import { detectSubtitleTrackType, normalizeBibliographicLanguage, normalizeLanguageGroup, sanitizeLanguageTag } from "../tracks/tracks";
+import {
+	detectSubtitleTrackType,
+	normalizeBibliographicLanguage,
+	normalizeLanguageGroup,
+	sanitizeLanguageTag,
+	sortSubtitleStreams,
+	type SubtitleSortOptions,
+} from "../tracks/tracks";
 import { planSubtitleTracks } from "../tracks/subtitle-plan";
 import { resolveUniqueOutputPath } from "./output";
 import { probeFile } from "./probe";
@@ -439,6 +446,79 @@ export function buildRepairLanguageRemovalPlans(files: Pick<RepairAuditFile, "pa
 		];
 	});
 	if (!plans.length) throw new Error("None of the files have subtitles in those languages");
+	return plans;
+}
+
+/**
+ * The file's subtitle track IDs in the order an encode gives them: language
+ * priority, kind, format, then source. mkvmerge names codecs such as
+ * "SubStationAlpha" and "HDMV PGS", so they are told apart as text or pictures.
+ */
+export function sortedAuditSubtitles(tracks: RepairAuditTrack[], options: SubtitleSortOptions): number[] {
+	const subtitles = tracks.filter((track) => track.type === "subtitles");
+	return subtitleSortOrder(subtitles, options).map((index) => subtitles[index]!.id);
+}
+
+export type SortableSubtitle = Pick<
+	RepairAuditTrack,
+	"codec" | "language" | "title" | "isDefault" | "isForced" | "isHearingImpaired" | "isOriginal" | "isCommentary"
+>;
+
+/** Positions of the tracks in the order an encode gives them. */
+export function subtitleSortOrder(tracks: SortableSubtitle[], options: SubtitleSortOptions): number[] {
+	const streams = tracks.map((track, index) => ({
+		index,
+		codec: /pgs|vobsub|dvb|bitmap/i.test(track.codec) ? "hdmv_pgs_subtitle" : "ass",
+		language: track.language,
+		// Kinds are read from titles, and the commentary flag would otherwise be missed.
+		title: track.isCommentary && !/comment/i.test(track.title) ? `${track.title} Commentary` : track.title,
+		isForced: track.isForced,
+		isDefault: track.isDefault,
+		isHearingImpaired: track.isHearingImpaired,
+		isOriginal: track.isOriginal,
+	}));
+	return sortSubtitleStreams(streams, options).map((stream) => stream.index);
+}
+
+export function subtitlesOutOfOrder(tracks: RepairAuditTrack[], options: SubtitleSortOptions): boolean {
+	const ids = tracks.filter((track) => track.type === "subtitles").map((track) => track.id);
+	return sortedAuditSubtitles(tracks, options).some((id, position) => id !== ids[position]);
+}
+
+/** One repair per file whose subtitles are not in the order an encode would give them. Only the order changes. */
+export function buildRepairSubtitleOrderPlans(
+	files: Pick<RepairAuditFile, "path" | "tracks">[],
+	options: SubtitleSortOptions & { replaceTarget: boolean },
+): RepairPlan[] {
+	const plans = files.flatMap((file) => {
+		if (!subtitlesOutOfOrder(file.tracks, options)) return [];
+		const byId = new Map(file.tracks.map((track) => [track.id, track]));
+		return [
+			sanitizeRepairPlan({
+				targetPath: file.path,
+				replaceTarget: options.replaceTarget,
+				tracks: sortedAuditSubtitles(file.tracks, options).map((id, order) => {
+					const track = byId.get(id)!;
+					return {
+						title: track.title,
+						language: track.language,
+						isDefault: track.isDefault,
+						isForced: track.isForced,
+						isEnabled: track.isEnabled,
+						isHearingImpaired: track.isHearingImpaired,
+						isOriginal: track.isOriginal,
+						isCommentary: track.isCommentary,
+						source: "target",
+						trackId: track.id,
+						mode: "copy",
+						order,
+						compression: "preserve",
+					};
+				}),
+			}),
+		];
+	});
+	if (!plans.length) throw new Error("The subtitles of every file are in order already");
 	return plans;
 }
 

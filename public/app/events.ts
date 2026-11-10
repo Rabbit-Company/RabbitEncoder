@@ -195,6 +195,7 @@ import {
 	openRepairPicker,
 	queueRepair,
 	replaceSubtitlesFromSource,
+	sortRepairTracks,
 } from "../features/repair";
 import {
 	closeRepairBatch,
@@ -314,6 +315,7 @@ export function initEventListeners() {
 	byId("repair-inspect-btn").addEventListener("click", () => inspectRepairPaths());
 	byId("repair-queue-btn").addEventListener("click", queueRepair);
 	byId("repair-replace-btn").addEventListener("click", replaceSubtitlesFromSource);
+	byId("repair-sort-btn").addEventListener("click", sortRepairTracks);
 	byId("open-release-subs-btn").addEventListener("click", openReleaseSubs);
 	byId("close-release-subs-btn").addEventListener("click", closeReleaseSubs);
 	byId("release-subs-cancel-btn").addEventListener("click", closeReleaseSubs);

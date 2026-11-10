@@ -22,6 +22,8 @@ import type {
 	RepairFolderAudit,
 	RepairAuditGroupEdit,
 	RepairAuditLanguageRemoval,
+	RepairAuditSubtitleOrder,
+	RepairSubtitleTrackPlan,
 	ReleaseCheck,
 	ReleaseScan,
 	ReleaseAudioScan,
@@ -415,6 +417,34 @@ export async function removeRepairAuditLanguages(removal: RepairAuditLanguageRem
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue the language removal");
 	return data;
+}
+
+/** Queues one repair per file that puts its subtitles in the order an encode gives them. */
+export async function orderRepairAuditSubtitles(order: RepairAuditSubtitleOrder): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/order-subtitles`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(order),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle ordering");
+	return data;
+}
+
+type SortableSubtitle = Pick<RepairSubtitleTrackPlan, "language" | "title" | "isDefault" | "isForced" | "isHearingImpaired" | "isOriginal" | "isCommentary"> & {
+	codec: string;
+};
+
+/** Positions of the tracks in the order an encode gives them by the default settings. */
+export async function fetchSubtitleSortOrder(tracks: SortableSubtitle[]): Promise<number[]> {
+	const response = await authFetch(`${API}/api/repair/sort-subtitles`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ tracks }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not order the subtitles");
+	return data.order;
 }
 
 export async function fetchRepairRoots(): Promise<{ path: string; name: string }[]> {

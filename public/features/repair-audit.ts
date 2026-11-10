@@ -6,7 +6,14 @@ import type {
 	RepairAuditTrack,
 	RepairFolderAudit,
 } from "../types";
-import { createRepairAuditGroupJobs, downloadAudioTrack, downloadSubtitleTrack, fetchRepairFolderAudit, removeRepairAuditLanguages } from "../api/client";
+import {
+	createRepairAuditGroupJobs,
+	downloadAudioTrack,
+	downloadSubtitleTrack,
+	fetchRepairFolderAudit,
+	orderRepairAuditSubtitles,
+	removeRepairAuditLanguages,
+} from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker, openRepairPaths } from "./repair";
@@ -310,6 +317,7 @@ function renderLanguages(): void {
 	const partial = languages.filter((lang) => lang.fileCount < total);
 	languagesOpen ??= partial.length > 0;
 	const affected = audit!.files.filter((file) => file.tracks.some((track) => track.type === "subtitles" && removeLanguages.has(track.language)));
+	const unordered = audit!.files.filter((file) => file.subtitlesOutOfOrder && !queuedPaths.has(file.path)).length;
 	const summary = partial.length ? `${complete.length} on all ${total} files, ${partial.length} on only some` : `All ${complete.length} on every file`;
 	const section = (title: string, list: RepairAuditLanguage[]) =>
 		list.length
@@ -330,6 +338,9 @@ function renderLanguages(): void {
 				</label>
 				<button class="btn btn-primary btn-sm" type="button" data-audit-remove-languages ${removeLanguages.size && affected.length && !queueingGroup ? "" : "disabled"}>
 					Remove ${removeLanguages.size} language${removeLanguages.size === 1 ? "" : "s"} from ${affected.length} file${affected.length === 1 ? "" : "s"}
+				</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-order-subtitles title="Orders subtitles the way an encode does: by the language priority, kind, format and source priority in the Default settings" ${unordered && !queueingGroup ? "" : "disabled"}>
+					${unordered ? `Order subtitles in ${unordered} file${unordered === 1 ? "" : "s"}` : "Subtitles are in order"}
 				</button>
 			</div>
 		</div>
@@ -354,6 +365,37 @@ export function handleRepairAuditLanguagesClick(event: MouseEvent): void {
 		return;
 	}
 	if (target?.closest("[data-audit-remove-languages]")) void queueLanguageRemoval();
+	if (target?.closest("[data-audit-order-subtitles]")) void queueSubtitleOrder();
+}
+
+async function queueSubtitleOrder(): Promise<void> {
+	if (!audit || queueingGroup) return;
+	const currentAudit = audit;
+	const files = audit.files.filter((file) => file.subtitlesOutOfOrder && !queuedPaths.has(file.path));
+	if (!files.length) return;
+	const replaceTarget = (byId("repair-audit-languages-save-mode") as HTMLSelectElement).value === "existing";
+	const where = replaceTarget ? "The files are rewritten in place." : "New .repaired.mkv copies are written next to them.";
+	if (!confirm(`Order the subtitles of ${files.length} file${files.length === 1 ? "" : "s"} by the Default settings?\n\nOnly the order changes. ${where}`))
+		return;
+	queueingGroup = true;
+	buttonById("repair-audit-pick-folder-btn").disabled = true;
+	renderLanguages();
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} file${files.length === 1 ? "" : "s"}...`;
+	try {
+		const result = await orderRepairAuditSubtitles({ paths: files.map((file) => file.path), replaceTarget });
+		if (audit === currentAudit) {
+			files.forEach((file) => queuedPaths.add(file.path));
+			byId("repair-audit-status").textContent =
+				`Queued ${result.jobIds.length} repair${result.jobIds.length === 1 ? "" : "s"} ordering subtitles. Follow their progress in the job list. Audit again after completion to see the updated tracks.`;
+		}
+		void update().catch(() => {});
+	} catch (error) {
+		if (audit === currentAudit) byId("repair-audit-status").textContent = errorMessage(error);
+	} finally {
+		queueingGroup = false;
+		buttonById("repair-audit-pick-folder-btn").disabled = false;
+		if (audit === currentAudit) renderAudit();
+	}
 }
 
 async function queueLanguageRemoval(): Promise<void> {
