@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, readSync } from "fs";
+import { closeSync, openSync, readSync } from "fs";
 
 export interface IvfFrame {
 	/** Bytes of the temporal unit, which is one shown frame. */
@@ -77,27 +77,36 @@ export function readIvfSize(path: string): { width: number; height: number } | n
 	}
 }
 
-/** Frame sizes and key frames of an AV1 IVF file, read without decoding it. */
+/**
+ * Frame sizes and key frames of an AV1 IVF file, read without decoding it.
+ * The file is read one frame at a time, since a fast pass of a long film is
+ * larger than the memory Node can allocate in one buffer.
+ */
 export function readIvf(path: string): IvfInfo {
-	const data = new Uint8Array(readFileSync(path));
-	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-	if (data.length < 32 || String.fromCharCode(...data.subarray(0, 4)) !== "DKIF") throw new Error(`${path} is not an IVF file`);
-	const headerLength = view.getUint16(6, true);
-	const info: IvfInfo = {
-		width: view.getUint16(12, true),
-		height: view.getUint16(14, true),
-		fpsNum: view.getUint32(16, true),
-		fpsDen: view.getUint32(20, true),
-		frames: [],
-	};
-	const reducedStill = { value: false };
-	let at = headerLength;
-	while (at + 12 <= data.length) {
-		const size = view.getUint32(at, true);
-		const start = at + 12;
-		if (start + size > data.length) break;
-		info.frames.push({ size, keyframe: unitHasKeyframe(data.subarray(start, start + size), reducedStill) });
-		at = start + size;
+	const fd = openSync(path, "r");
+	try {
+		const header = Buffer.alloc(32);
+		if (readSync(fd, header, 0, 32, 0) < 32 || header.toString("latin1", 0, 4) !== "DKIF") throw new Error(`${path} is not an IVF file`);
+		const info: IvfInfo = {
+			width: header.readUInt16LE(12),
+			height: header.readUInt16LE(14),
+			fpsNum: header.readUInt32LE(16),
+			fpsDen: header.readUInt32LE(20),
+			frames: [],
+		};
+		const reducedStill = { value: false };
+		const frameHeader = Buffer.alloc(12);
+		let unit = Buffer.alloc(1 << 20);
+		let at = header.readUInt16LE(6);
+		while (readSync(fd, frameHeader, 0, 12, at) === 12) {
+			const size = frameHeader.readUInt32LE(0);
+			if (size > unit.length) unit = Buffer.alloc(Math.max(size, unit.length * 2));
+			if (readSync(fd, unit, 0, size, at + 12) < size) break;
+			info.frames.push({ size, keyframe: unitHasKeyframe(unit.subarray(0, size), reducedStill) });
+			at += 12 + size;
+		}
+		return info;
+	} finally {
+		closeSync(fd);
 	}
-	return info;
 }
