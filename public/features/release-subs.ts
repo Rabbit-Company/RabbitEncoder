@@ -141,7 +141,9 @@ function renderCell(row: ReleaseRow, rowIndex: number, cell: ReleaseCell): strin
 	const options = [
 		`<option value="" ${selected ? "" : "selected"}>${cell.have.length ? "✓ Keep" : "Don't add"}</option>`,
 		...cell.candidates.map((c) => {
-			const label = `${cell.have.length ? "Replace with " : ""}${c.credit ?? fileName(c.sourcePath)} · ${codecShort(c)}`;
+			const source = c.credit ?? fileName(c.sourcePath);
+			const trackTitle = c.title.trim() && c.title.trim().toLowerCase() !== source.toLowerCase() ? c.title.trim() : "";
+			const label = `${cell.have.length ? "Replace with " : ""}${[source, trackTitle, codecShort(c)].filter(Boolean).join(" · ")}`;
 			const id = candidateId(c);
 			return `<option value="${escapeHtml(id)}" ${id === selected ? "selected" : ""} title="${escapeHtml(`${c.title || "Untitled"}\n${fileName(c.sourcePath)}`)}">${escapeHtml(label)}</option>`;
 		}),
