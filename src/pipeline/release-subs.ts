@@ -16,6 +16,7 @@ import {
 	detectSubtitleTrackType,
 	extractGroupFromTitle,
 	extractSourceTag,
+	languageFromTitle,
 	normalizeLanguageGroup,
 	sanitizeLanguageTag,
 	type SubtitleTrackType,
@@ -125,7 +126,7 @@ export interface ReleaseCandidate {
 	trackId: number;
 	codec: string;
 	codecId: string;
-	/** The language tag the source gives the track. */
+	/** The language tag the source gives the track, made specific by its title when the tag is bare. */
 	language: string;
 	title: string;
 	credit: string | null;
@@ -185,7 +186,7 @@ export function cellKey(language: string, kind: SubtitleTrackType): string {
 }
 
 function keyOf(track: TrackTraits & Pick<RepairSubtitleTrack, "language">): { key: string; language: string; kind: SubtitleTrackType } | null {
-	const language = releaseLanguageKey(track.language);
+	const language = releaseLanguageKey(languageFromTitle(track.language, track.title));
 	const kind = releaseTrackKind(track);
 	if (!language || !RELEASE_KINDS.includes(kind)) return null;
 	return { key: cellKey(language, kind), language, kind };
@@ -219,7 +220,7 @@ export function planReleaseSubtitles(target: RepairInspectionFile, sources: Repa
 		cellFor(k).have.push({
 			trackId: track.id,
 			title: track.title,
-			language: track.language,
+			language: languageFromTitle(track.language, track.title),
 			preferredRank: releasePreferredRank(track.title, target.filename, options.preferredSources),
 		});
 	}
@@ -232,7 +233,7 @@ export function planReleaseSubtitles(target: RepairInspectionFile, sources: Repa
 				trackId: track.id,
 				codec: track.codec,
 				codecId: track.codecId,
-				language: track.language,
+				language: languageFromTitle(track.language, track.title),
 				title: track.title,
 				credit: releaseCredit(track.title, source.filename),
 				text: isTextCodec(track.codecId),

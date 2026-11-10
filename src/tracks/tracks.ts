@@ -1490,13 +1490,13 @@ function analyzeContent(extraction: SubtitleExtraction): SubtitleContentAnalysis
 
 // Title-based regional variant detection patterns
 const SPANISH_EUROPEAN_PATTERN = /\b(european|castilian|espa[ñn]a|spain)\b|es[-_]es\b/i;
-const SPANISH_LATAM_PATTERN = /\b(latin[\s_-]*americ\w*|latino|latam|lat[-_]am)\b|es[-_](419|mx|ar|co|cl|pe|ve)\b/i;
+const SPANISH_LATAM_PATTERN = /\b(latin[\s_-]*americ\w*|am[eé]rica[\s_-]*latina|latinoam\w*|latino|latam|lat[-_]am)\b|es[-_](419|mx|ar|co|cl|pe|ve)\b/i;
 const PORTUGUESE_EUROPEAN_PATTERN = /\b(european|portugal|portugu[eê]s\s*europeu)\b|pt[-_]pt\b/i;
 const PORTUGUESE_BRAZILIAN_PATTERN = /\b(brazil\w*|brasil\w*)\b|pt[-_]br\b/i;
 const FRENCH_CANADIAN_PATTERN = /\b(canad\w*|qu[eé]b[eé]c\w*)\b|fr[-_]ca\b/i;
 const FRENCH_EUROPEAN_PATTERN = /\b(france|parisian|fran[cç]ais\s*(?:de\s*)?france|european)\b|fr[-_]fr\b/i;
-const CHINESE_TRADITIONAL_PATTERN = /\b(traditional|繁體|繁体|taiwan\w*|hong\s*kong)\b|zh[-_](hant|tw|hk)\b/i;
-const CHINESE_SIMPLIFIED_PATTERN = /\b(simplified|简体|简體|mainland)\b|zh[-_](hans|cn)\b/i;
+const CHINESE_TRADITIONAL_PATTERN = /\b(traditional|taiwan\w*|hong\s*kong)\b|繁體|繁体|zh[-_](hant|tw|hk)\b/i;
+const CHINESE_SIMPLIFIED_PATTERN = /\b(simplified|mainland)\b|简体|简體|zh[-_](hans|cn)\b/i;
 
 /**
  * Extract a regional language variant from the subtitle track title.
@@ -1538,6 +1538,16 @@ function extractRegionalVariant(stream: SubtitleStreamInfo): string | null {
 	}
 
 	return null;
+}
+
+/**
+ * A bare language tag made specific by the track title, such as "spa" titled
+ * "Spanish(Latin_America)" as es-419 or "chi" titled "Chinese (Traditional)"
+ * as zh-Hant. A tag that names its region or script already stays.
+ */
+export function languageFromTitle(language: string, title: string | undefined): string {
+	if (!title || /[-_]/.test(language)) return language;
+	return extractRegionalVariant({ index: 0, codec: "", language, title }) ?? language;
 }
 
 /**

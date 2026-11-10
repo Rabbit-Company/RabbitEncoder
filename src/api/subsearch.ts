@@ -7,6 +7,7 @@ import { EXTRA_LANGUAGE_CHOICES, POPULAR_SUBTITLE_LANGUAGES } from "../subsearch
 import { Logger } from "../core/logger";
 import { probeFile } from "../pipeline/probe";
 import { identifyMatroska } from "../pipeline/repair";
+import { languageFromTitle } from "../tracks/tracks";
 import { addSubtitleAddJob, getAppConfig } from "../queue/store";
 import { candidateCredit, cleanPreferredSources, downloadedLanguageTag, downloadedTrackName } from "../subsearch/naming";
 import { applyIdentityOverride, identifyMedia, type MediaIdentity } from "../subsearch/identify";
@@ -77,9 +78,14 @@ function extraLanguagesFor(count: number, chosen: string[], streams: SubtitleStr
 
 /**
  * Subtitle streams with the full language tags of an MKV. ffprobe gives a
- * zh-Hant track as plain "chi", which reads as Simplified Chinese.
+ * zh-Hant track as plain "chi", which reads as Simplified Chinese. A tag
+ * still bare after that takes the variant its title names.
  */
 async function subtitleStreamsOf(path: string, streams: SubtitleStreamInfo[], signal: AbortSignal): Promise<SubtitleStreamInfo[]> {
+	return (await matroskaLanguages(path, streams, signal)).map((s) => (s.language ? { ...s, language: languageFromTitle(s.language, s.title) } : s));
+}
+
+async function matroskaLanguages(path: string, streams: SubtitleStreamInfo[], signal: AbortSignal): Promise<SubtitleStreamInfo[]> {
 	if (!/\.mk[av]$/i.test(path) || !streams.length) return streams;
 	try {
 		// The n-th subtitle stream ffprobe lists is the n-th subtitle track mkvmerge lists.

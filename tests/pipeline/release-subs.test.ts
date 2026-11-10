@@ -159,6 +159,24 @@ describe("planReleaseSubtitles", () => {
 		expect(chosen.additions.some((a) => a.key === "it:full")).toBe(false);
 	});
 
+	it("reads the variant from the title when the tag is bare", () => {
+		const newGate = file("/sankyuu/[SanKyuu] The New Gate - 01 [WEB 1080p AV1 AAC] [002F0254].mkv", [
+			sub("spa", "Spanish(Latin_America)"),
+			sub("spa", "Spanish"),
+			sub("por", "Portuguese(Brazil)"),
+			sub("chi", "Chinese (Simplified)"),
+			sub("chi", "繁體中文"),
+		]);
+		const titled = planReleaseSubtitles(file("/enc/x.mkv", [sub("por", "Portuguese (Brazil)")]), [newGate], options);
+		expect(titled.cells.find((c) => c.key === "pt-BR:full")!.action).toBe("keep");
+		expect(titled.additions.map((a) => [a.key, a.language])).toEqual([
+			["es:full", "spa"],
+			["es-419:full", "es-419"],
+			["zh-Hans:full", "zh-Hans"],
+			["zh-Hant:full", "zh-Hant"],
+		]);
+	});
+
 	it("keeps the source's own names when tracks are not renamed", () => {
 		const kept = planReleaseSubtitles(target, [erai], { ...options, renameTracks: false });
 		expect(kept.additions.find((a) => a.key === "de:full")!.trackName).toBe("Deutsch");
