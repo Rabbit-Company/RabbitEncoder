@@ -40,6 +40,17 @@ export async function probeFile(inputPath: string): Promise<ProbeResult> {
 		tags: {},
 	};
 
+	const cropping = (best.side_data_list as any[] | undefined)?.find((d) => d.side_data_type === "Frame Cropping");
+	const containerCrop =
+		cropping && (cropping.crop_top || cropping.crop_bottom || cropping.crop_left || cropping.crop_right)
+			? {
+					top: Number(cropping.crop_top) || 0,
+					bottom: Number(cropping.crop_bottom) || 0,
+					left: Number(cropping.crop_left) || 0,
+					right: Number(cropping.crop_right) || 0,
+				}
+			: undefined;
+
 	const duration = parseFloat(probeJson.format?.duration) || 0;
 
 	const parseFps = (s: string | undefined): number => {
@@ -136,6 +147,7 @@ export async function probeFile(inputPath: string): Promise<ProbeResult> {
 		filename,
 		width: best.width,
 		height: best.height,
+		containerCrop,
 		videoCodec: best.codec_name || "",
 		displayAspectRatio,
 		sampleAspectRatio,

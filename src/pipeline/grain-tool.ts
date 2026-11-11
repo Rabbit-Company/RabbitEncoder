@@ -21,7 +21,7 @@ import {
 } from "../core/types";
 import { formatFilmGrainProgress, type FilmGrainProgress, type RegrainEntryProgress } from "../video/film-grain-progress";
 import { generateSyntheticFilmGrainTable, measureFilmGrain, regrainErrorText, runRegrain, streamRegrain } from "../video/film-grain-generator";
-import { detectFilmGrainGeometry } from "../video/film-grain-crop";
+import { decodedFrameSize, detectFilmGrainGeometry } from "../video/film-grain-crop";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { grainIso, isoResolution, MAX_GRAIN_ISO, MIN_GRAIN_ISO } from "../core/film-grain-iso";
 import { extractAv1Track, identify, replaceVideoTrack, videoTrackOf as av1TrackOf, type MkvJson } from "./av1-mkv";
@@ -373,8 +373,8 @@ export async function runGrainJob(job: Job, config: AppConfig, updateJob: (parti
 			const geometry = await detectFilmGrainGeometry(
 				plan.sourcePath!,
 				plan.targetPath,
-				original,
-				probe,
+				decodedFrameSize(original),
+				decodedFrameSize(probe),
 				Math.min(original.duration, probe.duration),
 				tempDir,
 				signal,

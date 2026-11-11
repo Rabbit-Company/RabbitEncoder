@@ -7,7 +7,7 @@ import { probeFile } from "../pipeline/probe";
 import { filmGrainSegmentCount, writeRepresentativeFilmGrainTable } from "./film-grain-table";
 import { parseRegrainEvent, progressFromEvent, type FilmGrainProgress, type RegrainEvent } from "./film-grain-progress";
 import { Logger } from "../core/logger";
-import { detectFilmGrainCrop, type FilmGrainCrop } from "./film-grain-crop";
+import { decodedFrameSize, detectFilmGrainGeometry, type FilmGrainCrop } from "./film-grain-crop";
 import { representativeFilmGrainWindow } from "./film-grain-window";
 
 export interface GeneratedFilmGrainTable {
@@ -222,23 +222,40 @@ export async function measureFilmGrain(opts: MeasureFilmGrainOptions): Promise<n
 		const original = await probeFile(sourcePath);
 		const denoised = opts.denoisedProbe ?? (await probeFile(denoisedPath));
 		if (Math.abs(original.videoStreamFps - denoised.videoStreamFps) > 0.01) throw new Error("Original and denoised videos must have the same frame rate");
-		if (denoised.width > original.width || denoised.height > original.height)
-			throw new Error("Denoised video is larger than the original, so it cannot be a crop of it");
+		const source = decodedFrameSize(original);
+		const target = decodedFrameSize(denoised);
+		if (target.width > source.width || target.height > source.height)
+			throw new Error(
+				`Denoised video is ${target.width}x${target.height} and larger than the ${source.width}x${source.height} original, so it cannot be cut from it`,
+			);
 		if (signal?.aborted) throw new CancelledError();
 		const args = ["regrain", "diff", sourcePath, denoisedPath, "-o", join(workDir, "grain.tbl"), "-y", "--progress", "json", "--scan", SCAN[opts.sampling]];
 		if (opts.justEnough) args.push("--just-enough");
 		if (opts.lumaOnly) args.push("--no-chroma");
 		if (opts.allowVfr) args.push("--allow-vfr");
-		// A denoising server that crops first hands back a smaller frame. regrain then
+		// A denoising server that crops or downscales first hands back a smaller frame. regrain then
 		// measures only the matching area of the original.
-		if (opts.scale) {
-			if (opts.crop) args.push("--crop", `${opts.crop.w}:${opts.crop.h}:${opts.crop.x}:${opts.crop.y}`);
-			args.push("--scale", `${opts.scale.w}x${opts.scale.h}`);
-		} else if (original.width !== denoised.width || original.height !== denoised.height) {
-			const crop =
-				opts.crop ?? (await detectFilmGrainCrop(sourcePath, denoisedPath, original, denoised, Math.min(original.duration, denoised.duration), workDir, signal));
-			args.push("--crop", `${crop.w}:${crop.h}:${crop.x}:${crop.y}`);
-			Logger.info(`[film-grain] Denoised input is ${crop.w}x${crop.h}. Measuring the ${original.width}x${original.height} original at +${crop.x}+${crop.y}.`);
+		let { crop, scale } = opts;
+		if (!crop && !scale && (source.width !== target.width || source.height !== target.height)) {
+			({ crop, scale } = await detectFilmGrainGeometry(
+				sourcePath,
+				denoisedPath,
+				source,
+				target,
+				Math.min(original.duration, denoised.duration),
+				workDir,
+				signal,
+			));
+		}
+		// regrain sizes the original from ffprobe, which ignores the container crop that ffmpeg decodes with.
+		if (!crop && original.containerCrop) crop = { w: source.width, h: source.height, x: 0, y: 0 };
+		if (crop) args.push("--crop", `${crop.w}:${crop.h}:${crop.x}:${crop.y}`);
+		if (scale) args.push("--scale", `${scale.w}x${scale.h}`);
+		if (crop || scale) {
+			const area = crop ? `${crop.w}x${crop.h} at +${crop.x}+${crop.y}` : `all ${source.width}x${source.height}`;
+			Logger.info(
+				`[film-grain] Denoised input is ${target.width}x${target.height}. Measuring ${area} of the original${scale ? `, scaled to ${scale.w}x${scale.h}` : ""}.`,
+			);
 		}
 		const window =
 			opts.range === "representative" ? representativeFilmGrainWindow(Math.min(original.duration, denoised.duration), denoised.videoStreamFps) : null;

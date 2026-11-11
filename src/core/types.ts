@@ -484,6 +484,8 @@ export interface ProbeResult {
 	filename: string;
 	width: number;
 	height: number;
+	/** Matroska pixel crop of the video track. ffmpeg applies it when decoding, so its frames are smaller than width and height. */
+	containerCrop?: { top: number; bottom: number; left: number; right: number };
 	videoCodec: string;
 	displayAspectRatio: string;
 	sampleAspectRatio: string;

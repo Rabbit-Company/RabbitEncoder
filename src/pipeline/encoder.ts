@@ -81,7 +81,7 @@ import {
 	regrainErrorText,
 	runRegrain,
 } from "../video/film-grain-generator";
-import type { FilmGrainCrop } from "../video/film-grain-crop";
+import { decodedFrameSize, type FilmGrainCrop } from "../video/film-grain-crop";
 import { runRabbitBoost, type BoostStage } from "../boost/rabbit-boost";
 import { TelemetryRecorder } from "./telemetry";
 import { formatFilmGrainProgress } from "../video/film-grain-progress";
@@ -736,8 +736,8 @@ export async function encodeJob(
 			crop: job.settings.crop,
 			cropLimit: job.settings.cropLimit,
 			downscale: job.settings.downscale,
-			sourceHeight: probe.height,
-			sourceWidth: probe.width,
+			sourceHeight: decodedFrameSize(probe).height,
+			sourceWidth: decodedFrameSize(probe).width,
 			sourceSar: resolveSourceSar(probe),
 			denoise: job.settings.denoise,
 			denoiseEngine: job.settings.denoiseEngine,

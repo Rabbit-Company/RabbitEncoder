@@ -24,6 +24,16 @@ const SAMPLE_INSET = 0.08;
 /** Below this luma variance the sampled frames are too flat to tell one offset from another. */
 const MIN_SAMPLE_VARIANCE = 4;
 
+/** The size of the frames ffmpeg decodes from a probed video, after the container crop it applies. */
+export function decodedFrameSize(probe: { width: number; height: number; containerCrop?: { top: number; bottom: number; left: number; right: number } }): {
+	width: number;
+	height: number;
+} {
+	const crop = probe.containerCrop;
+	if (!crop) return { width: probe.width, height: probe.height };
+	return { width: probe.width - crop.left - crop.right, height: probe.height - crop.top - crop.bottom };
+}
+
 export function filmGrainCropFilter(crop: FilmGrainCrop): string {
 	return `crop=${crop.w}:${crop.h}:${crop.x}:${crop.y}`;
 }
@@ -137,7 +147,8 @@ async function grayFrame(
 	);
 	if (result.code !== 0) throw new Error(`Could not read a frame to locate the crop: ${result.stderr.slice(-600)}`);
 	const data = readFileSync(outputPath);
-	if (data.length !== width * height) throw new Error("Could not read a frame to locate the crop: unexpected frame size");
+	if (data.length !== width * height)
+		throw new Error(`Could not read a frame to locate the crop: expected a ${width}x${height} frame but ffmpeg decoded ${data.length.toLocaleString()} pixels`);
 	return { data, width, height };
 }
 
