@@ -218,6 +218,8 @@ import {
 	closeReleaseSubsIfOutside,
 	handleReleaseSubsGridChange,
 	handleReleaseSubsGridClick,
+	handleReleaseSubsMappingChange,
+	handleReleaseSubsMappingToggle,
 	handleReleaseSubsOptionChange,
 	handleReleaseSubsSourcesClick,
 	handleReleaseSubsSourcesInput,
@@ -328,7 +330,9 @@ export function initEventListeners() {
 	byId("release-subs-sources").addEventListener("input", handleReleaseSubsSourcesInput);
 	byId("release-subs-preferred").addEventListener("input", handleReleaseSubsOptionChange);
 	byId("release-subs-replace").addEventListener("change", handleReleaseSubsOptionChange);
-	byId("release-subs-scan-btn").addEventListener("click", scanReleaseSubs);
+	byId("release-subs-scan-btn").addEventListener("click", () => scanReleaseSubs());
+	byId("release-subs-mapping").addEventListener("change", handleReleaseSubsMappingChange);
+	byId("release-subs-mapping").addEventListener("toggle", handleReleaseSubsMappingToggle, true);
 	byId("release-subs-grid").addEventListener("change", handleReleaseSubsGridChange);
 	byId("release-subs-grid").addEventListener("click", handleReleaseSubsGridClick);
 	byId("release-subs-queue-btn").addEventListener("click", queueReleaseSubs);

@@ -5,10 +5,12 @@ import { join } from "path";
 import { run } from "../../src/core/process";
 import type { RepairInspectionFile, RepairSubtitleTrack } from "../../src/core/types";
 import {
+	buildReleaseRepairPlan,
 	planReleaseSubtitles,
 	releaseCredit,
 	releaseGrid,
 	releaseLanguageKey,
+	releaseTrackSummaries,
 	scanReleaseSubtitles,
 	type ReleaseRow,
 	type ReleaseSubsOptions,
@@ -98,6 +100,61 @@ const varyg = file("/varyg/Show.S01E01.1080p.NF.WEB-DL.DDP2.0.H.264-VARYG.mkv", 
 	sub("it", "Italian", "S_HDMV/PGS"),
 	sub("ja", "Japanese", "S_HDMV/PGS"),
 ]);
+
+describe("track mappings", () => {
+	const hi10 = file("/hi10/[Hi10] Show - 01.mkv", [
+		sub("eng", "Full Subtitles [Hi10]"),
+		sub("eng", "Alt Subtitles [SallySubs]"),
+		sub("eng", "Signs & Songs", "S_TEXT/ASS", { isForced: true }),
+		sub("ara", "Arabic"),
+	]);
+	const encode = file("/enc/Show - 01.mkv", [sub("eng", "Full Subtitles [SallySubs]", "S_TEXT/ASS", { isDefault: true })]);
+	const sally = { language: "eng", title: "Alt Subtitles [SallySubs]", kind: "honorifics" as const };
+
+	it("puts a release track in the column it is mapped to and names it for that type", () => {
+		const plan = planReleaseSubtitles(encode, [hi10], { ...options, renameTracks: false, mappings: [sally] });
+		expect(plan.cells.find((c) => c.key === "en:full")!.candidates.map((c) => c.title)).toEqual(["Full Subtitles [Hi10]"]);
+		expect(plan.additions.find((a) => a.key === "en:honorifics")).toMatchObject({ trackName: "Full Subtitles (Honorifics) [SallySubs]", isForced: false });
+	});
+
+	it("gives a mapped track its new language tag and leaves out ignored tracks", () => {
+		const plan = planReleaseSubtitles(encode, [hi10], {
+			...options,
+			mappings: [
+				{ language: "ara", title: "Arabic", as: "ar-SA" },
+				{ language: "eng", title: "Signs & Songs", kind: "ignore" },
+			],
+		});
+		expect(plan.additions.find((a) => a.key === "ar:full")!.language).toBe("ar-SA");
+		expect(plan.cells.some((c) => c.key === "en:forced")).toBe(false);
+	});
+
+	it("retags the encode's own track and queues that alone as a change", () => {
+		const mapping = { language: "eng", title: "Full Subtitles [SallySubs]", kind: "honorifics" as const };
+		const plan = planReleaseSubtitles(encode, [], { ...options, mappings: [mapping] });
+		expect(plan.retags).toEqual([
+			{
+				trackId: encode.subtitles[0]!.id,
+				title: "Full Subtitles (Honorifics) [SallySubs]",
+				language: "eng",
+				kind: "honorifics",
+				isForced: false,
+				isHearingImpaired: false,
+			},
+		]);
+		const repair = buildReleaseRepairPlan(encode, plan, { replaceTarget: true, languagePriority: ["eng"], formatPriority: "text-first", compression: "none" })!;
+		expect(repair.tracks).toHaveLength(1);
+		expect(repair.tracks[0]).toMatchObject({ source: "target", title: "Full Subtitles (Honorifics) [SallySubs]", language: "eng" });
+		expect(planReleaseSubtitles(encode, [], options).retags).toEqual([]);
+	});
+
+	it("lists every distinct track with how many encodes and releases have it", () => {
+		const tracks = releaseTrackSummaries([encode], [hi10, hi10], ["eng", "*"]);
+		expect(tracks.find((t) => t.title === "Alt Subtitles [SallySubs]")).toMatchObject({ kind: "full", languageKey: "en", releases: 2, encodes: 0 });
+		expect(tracks.find((t) => t.title === "Full Subtitles [SallySubs]")).toMatchObject({ releases: 0, encodes: 1 });
+		expect(tracks.at(-1)!.languageKey).toBe("ar");
+	});
+});
 
 describe("planReleaseSubtitles", () => {
 	const plan = planReleaseSubtitles(target, [varyg, erai], options);

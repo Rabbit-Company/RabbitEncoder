@@ -12,6 +12,7 @@ import {
 	scanReleaseSubtitles,
 	type ReleaseFolder,
 	type ReleaseSubsOptions,
+	type ReleaseTrackMapping,
 } from "../pipeline/release-subs";
 import { addRepairJob, getAllJobs } from "../queue/store";
 import { cleanPreferredSources } from "../subsearch/naming";
@@ -22,7 +23,23 @@ const MAX_FILES = 500;
 const MAX_SOURCE_DIRS = 10;
 const MAX_ROW_SOURCES = 10;
 
-function planOptions(config: AppConfig, raw: { preferredSources?: unknown; replaceWorse?: unknown }): ReleaseSubsOptions {
+const MAPPING_KINDS = new Set(["full", "honorifics", "sdh", "forced", "ignore"]);
+
+/** Track mappings from the grid's track table. */
+export function resolveMappings(raw: unknown): ReleaseTrackMapping[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > 500) throw new Error("Invalid track mappings");
+	return raw.map((item: any): ReleaseTrackMapping => {
+		const { language, title, kind, as } = item ?? {};
+		if (typeof language !== "string" || language.length > 40 || typeof title !== "string" || title.length > 500) throw new Error("Invalid track mapping");
+		if (kind !== undefined && !MAPPING_KINDS.has(kind)) throw new Error(`Invalid track type ${String(kind).slice(0, 20)}`);
+		if (as !== undefined && (typeof as !== "string" || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(as)))
+			throw new Error(`Invalid language tag ${String(as).slice(0, 20)}`);
+		return { language, title, ...(kind !== undefined ? { kind } : {}), ...(as !== undefined ? { as } : {}) };
+	});
+}
+
+function planOptions(config: AppConfig, raw: { preferredSources?: unknown; replaceWorse?: unknown; mappings?: unknown }): ReleaseSubsOptions {
 	const defaults = config.defaults;
 	return {
 		preferredSources: Array.isArray(raw.preferredSources)
@@ -32,6 +49,7 @@ function planOptions(config: AppConfig, raw: { preferredSources?: unknown; repla
 		renameTracks: defaults.renameSubtitleTracks,
 		languagePriority: defaults.subtitleLanguagePriority,
 		replaceWorse: raw.replaceWorse === true,
+		mappings: resolveMappings(raw.mappings),
 	};
 }
 
@@ -88,7 +106,14 @@ export function resolveReleaseFolders(raw: unknown, config: AppConfig): ReleaseF
 export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void {
 	app.post("/api/release-subs/scan", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { targets?: unknown; targetDir?: unknown; sourceDirs?: unknown; preferredSources?: unknown; replaceWorse?: unknown };
+			const raw = (await c.req.json()) as {
+				targets?: unknown;
+				targetDir?: unknown;
+				sourceDirs?: unknown;
+				preferredSources?: unknown;
+				replaceWorse?: unknown;
+				mappings?: unknown;
+			};
 			const targets = Array.isArray(raw.targets)
 				? raw.targets.map((path) => resolveAllowedMkv(path, config, "Encoded target"))
 				: mkvFilesIn(resolveAllowedDirectory(raw.targetDir, config));
@@ -128,7 +153,7 @@ export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void
 
 	app.post("/api/release-subs/jobs", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { rows?: unknown; replaceTarget?: unknown; preferredSources?: unknown; replaceWorse?: unknown };
+			const raw = (await c.req.json()) as { rows?: unknown; replaceTarget?: unknown; preferredSources?: unknown; replaceWorse?: unknown; mappings?: unknown };
 			if (!Array.isArray(raw.rows) || !raw.rows.length) throw new Error("Choose at least one episode");
 			if (raw.rows.length > MAX_FILES) throw new Error(`Copying subtitles from releases is limited to ${MAX_FILES} episodes`);
 			const options = planOptions(config, raw);

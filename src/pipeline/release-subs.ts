@@ -107,6 +107,20 @@ function formatRank(track: Pick<RepairSubtitleTrack, "codecId">, priority: Subti
 	return priority === "picture-first" ? (text === 3 ? 0 : text + 1) : text;
 }
 
+/**
+ * What the user says a track is, for every track of this language tag and name
+ * in the releases and the encodes. kind "ignore" leaves the track out, as if no
+ * file had it. as replaces its language tag, such as "ar" with "ar-SA".
+ */
+export interface ReleaseTrackMapping {
+	language: string;
+	title: string;
+	kind?: SubtitleTrackType | "ignore";
+	as?: string;
+}
+
+export const releaseMappingId = (language: string, title: string): string => `${language}\n${title}`;
+
 export interface ReleaseSubsOptions {
 	/** Sources and groups to take first, such as ["CR", "NF"]. */
 	preferredSources: string[];
@@ -119,6 +133,7 @@ export interface ReleaseSubsOptions {
 	replaceWorse?: boolean;
 	/** Chosen by hand: a source track per key, or null to leave the key alone. */
 	choices?: Record<string, { sourcePath: string; trackId: number } | null>;
+	mappings?: ReleaseTrackMapping[];
 }
 
 export interface ReleaseCandidate {
@@ -173,23 +188,54 @@ export interface ReleaseAddition extends ReleaseCandidate {
 	isHearingImpaired: boolean;
 }
 
+/** A track the encode keeps whose type or language a mapping changed. */
+export interface ReleaseRetag {
+	trackId: number;
+	title: string;
+	language: string;
+	kind: SubtitleTrackType;
+	isForced: boolean;
+	isHearingImpaired: boolean;
+}
+
 export interface ReleaseTargetPlan {
 	targetPath: string;
 	cells: ReleaseCell[];
 	additions: ReleaseAddition[];
 	/** Target tracks the additions replace. */
 	removals: number[];
+	retags: ReleaseRetag[];
 }
 
 export function cellKey(language: string, kind: SubtitleTrackType): string {
 	return `${language}:${kind}`;
 }
 
-function keyOf(track: TrackTraits & Pick<RepairSubtitleTrack, "language">): { key: string; language: string; kind: SubtitleTrackType } | null {
-	const language = releaseLanguageKey(languageFromTitle(track.language, track.title));
-	const kind = releaseTrackKind(track);
+type MappingIndex = Map<string, ReleaseTrackMapping>;
+
+function indexMappings(mappings: ReleaseTrackMapping[] | undefined): MappingIndex {
+	return new Map((mappings ?? []).map((m) => [releaseMappingId(m.language, m.title), m]));
+}
+
+interface TrackKey {
+	key: string;
+	language: string;
+	kind: SubtitleTrackType;
+	/** The language tag the track gets, the mapped one or the one read from its tag and title. */
+	tag: string;
+	/** A mapping changed the type Rabbit read from the track. */
+	remapped: boolean;
+}
+
+function keyOf(track: TrackTraits & Pick<RepairSubtitleTrack, "language">, mappings: MappingIndex): TrackKey | null {
+	const mapping = mappings.get(releaseMappingId(track.language, track.title));
+	if (mapping?.kind === "ignore") return null;
+	const tag = mapping?.as || languageFromTitle(track.language, track.title);
+	const language = releaseLanguageKey(tag);
+	const detected = releaseTrackKind(track);
+	const kind = mapping?.kind ?? detected;
 	if (!language || !RELEASE_KINDS.includes(kind)) return null;
-	return { key: cellKey(language, kind), language, kind };
+	return { key: cellKey(language, kind), language, kind, tag, remapped: kind !== detected };
 }
 
 const KIND_ORDER: string[] = RELEASE_KINDS;
@@ -208,32 +254,37 @@ function orderCells<T extends { language: string; kind: string }>(cells: T[], pr
  * preferred sources, then format.
  */
 export function planReleaseSubtitles(target: RepairInspectionFile, sources: RepairInspectionFile[], options: ReleaseSubsOptions): ReleaseTargetPlan {
+	const mappings = indexMappings(options.mappings);
 	const cells = new Map<string, ReleaseCell>();
-	const cellFor = (k: { key: string; language: string; kind: SubtitleTrackType }) => {
+	const remapped = new Set<string>();
+	const cellFor = (k: TrackKey) => {
 		let cell = cells.get(k.key);
-		if (!cell) cells.set(k.key, (cell = { ...k, have: [], candidates: [], action: "missing" }));
+		if (!cell) cells.set(k.key, (cell = { key: k.key, language: k.language, kind: k.kind, have: [], candidates: [], action: "missing" }));
 		return cell;
 	};
+	const targetKeys = new Map<number, TrackKey>();
 	for (const track of target.subtitles) {
-		const k = keyOf(track);
+		const k = keyOf(track, mappings);
 		if (!k) continue;
+		targetKeys.set(track.id, k);
 		cellFor(k).have.push({
 			trackId: track.id,
 			title: track.title,
-			language: languageFromTitle(track.language, track.title),
+			language: k.tag,
 			preferredRank: releasePreferredRank(track.title, target.filename, options.preferredSources),
 		});
 	}
 	sources.forEach((source) => {
 		for (const track of source.subtitles) {
-			const k = keyOf(track);
+			const k = keyOf(track, mappings);
 			if (!k) continue;
+			if (k.remapped) remapped.add(`${source.path}\n${track.id}`);
 			cellFor(k).candidates.push({
 				sourcePath: source.path,
 				trackId: track.id,
 				codec: track.codec,
 				codecId: track.codecId,
-				language: languageFromTitle(track.language, track.title),
+				language: k.tag,
 				title: track.title,
 				credit: releaseCredit(track.title, source.filename),
 				text: isTextCodec(track.codecId),
@@ -286,7 +337,9 @@ export function planReleaseSubtitles(target: RepairInspectionFile, sources: Repa
 	);
 	const additions = chosen.map((cell, i): ReleaseAddition => {
 		const c = cell.chosen!;
-		const trackName = options.renameTracks || !c.title ? buildSubtitleTrackName(cell.kind, c.title, c.credit ?? undefined) : c.title;
+		// A track given another type by hand is renamed, so its name does not contradict it.
+		const rename = options.renameTracks || !c.title || remapped.has(`${c.sourcePath}\n${c.trackId}`);
+		const trackName = rename ? buildSubtitleTrackName(cell.kind, c.title, c.credit ?? undefined) : c.title;
 		return {
 			...c,
 			language: sanitizeLanguageTag(c.language, `${basename(c.sourcePath)} track ${c.trackId}`),
@@ -299,7 +352,22 @@ export function planReleaseSubtitles(target: RepairInspectionFile, sources: Repa
 			isHearingImpaired: cell.kind === "sdh",
 		};
 	});
-	return { targetPath: target.path, cells: ordered, additions, removals };
+	const retags = target.subtitles.flatMap((track): ReleaseRetag[] => {
+		const k = targetKeys.get(track.id);
+		if (!k || removed.has(track.id) || (!k.remapped && k.tag === languageFromTitle(track.language, track.title))) return [];
+		const credit = releaseCredit(track.title, target.filename) ?? undefined;
+		return [
+			{
+				trackId: track.id,
+				title: k.remapped ? buildSubtitleTrackName(k.kind, track.title, credit) : track.title,
+				language: sanitizeLanguageTag(k.tag, `${target.filename} track ${track.id}`),
+				kind: k.kind,
+				isForced: k.remapped ? k.kind === "forced" : track.isForced,
+				isHearingImpaired: k.remapped ? k.kind === "sdh" : track.isHearingImpaired,
+			},
+		];
+	});
+	return { targetPath: target.path, cells: ordered, additions, removals, retags };
 }
 
 export interface ReleaseColumn {
@@ -348,8 +416,63 @@ export interface ReleaseFolder {
 	offset?: number;
 }
 
+/** A subtitle track by language tag and name, as the mapping table lists it. */
+export interface ReleaseTrackSummary {
+	language: string;
+	title: string;
+	codec: string;
+	/** The type and language key Rabbit reads from the track without a mapping. */
+	kind: SubtitleTrackType;
+	languageKey: string | null;
+	releases: number;
+	encodes: number;
+}
+
 export interface ReleaseScan extends ReleaseGrid {
 	unmatchedSources: string[];
+	tracks: ReleaseTrackSummary[];
+}
+
+/** Every distinct track of the encodes and their releases, with how many files have it. */
+export function releaseTrackSummaries(
+	targets: RepairInspectionFile[],
+	sources: RepairInspectionFile[],
+	languagePriority: string[] = [],
+): ReleaseTrackSummary[] {
+	const found = new Map<string, ReleaseTrackSummary>();
+	const note = (file: RepairInspectionFile, side: "releases" | "encodes") => {
+		for (const track of file.subtitles) {
+			const id = releaseMappingId(track.language, track.title);
+			let summary = found.get(id);
+			if (!summary)
+				found.set(
+					id,
+					(summary = {
+						language: track.language,
+						title: track.title,
+						codec: track.codec,
+						kind: releaseTrackKind(track),
+						languageKey: releaseLanguageKey(languageFromTitle(track.language, track.title)),
+						releases: 0,
+						encodes: 0,
+					}),
+				);
+			summary[side]++;
+		}
+	};
+	for (const file of targets) note(file, "encodes");
+	for (const file of sources) note(file, "releases");
+	const languages = orderTranslatedByPriority(
+		[...new Set([...found.values()].map((t) => t.languageKey ?? "und"))].map((language) => ({ language })),
+		languagePriority,
+	).map((l) => l.language);
+	return [...found.values()].sort(
+		(a, b) =>
+			languages.indexOf(a.languageKey ?? "und") - languages.indexOf(b.languageKey ?? "und") ||
+			KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
+			b.releases + b.encodes - (a.releases + a.encodes) ||
+			a.title.localeCompare(b.title),
+	);
 }
 
 /** The MKVs of a folder in natural order, so episode 2 comes before episode 10. */
@@ -420,7 +543,13 @@ export async function scanReleaseSubtitles(input: {
 		);
 		return { ...plan, targetName: basename(targetPath), sources };
 	});
-	return { ...releaseGrid(rows, options.languagePriority), unmatchedSources };
+	const sourcePaths = new Set([...pairedSources.values()].flat().map((s) => s.path));
+	const tracks = releaseTrackSummaries(
+		targets.map((path) => inspected.get(path)!),
+		[...sourcePaths].map((path) => inspected.get(path)!),
+		options.languagePriority,
+	);
+	return { ...releaseGrid(rows, options.languagePriority), unmatchedSources, tracks };
 }
 
 /**
@@ -432,10 +561,11 @@ export async function scanReleaseSubtitles(input: {
  */
 export function buildReleaseRepairPlan(
 	target: RepairInspectionFile,
-	plan: Pick<ReleaseTargetPlan, "additions" | "removals">,
+	plan: Pick<ReleaseTargetPlan, "additions" | "removals"> & Partial<Pick<ReleaseTargetPlan, "retags">>,
 	options: { replaceTarget: boolean; languagePriority: string[]; formatPriority: SubtitleFormatPriority; compression: RepairCompression },
 ): RepairPlan | null {
-	if (!plan.additions.length && !plan.removals.length) return null;
+	const retags = new Map((plan.retags ?? []).map((r) => [r.trackId, r]));
+	if (!plan.additions.length && !plan.removals.length && !retags.size) return null;
 	const removed = new Set(plan.removals);
 	const kept = target.subtitles.filter((t) => !removed.has(t.id));
 	const sourcePaths = [...new Set(plan.additions.map((a) => a.sourcePath))];
@@ -445,13 +575,13 @@ export function buildReleaseRepairPlan(
 		trackId: t.id,
 		mode: "copy",
 		order: 0,
-		title: t.title,
-		language: t.language,
+		title: retags.get(t.id)?.title ?? t.title,
+		language: retags.get(t.id)?.language ?? t.language,
 		compression: "preserve",
 		isDefault: t.isDefault,
-		isForced: t.isForced,
+		isForced: retags.get(t.id)?.isForced ?? t.isForced,
 		isEnabled: t.isEnabled,
-		isHearingImpaired: t.isHearingImpaired,
+		isHearingImpaired: retags.get(t.id)?.isHearingImpaired ?? t.isHearingImpaired,
 		isOriginal: t.isOriginal,
 		isCommentary: t.isCommentary,
 	}));
@@ -477,7 +607,13 @@ export function buildReleaseRepairPlan(
 
 	// planTrackOrder places added tracks among existing ones, as "0:<id>" and "<n>:0" for the n-th addition.
 	const order = planTrackOrder(
-		kept.map((t) => ({ id: t.id, type: "subtitles", language: t.language, kind: releaseTrackKind(t), text: isTextCodec(t.codecId) })),
+		kept.map((t) => ({
+			id: t.id,
+			type: "subtitles",
+			language: retags.get(t.id)?.language ?? t.language,
+			kind: retags.get(t.id)?.kind ?? releaseTrackKind(t),
+			text: isTextCodec(t.codecId),
+		})),
 		plan.additions.map((a) => ({ language: a.language, kind: a.kind, text: a.text })),
 		options.languagePriority,
 		options.formatPriority,

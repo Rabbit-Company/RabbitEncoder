@@ -26,6 +26,7 @@ import type {
 	RepairSubtitleTrackPlan,
 	ReleaseCheck,
 	ReleaseScan,
+	ReleaseTrackMapping,
 	ReleaseAudioScan,
 	AudioTracksScan,
 	AudioTrackChoice,
@@ -273,6 +274,7 @@ export async function fetchReleaseScan(options: {
 	sourceDirs: Array<{ path: string; offset?: number }>;
 	preferredSources: string[];
 	replaceWorse: boolean;
+	mappings: ReleaseTrackMapping[];
 }): Promise<ReleaseScan> {
 	const response = await authFetch(`${API}/api/release-subs/scan`, {
 		method: "POST",
@@ -299,6 +301,7 @@ export async function createReleaseSubtitleJobs(options: {
 	rows: { targetPath: string; sourcePaths: string[]; choices: Record<string, { sourcePath: string; trackId: number } | null> }[];
 	replaceTarget: boolean;
 	preferredSources: string[];
+	mappings: ReleaseTrackMapping[];
 }): Promise<{ jobIds: string[]; unchanged: number }> {
 	const response = await authFetch(`${API}/api/release-subs/jobs`, {
 		method: "POST",

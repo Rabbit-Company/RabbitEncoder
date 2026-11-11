@@ -5808,6 +5808,67 @@ a.btn {
 	white-space: nowrap;
 }
 
+.release-row-retag {
+	margin-top: 4px;
+	color: var(--accent);
+	font-size: 0.7rem;
+	overflow-wrap: anywhere;
+}
+
+.release-subs-mapping {
+	margin-bottom: 12px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+	padding: 8px 10px;
+}
+
+.release-subs-mapping summary {
+	cursor: pointer;
+	font-size: 0.8rem;
+	color: var(--text-1);
+}
+
+.release-subs-mapping .repair-subtitle {
+	margin: 6px 0 8px;
+}
+
+.release-mapping-scroll {
+	max-height: 32vh;
+	overflow: auto;
+}
+
+.release-mapping-table {
+	width: 100%;
+}
+
+.release-grid.release-mapping-table td {
+	vertical-align: middle;
+}
+
+.release-mapping-table select {
+	min-width: 150px;
+}
+
+.release-mapping-table td:last-child {
+	min-width: 200px;
+}
+
+.release-mapping-table tr.is-mapped td:first-child {
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.release-mapping-title {
+	color: var(--text-0);
+	overflow-wrap: anywhere;
+}
+
+.release-mapping-meta,
+.release-mapping-found {
+	color: var(--text-2);
+	font-size: 0.7rem;
+	white-space: nowrap;
+}
+
 .release-row-head .btn {
 	margin-top: 4px;
 }

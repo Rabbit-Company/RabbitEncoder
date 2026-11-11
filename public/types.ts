@@ -641,12 +641,34 @@ export interface ReleaseRow {
 	targetName: string;
 	sources: { path: string; name: string; method: "episode" | "absolute" | "order" | "none"; offset?: number }[];
 	cells: ReleaseCell[];
+	/** Encode tracks a track mapping renames or retags. */
+	retags: { trackId: number; title: string; language: string }[];
+}
+
+/** One distinct subtitle track of the encodes and releases, by language tag and name. */
+export interface ReleaseTrackSummary {
+	language: string;
+	title: string;
+	codec: string;
+	kind: string;
+	languageKey: string | null;
+	releases: number;
+	encodes: number;
+}
+
+/** What the user says every track of a language tag and name is. */
+export interface ReleaseTrackMapping {
+	language: string;
+	title: string;
+	kind?: string;
+	as?: string;
 }
 
 export interface ReleaseScan {
 	columns: ReleaseColumn[];
 	rows: ReleaseRow[];
 	unmatchedSources: string[];
+	tracks: ReleaseTrackSummary[];
 }
 
 export interface ReleaseCheck {

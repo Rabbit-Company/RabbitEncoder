@@ -1,4 +1,4 @@
-import type { ReleaseCandidate, ReleaseCell, ReleaseCheck, ReleaseRow, ReleaseScan } from "../types";
+import type { ReleaseCandidate, ReleaseCell, ReleaseCheck, ReleaseRow, ReleaseScan, ReleaseTrackMapping } from "../types";
 import { createReleaseSubtitleJobs, fetchReleaseCheck, fetchReleaseScan } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
@@ -22,6 +22,14 @@ let checks = new Map<string, { loading: boolean; results?: ReleaseCheck[]; error
 let scanning = false;
 /** The options the grid was scanned with. Other ones make it stale. */
 let scannedWith = "";
+/** Track mappings by language tag and name. They outlive a scan, so reading the releases again keeps them. */
+let mappings = new Map<string, ReleaseTrackMapping>();
+let mappingsOpen = false;
+let rescanQueued = false;
+
+const KIND_NAMES: Record<string, string> = { full: "Full", honorifics: "Honorifics", sdh: "SDH", forced: "Signs & Songs" };
+const mappingId = (language: string, title: string): string => `${language}\n${title}`;
+const mappingList = (): ReleaseTrackMapping[] => [...mappings.values()].filter((m) => m.kind || m.as);
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -52,6 +60,7 @@ const currentOptions = () => ({
 	sourceDirs: releaseDirs.map((dir) => ({ path: dir.path, ...(dir.offset.trim() ? { offset: Number(dir.offset) } : {}) })),
 	preferredSources: parseList(inputById("release-subs-preferred").value),
 	replaceWorse: inputById("release-subs-replace").checked,
+	mappings: mappingList(),
 });
 const isStale = () => !!scan && scannedWith !== JSON.stringify(currentOptions());
 
@@ -182,6 +191,7 @@ function renderRow(row: ReleaseRow, rowIndex: number): string {
 			${sources}
 			${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
 			${renderCheck(row)}
+			${(row.retags ?? []).map((r) => `<div class="release-row-retag" title="${escapeHtml(r.language)}">Renames a track to ${escapeHtml(r.title)} (${escapeHtml(r.language)})</div>`).join("")}
 		</th>
 		${row.cells.map((cell) => renderCell(row, rowIndex, cell)).join("")}
 	</tr>`;
@@ -194,7 +204,7 @@ function plannedRows() {
 		.filter((row) => row.sources.length)
 		.map((row) => {
 			const choices: Record<string, { sourcePath: string; trackId: number } | null> = {};
-			let changes = 0;
+			let changes = row.retags?.length ?? 0;
 			for (const cell of row.cells) {
 				if (!cell.candidates.length) continue;
 				const selected = selectionOf(row, cell);
@@ -204,6 +214,74 @@ function plannedRows() {
 			}
 			return { targetPath: row.targetPath, sourcePaths: row.sources.map((s) => s.path), choices, changes };
 		});
+}
+
+function renderMappings(): void {
+	const box = byId("release-subs-mapping");
+	if (!scan?.tracks?.length) {
+		box.innerHTML = "";
+		return;
+	}
+	const mapped = mappingList().length;
+	const rows = scan.tracks
+		.map((track, i) => {
+			const mapping = mappings.get(mappingId(track.language, track.title));
+			const auto = KIND_NAMES[track.kind] ?? "not copied";
+			const name = escapeHtml(track.title || "Untitled");
+			const tag = escapeHtml(track.language || "und");
+			const kinds = ["full", "honorifics", "sdh", "forced"]
+				.map((kind) => `<option value="${kind}" ${mapping?.kind === kind ? "selected" : ""}>${KIND_NAMES[kind]}</option>`)
+				.join("");
+			const found = [
+				track.releases ? `${track.releases} release file${track.releases === 1 ? "" : "s"}` : "",
+				track.encodes ? `${track.encodes} encode${track.encodes === 1 ? "" : "s"}` : "",
+			]
+				.filter(Boolean)
+				.join(", ");
+			return `<tr class="${mapping?.kind || mapping?.as ? "is-mapped" : ""}">
+				<td><div class="release-mapping-title">${name}</div><div class="release-mapping-meta">${tag} · ${escapeHtml(track.codec)}</div></td>
+				<td class="release-mapping-found">${escapeHtml(found)}</td>
+				<td><select class="select-input" data-map-kind="${i}" aria-label="Type of ${name}">
+					<option value="">Auto (${escapeHtml(auto)})</option>${kinds}<option value="ignore" ${mapping?.kind === "ignore" ? "selected" : ""}>Leave out</option>
+				</select></td>
+				<td><input class="repair-input" data-map-language="${i}" value="${escapeHtml(mapping?.as ?? "")}" maxlength="35" data-language-picker="single" data-language-codes="tag" data-language-empty="Keep ${tag}" aria-label="Language of ${name}"></td>
+			</tr>`;
+		})
+		.join("");
+	box.innerHTML = `<details class="release-subs-mapping" ${mappingsOpen || mapped ? "open" : ""}>
+		<summary>Track types${mapped ? ` · ${mapped} mapped` : ""}</summary>
+		<p class="repair-subtitle">Set what a track is when Rabbit reads it wrong, such as Alt Subtitles that are really Honorifics, or give it another language tag. A choice applies to every episode with a track of that language and name, in the releases and the encodes. The releases are then read again.</p>
+		<div class="release-mapping-scroll"><table class="release-grid release-mapping-table">
+			<thead><tr><th scope="col">Track</th><th scope="col">Found in</th><th scope="col">Type</th><th scope="col">Language tag</th></tr></thead>
+			<tbody>${rows}</tbody>
+		</table></div>
+	</details>`;
+}
+
+export function handleReleaseSubsMappingToggle(event: Event): void {
+	if (event.target instanceof HTMLDetailsElement) mappingsOpen = event.target.open;
+}
+
+export function handleReleaseSubsMappingChange(event: Event): void {
+	const element = event.target;
+	if (!scan || !(element instanceof HTMLSelectElement || element instanceof HTMLInputElement)) return;
+	const index = element.dataset.mapKind ?? element.dataset.mapLanguage;
+	const track = index === undefined ? undefined : scan.tracks[Number(index)];
+	if (!track) return;
+	const id = mappingId(track.language, track.title);
+	const mapping: ReleaseTrackMapping = { ...(mappings.get(id) ?? { language: track.language, title: track.title }) };
+	if (element.dataset.mapKind !== undefined) {
+		if (element.value) mapping.kind = element.value;
+		else delete mapping.kind;
+	} else {
+		const tag = element.value.trim();
+		if (tag && tag !== track.language) mapping.as = tag;
+		else delete mapping.as;
+	}
+	if (mapping.kind || mapping.as) mappings.set(id, mapping);
+	else mappings.delete(id);
+	mappingsOpen = true;
+	void scanReleaseSubs(true);
 }
 
 function renderGrid(): void {
@@ -257,6 +335,7 @@ export function openReleaseSubs(): void {
 	}
 	renderFolders();
 	renderGrid();
+	renderMappings();
 	byId("release-subs-modal").style.display = "";
 }
 
@@ -327,7 +406,12 @@ export function handleReleaseSubsOptionChange(): void {
 	renderGrid();
 }
 
-export async function scanReleaseSubs(): Promise<void> {
+/** With keep, the picks and turned off columns stay, as after changing a track mapping. */
+export async function scanReleaseSubs(keep = false): Promise<void> {
+	if (scanning) {
+		rescanQueued = true;
+		return;
+	}
 	setError("");
 	scanning = true;
 	renderFolders();
@@ -336,15 +420,32 @@ export async function scanReleaseSubs(): Promise<void> {
 	try {
 		scan = await fetchReleaseScan(options);
 		scannedWith = JSON.stringify(options);
-		selections = new Map();
-		excluded = new Set();
-		checks = new Map();
+		if (keep === true) {
+			// A mapping can move a track to another column, so drop picks of tracks a cell no longer offers.
+			for (const row of scan.rows) {
+				const byKey = selections.get(row.targetPath);
+				if (!byKey) continue;
+				for (const [key, value] of byKey) {
+					const cell = row.cells.find((c) => c.key === key);
+					if (value && !cell?.candidates.some((c) => candidateId(c) === value)) byKey.delete(key);
+				}
+			}
+		} else {
+			selections = new Map();
+			excluded = new Set();
+			checks = new Map();
+		}
 	} catch (error) {
 		setError(errorMessage(error));
 	} finally {
 		scanning = false;
 		renderFolders();
 		renderGrid();
+		renderMappings();
+	}
+	if (rescanQueued) {
+		rescanQueued = false;
+		await scanReleaseSubs(true);
 	}
 }
 
@@ -398,6 +499,7 @@ export async function queueReleaseSubs(): Promise<void> {
 			rows: rows.map(({ changes: _changes, ...row }) => row),
 			replaceTarget: byId<HTMLSelectElement>("release-subs-save-mode").value === "existing",
 			preferredSources: currentOptions().preferredSources,
+			mappings: mappingList(),
 		});
 		closeReleaseSubs();
 		await update();
