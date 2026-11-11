@@ -142,7 +142,7 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 				if (format !== "bitmap") {
 					const document = await documentFor(path, track.id, format, temp, signal);
 					input(raw);
-					return c.json({ format, cues: editorCues(document, format) });
+					return c.json({ format, cues: editorCues(document, format), document });
 				}
 				await bitmapFor(path, track.id, temp, signal);
 				const probe = JSON.parse(
@@ -271,7 +271,7 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 		let lockedPath = "";
 		let stage = "";
 		try {
-			const raw = (await c.req.json()) as { path: string; fingerprint: string; edits: SubtitleEditorEdit[] };
+			const raw = (await c.req.json()) as { path: string; fingerprint: string; edits: SubtitleEditorEdit[]; replaceTarget?: boolean };
 			const path = input(raw);
 			if (!Array.isArray(raw.edits) || !raw.edits.length || raw.edits.length > 128) throw new Error("Select subtitle changes to save");
 			const edits = raw.edits.map(validateEditorEdit);
@@ -324,10 +324,10 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 					throw new Error("Verification failed: output tracks differ from the source");
 				input(raw);
 				const name = parse(path);
-				const outputPath = resolveUniqueOutputPath(name.dir, `${name.name}.subtitles-edited.mkv`);
+				const outputPath = raw.replaceTarget === true ? path : resolveUniqueOutputPath(name.dir, `${name.name}.subtitles-edited.mkv`);
 				renameSync(stage, outputPath);
 				stage = "";
-				return c.json({ outputPath });
+				return c.json({ outputPath, replaced: outputPath === path });
 			});
 		} catch (error) {
 			return errorResponse(error);

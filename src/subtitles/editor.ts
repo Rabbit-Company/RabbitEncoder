@@ -15,6 +15,8 @@ export interface SubtitleEditorEdit {
 	trackId: number;
 	offsetMs: number;
 	cues: SubtitleEditorCue[];
+	/** A hand edited copy of the whole track. Offset and cue edits apply on top of it. */
+	document?: string;
 }
 
 export function editorFormat(codecId: string): SubtitleEditorFormat | null {
@@ -49,7 +51,9 @@ export function validateEditorEdit(raw: SubtitleEditorEdit): SubtitleEditorEdit 
 			throw new Error("Cue end cannot precede its start, with times between 0 and 24 hours");
 		if (typeof cue.text !== "string" || cue.text.length > 100_000 || cue.text.includes("\0")) throw new Error("Invalid subtitle text");
 	}
-	return { trackId: raw.trackId, offsetMs: Math.round(raw.offsetMs), cues: raw.cues };
+	if (raw.document !== undefined && (typeof raw.document !== "string" || raw.document.length > 50_000_000 || raw.document.includes("\0")))
+		throw new Error("Invalid raw subtitle file");
+	return { trackId: raw.trackId, offsetMs: Math.round(raw.offsetMs), cues: raw.cues, ...(raw.document !== undefined ? { document: raw.document } : {}) };
 }
 
 /** ASS/SSA timestamps store centiseconds, so quantize the track offset once. */
@@ -66,10 +70,21 @@ function timecode(ms: number, ass: boolean): string {
 	return `${ass ? hours : pad(hours)}:${pad(minutes)}:${pad(seconds)}${ass ? "." + pad(Math.floor((value % 1000) / 10)) : "," + pad(value % 1000, 3)}`;
 }
 
+/** The 0 based line each cue starts on, used to scroll the raw view to a cue. */
+export function editorCueLines(document: string, format: SubtitleEditorFormat): number[] {
+	if (format !== "srt") return editorCues(document, format).map((cue) => cue.id);
+	const lines: number[] = [];
+	document.split(/\r?\n/).forEach((line, index) => {
+		if (/^\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->/.test(line)) lines.push(index);
+	});
+	return lines;
+}
+
 /** Changes actual cue timestamps, preserving ASS styles, tags, actors and event fields. */
-export function editSubtitleDocument(document: string, format: SubtitleEditorFormat, raw: SubtitleEditorEdit): string {
+export function editSubtitleDocument(extracted: string, format: SubtitleEditorFormat, raw: SubtitleEditorEdit): string {
 	if (format === "bitmap") throw new Error("Bitmap subtitles require a track delay");
 	const edit = validateEditorEdit(raw);
+	const document = edit.document ?? extracted;
 	const offset = effectiveEditorOffset(edit.offsetMs, format);
 	const originals = editorCues(document, format);
 	const known = new Set(originals.map((cue) => cue.id));

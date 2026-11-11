@@ -211,6 +211,22 @@ Dialogue: 0,0:00:07.00,0:00:07.00,Default,,0,0,0,,Zero-length dummy
 			const secondSave = await post("save", { edits });
 			expect(secondSave.status).toBe(200);
 			expect(((await secondSave.json()) as any).outputPath).toEndWith(".subtitles-edited (2).mkv");
+			const replacePath = join(root, "replace.mkv");
+			writeFileSync(replacePath, readFileSync(output));
+			const replaceFile = (await (
+				await app.handle(new Request(`http://localhost/api/subtitle-editor/inspect?${new URLSearchParams({ path: replacePath })}`))
+			).json()) as any;
+			const rawDocument = readFileSync(join(root, "saved.srt"), "utf8").replace("Edited SRT", "Raw replaced");
+			const replaced = await post("save", {
+				path: replacePath,
+				fingerprint: replaceFile.fingerprint,
+				edits: [{ trackId: replaceFile.subtitles[0].id, offsetMs: 0, cues: [], document: rawDocument }],
+				replaceTarget: true,
+			});
+			if (replaced.status !== 200) throw new Error(await replaced.text());
+			expect(await replaced.json()).toEqual({ outputPath: replacePath, replaced: true });
+			await command(["mkvextract", replacePath, "tracks", `${replaceFile.subtitles[0].id}:replaced.srt`]);
+			expect(readFileSync(join(root, "replaced.srt"), "utf8")).toContain("Raw replaced");
 			await command(["ffmpeg", "-v", "error", "-i", path, "-map", "0:v", "-map", "0:s", "-c", "copy", "silent.mkv"]);
 			const silentPath = join(root, "silent.mkv");
 			const silentFile = (await (

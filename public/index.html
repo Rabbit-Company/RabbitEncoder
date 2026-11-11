@@ -1594,6 +1594,15 @@
 								<p class="repair-subtitle">
 									Positive offsets show subtitles later. Negative offsets show them earlier. The offset applies to every cue in this track.
 								</p>
+								<div class="subtitle-editor-view">
+									<div id="subtitle-editor-view-tabs" class="subtitle-editor-view-tabs" role="group" aria-label="Editor view">
+										<button class="btn btn-ghost btn-sm" id="subtitle-editor-view-cues" aria-pressed="true">Cues</button
+										><button class="btn btn-ghost btn-sm" id="subtitle-editor-view-raw" aria-pressed="false">Raw file</button>
+									</div>
+									<label class="toggle-label subtitle-editor-video-toggle"
+										><input type="checkbox" id="subtitle-editor-video-toggle" checked /><span>Video preview</span></label
+									>
+								</div>
 								<div id="subtitle-editor-cue-fields" style="display: none">
 									<div class="subtitle-editor-find">
 										<input
@@ -1602,10 +1611,7 @@
 											type="search"
 											placeholder="Go to a time like 05:41 or find text"
 											aria-label="Go to a time or find subtitle text"
-										/><button class="btn btn-ghost" id="subtitle-editor-find-btn">Find</button
-										><label class="toggle-label subtitle-editor-video-toggle"
-											><input type="checkbox" id="subtitle-editor-video-toggle" checked /><span>Video preview</span></label
-										>
+										/><button class="btn btn-ghost" id="subtitle-editor-find-btn">Find</button>
 									</div>
 									<div class="subtitle-editor-navigation">
 										<button class="btn btn-ghost" id="subtitle-editor-previous">← Previous</button
@@ -1629,21 +1635,28 @@
 									<label
 										>Subtitle text<textarea class="repair-input" id="subtitle-editor-text" rows="3" maxlength="100000" spellcheck="false"></textarea>
 									</label>
-									<div id="subtitle-editor-loop">
-										<div class="subtitle-editor-loop-settings">
-											<label
-												>Seconds before cue<input class="repair-input" type="number" id="subtitle-editor-before" min="0" max="60" step="0.5" value="3"
-											/></label>
-											<label
-												>Seconds after cue<input class="repair-input" type="number" id="subtitle-editor-after" min="0" max="60" step="0.5" value="3"
-											/></label>
-											<label>Loop start (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-start" min="0" step="0.1" /></label>
-											<label
-												>Loop duration (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-duration" min="0.1" max="120" step="0.1"
-											/></label>
-										</div>
-										<button class="btn btn-ghost btn-sm" id="subtitle-editor-cue-loop">Reset loop around cue</button>
+								</div>
+								<div id="subtitle-editor-raw-fields" style="display: none">
+									<p class="repair-subtitle">
+										This is the whole track as it will be saved, with cue edits and the track offset already applied. Changes here replace the track. The
+										preview loops around the cue at the cursor.
+									</p>
+									<textarea class="repair-input" id="subtitle-editor-raw" rows="22" wrap="off" spellcheck="false" aria-label="Raw subtitle file"></textarea>
+								</div>
+								<div id="subtitle-editor-loop">
+									<div class="subtitle-editor-loop-settings">
+										<label
+											>Seconds before cue<input class="repair-input" type="number" id="subtitle-editor-before" min="0" max="60" step="0.5" value="3"
+										/></label>
+										<label
+											>Seconds after cue<input class="repair-input" type="number" id="subtitle-editor-after" min="0" max="60" step="0.5" value="3"
+										/></label>
+										<label>Loop start (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-start" min="0" step="0.1" /></label>
+										<label
+											>Loop duration (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-duration" min="0.1" max="120" step="0.1"
+										/></label>
 									</div>
+									<button class="btn btn-ghost btn-sm" id="subtitle-editor-cue-loop">Reset loop around cue</button>
 								</div>
 							</fieldset>
 						</div>
@@ -1651,8 +1664,13 @@
 						<p id="subtitle-editor-output" class="subtitle-editor-output"></p>
 					</div>
 					<div class="modal-footer">
-						<span class="modal-note">Save creates a separate *.subtitles-edited.mkv next to the source.</span
-						><button class="btn btn-primary" id="subtitle-editor-save" disabled>Save edited MKV</button>
+						<label class="repair-batch-save"
+							>Save changes to
+							<select class="select-input" id="subtitle-editor-save-mode">
+								<option value="existing" selected>Existing MKV file</option>
+								<option value="copy">New *.subtitles-edited.mkv copy</option>
+							</select></label
+						><button class="btn btn-primary" id="subtitle-editor-save" disabled>Save changes</button>
 					</div>
 				</div>
 			</div>

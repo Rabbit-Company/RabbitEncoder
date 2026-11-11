@@ -4,7 +4,16 @@ import { byId, buttonById, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openSubtitleFilePicker } from "./repair";
 import type { RepairInspectionFile } from "../types";
-import { editorFormat, effectiveEditorOffset, type SubtitleEditorCue, type SubtitleEditorEdit, type SubtitleEditorFormat } from "../../src/subtitles/editor";
+import {
+	editSubtitleDocument,
+	editorCueLines,
+	editorCues,
+	editorFormat,
+	effectiveEditorOffset,
+	type SubtitleEditorCue,
+	type SubtitleEditorEdit,
+	type SubtitleEditorFormat,
+} from "../../src/subtitles/editor";
 
 interface LoadedTrack {
 	format: SubtitleEditorFormat;
@@ -12,6 +21,9 @@ interface LoadedTrack {
 	changes: Map<number, SubtitleEditorCue>;
 	offsetMs: number;
 	selected: number;
+	/** The extracted track, replaced by the raw view text once that is edited. */
+	document?: string;
+	documentEdited: boolean;
 }
 let file: (RepairInspectionFile & { fingerprint: string }) | null = null;
 const tracks = new Map<number, LoadedTrack>();
@@ -25,6 +37,9 @@ let previewUrl = "";
 let saving = false;
 let invalid = false;
 let manualLoop = false;
+let rawView = false;
+let rawBaseline = "";
+let rawPending = false;
 
 const video = () => byId<HTMLVideoElement>("subtitle-editor-video");
 const current = () => tracks.get(trackId);
@@ -33,15 +48,18 @@ const effectiveCue = (track: LoadedTrack, index: number) => {
 	return cue ? track.changes.get(cue.id) || cue : undefined;
 };
 const select = (id: string) => byId<HTMLSelectElement>(id);
+const rawArea = () => byId<HTMLTextAreaElement>("subtitle-editor-raw");
+const showingRaw = () => rawView && !!current() && current()!.format !== "bitmap";
 const VIDEO_STORAGE_KEY = "rabbit-subtitle-editor-video";
 let videoEnabled = localStorage.getItem(VIDEO_STORAGE_KEY) !== "0";
 const plainText = (text: string) => text.replace(/\{[^}]*\}/g, "").replace(/\\[Nn]/g, " ");
 
-function formatCueTime(ms: number): string {
-	const total = Math.floor(Math.max(0, ms) / 1000);
+function formatCueTime(ms: number, precise = false): string {
+	const clamped = Math.max(0, ms);
+	const total = Math.floor(clamped / 1000);
 	const pad = (n: number) => String(n).padStart(2, "0");
 	const hours = Math.floor(total / 3600);
-	const clock = `${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+	const clock = `${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}${precise ? `.${pad(Math.floor((clamped % 1000) / 10))}` : ""}`;
 	return hours ? `${hours}:${clock}` : clock;
 }
 function parseCueTime(value: string): number | null {
@@ -59,10 +77,11 @@ function status(message: string): void {
 	byId("subtitle-editor-status").textContent = message;
 }
 function updateSave(): void {
-	buttonById("subtitle-editor-save").disabled = saving || invalid || !file || ![...tracks.values()].some((track) => track.offsetMs || track.changes.size);
+	buttonById("subtitle-editor-save").disabled =
+		saving || invalid || !file || !(rawPending || [...tracks.values()].some((track) => track.offsetMs || track.changes.size || track.documentEdited));
 }
 function editFor(id: number, track: LoadedTrack): SubtitleEditorEdit {
-	return { trackId: id, offsetMs: track.offsetMs, cues: [...track.changes.values()] };
+	return { trackId: id, offsetMs: track.offsetMs, cues: [...track.changes.values()], ...(track.documentEdited ? { document: track.document } : {}) };
 }
 async function jsonRequest(route: string, body: unknown, signal?: AbortSignal): Promise<any> {
 	const response = await authFetch(`${API}/api/subtitle-editor/${route}`, {
@@ -108,7 +127,7 @@ export function pickSubtitleEditorFile(): void {
 	if (saving) return;
 	openSubtitleFilePicker(loadFile);
 }
-async function loadFile(path: string): Promise<void> {
+async function loadFile(path: string, restore?: { trackId: number; selected: number }): Promise<void> {
 	const version = ++generation;
 	loadingAbort?.abort();
 	loadingAbort = new AbortController();
@@ -142,9 +161,11 @@ async function loadFile(path: string): Promise<void> {
 			status("No supported subtitles in this MKV.");
 			return;
 		}
-		options.value = String(first.id);
+		const restored = restore && file!.subtitles.find((track) => track.id === restore.trackId && editorFormat(track.codecId));
+		const chosen = restored || first;
+		options.value = String(chosen.id);
 		byId("subtitle-editor-workspace").style.display = "";
-		await loadTrack(first.id);
+		await loadTrack(chosen.id, restored ? restore.selected : undefined);
 	} catch (error) {
 		if (version === generation) {
 			setError(errorMessage(error));
@@ -153,7 +174,7 @@ async function loadFile(path: string): Promise<void> {
 	}
 }
 
-async function loadTrack(id: number): Promise<void> {
+async function loadTrack(id: number, initialCue?: number): Promise<void> {
 	if (!file) return;
 	const version = ++generation;
 	loadingAbort?.abort();
@@ -163,7 +184,7 @@ async function loadTrack(id: number): Promise<void> {
 	trackId = id;
 	invalid = false;
 	setError("");
-	byId("subtitle-editor-cue-fields").style.display = "none";
+	applyView();
 	try {
 		if (!tracks.has(id)) {
 			status("Extracting subtitle cues...");
@@ -172,8 +193,9 @@ async function loadTrack(id: number): Promise<void> {
 			const cues: SubtitleEditorCue[] = data.cues;
 			let selected = 0;
 			const midpoint = file.durationSeconds * 500;
-			for (let i = 1; i < cues.length; i++) if (Math.abs(cues[i]!.startMs - midpoint) < Math.abs(cues[selected]!.startMs - midpoint)) selected = i;
-			tracks.set(id, { format: data.format, cues, changes: new Map(), offsetMs: 0, selected });
+			if (initialCue !== undefined && cues.length) selected = Math.min(initialCue, cues.length - 1);
+			else for (let i = 1; i < cues.length; i++) if (Math.abs(cues[i]!.startMs - midpoint) < Math.abs(cues[selected]!.startMs - midpoint)) selected = i;
+			tracks.set(id, { format: data.format, cues, changes: new Map(), offsetMs: 0, selected, document: data.document, documentEdited: false });
 		}
 		if (version !== generation) return;
 		const track = current()!;
@@ -182,17 +204,23 @@ async function loadTrack(id: number): Promise<void> {
 			track.format === "bitmap"
 				? "Bitmap subtitles use a track delay. Text and individual image cue times cannot be edited."
 				: `${track.format.toUpperCase()} cue times are rewritten directly. ${track.format !== "srt" ? "ASS styles and override tags are preserved. Use \\N for line breaks. Offsets are rounded to the nearest 10 ms." : ""}`;
-		const cues = select("subtitle-editor-cues");
-		cues.replaceChildren();
-		track.cues.forEach((cue, i) =>
-			cues.add(new Option(`${i + 1} · ${formatCueTime(cue.startMs)} · ${cue.name ? `${cue.name}: ` : ""}${plainText(cue.text).slice(0, 90)}`, String(i))),
-		);
+		renderCueList(track);
+		if (showingRaw()) {
+			showRaw(track);
+			if (track.cues.length) {
+				manualLoop = false;
+				loopFromCue();
+				schedulePreview();
+			} else status("This subtitle track has no cues.");
+			updateSave();
+			return;
+		}
+		applyView();
 		if (!track.cues.length) {
 			status("This subtitle track has no cues.");
 			updateSave();
 			return;
 		}
-		byId("subtitle-editor-cue-fields").style.display = "";
 		renderCue();
 	} catch (error) {
 		if (version === generation) {
@@ -200,6 +228,115 @@ async function loadTrack(id: number): Promise<void> {
 			status("");
 		}
 	}
+}
+
+function renderCueList(track: LoadedTrack): void {
+	const cues = select("subtitle-editor-cues");
+	cues.replaceChildren();
+	track.cues.forEach((cue, i) =>
+		cues.add(new Option(`${i + 1} · ${formatCueTime(cue.startMs)} · ${cue.name ? `${cue.name}: ` : ""}${plainText(cue.text).slice(0, 90)}`, String(i))),
+	);
+}
+function applyView(): void {
+	const track = current();
+	const raw = showingRaw();
+	const hasCues = !!track?.cues.length;
+	byId("subtitle-editor-view-tabs").style.display = track && track.format !== "bitmap" ? "" : "none";
+	byId("subtitle-editor-view-cues").setAttribute("aria-pressed", String(!raw));
+	byId("subtitle-editor-view-raw").setAttribute("aria-pressed", String(raw));
+	byId("subtitle-editor-cue-fields").style.display = !raw && hasCues ? "" : "none";
+	byId("subtitle-editor-raw-fields").style.display = raw ? "" : "none";
+	inputById("subtitle-editor-offset").disabled = raw;
+	inputById("subtitle-editor-video-toggle").checked = videoEnabled;
+	video().style.display = videoEnabled ? "" : "none";
+	byId("subtitle-editor-loop").style.display = videoEnabled && hasCues ? "" : "none";
+}
+
+/** Fills the raw view with the track as it would be saved now. */
+function showRaw(track: LoadedTrack): void {
+	const text = editSubtitleDocument(track.document || "", track.format, editFor(trackId, track));
+	rawArea().value = text;
+	rawBaseline = text;
+	rawPending = false;
+	applyView();
+	const line = editorCueLines(text, track.format)[track.selected];
+	if (line !== undefined) scrollRawToLine(line);
+}
+function scrollRawToLine(line: number): void {
+	const area = rawArea();
+	let index = 0;
+	for (let i = 0; i < line; i++) {
+		const next = area.value.indexOf("\n", index);
+		if (next < 0) break;
+		index = next + 1;
+	}
+	area.focus({ preventScroll: true });
+	area.setSelectionRange(index, index);
+	const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 18;
+	area.scrollTop = Math.max(0, line * lineHeight - area.clientHeight / 3);
+	area.scrollLeft = 0;
+}
+function selectCueAtCursor(track: LoadedTrack): void {
+	const area = rawArea();
+	const line = area.value.slice(0, area.selectionStart).split("\n").length - 1;
+	const lines = editorCueLines(area.value, track.format);
+	let selected = 0;
+	for (let i = 0; i < lines.length && i < track.cues.length; i++) if (lines[i]! <= line) selected = i;
+	track.selected = Math.min(selected, Math.max(0, track.cues.length - 1));
+}
+/** Makes the raw view text the track's document. Cue edits and the offset are already baked into it. */
+function commitRaw(): boolean {
+	const track = current();
+	if (!track || !showingRaw()) return true;
+	const text = rawArea().value;
+	if (text !== rawBaseline) {
+		let cues: SubtitleEditorCue[];
+		try {
+			editSubtitleDocument(text, track.format, { trackId, offsetMs: 0, cues: [] });
+			cues = editorCues(text, track.format);
+		} catch (error) {
+			invalid = true;
+			stopPreview();
+			setError(`The raw file cannot be read: ${errorMessage(error)}`);
+			updateSave();
+			return false;
+		}
+		track.document = text;
+		track.documentEdited = true;
+		track.changes.clear();
+		track.offsetMs = 0;
+		track.cues = cues;
+		inputById("subtitle-editor-offset").value = "0";
+		rawBaseline = text;
+		renderCueList(track);
+		applyView();
+	}
+	rawPending = false;
+	invalid = false;
+	setError("");
+	selectCueAtCursor(track);
+	updateSave();
+	return true;
+}
+function setRawView(enabled: boolean): void {
+	const track = current();
+	if (!track || enabled === showingRaw()) return;
+	if (enabled) {
+		if (!captureCue()) return;
+		try {
+			rawView = true;
+			showRaw(track);
+		} catch (error) {
+			rawView = false;
+			applyView();
+			setError(errorMessage(error));
+		}
+		return;
+	}
+	if (!commitRaw()) return;
+	rawView = false;
+	applyView();
+	if (track.cues.length) renderCue();
 }
 
 function loopFromCue(): void {
@@ -216,6 +353,12 @@ function loopFromCue(): void {
 	inputById("subtitle-editor-loop-start").value = start.toFixed(3);
 	inputById("subtitle-editor-loop-duration").value = Math.max(0.1, Math.min(120, end - start)).toFixed(3);
 }
+function renderCueLabel(): void {
+	const track = current()!;
+	const cue = effectiveCue(track, track.selected)!;
+	byId("subtitle-editor-cue-label").textContent =
+		`Cue ${track.selected + 1} of ${track.cues.length} · ${formatCueTime(cue.startMs, true)} to ${formatCueTime(cue.endMs, true)}${cue.style ? ` · ${cue.style}` : ""}${cue.name ? ` · Speaker: ${cue.name}` : ""}`;
+}
 function renderCue(): void {
 	const track = current()!;
 	const cue = effectiveCue(track, track.selected)!;
@@ -227,8 +370,7 @@ function renderCue(): void {
 		(byId(id) as HTMLInputElement).disabled = track.format === "bitmap";
 	buttonById("subtitle-editor-previous").disabled = track.selected === 0;
 	buttonById("subtitle-editor-next").disabled = track.selected === track.cues.length - 1;
-	byId("subtitle-editor-cue-label").textContent =
-		`Cue ${track.selected + 1} of ${track.cues.length} · ${formatCueTime(cue.startMs)} to ${formatCueTime(cue.endMs)}${cue.style ? ` · ${cue.style}` : ""}${cue.name ? ` · Speaker: ${cue.name}` : ""}`;
+	renderCueLabel();
 	manualLoop = false;
 	invalid = false;
 	try {
@@ -242,7 +384,7 @@ function renderCue(): void {
 
 function captureCue(): boolean {
 	const track = current();
-	if (!track) return true;
+	if (!track || showingRaw()) return true;
 	const offsetInput = inputById("subtitle-editor-offset");
 	const offset = Number(offsetInput.value);
 	if (!offsetInput.value || !Number.isFinite(offset) || Math.abs(offset) > 86_400_000) {
@@ -302,6 +444,15 @@ function schedulePreview(): void {
 }
 async function refreshPreview(): Promise<void> {
 	const track = current();
+	if (showingRaw() && track) {
+		if (!commitRaw()) return;
+		try {
+			if (!manualLoop) loopFromCue();
+		} catch (error) {
+			setError(errorMessage(error));
+			return;
+		}
+	}
 	if (!file || !track || !track.cues.length || invalid || !videoEnabled) return;
 	const version = ++previewGeneration;
 	previewAbort?.abort();
@@ -384,15 +535,10 @@ function findCue(): void {
 	status(`No cue contains "${query}".`);
 }
 
-function applyVideoEnabled(): void {
-	inputById("subtitle-editor-video-toggle").checked = videoEnabled;
-	video().style.display = videoEnabled ? "" : "none";
-	byId("subtitle-editor-loop").style.display = videoEnabled ? "" : "none";
-}
 function setVideoEnabled(enabled: boolean): void {
 	videoEnabled = enabled;
 	localStorage.setItem(VIDEO_STORAGE_KEY, enabled ? "1" : "0");
-	applyVideoEnabled();
+	applyView();
 	if (!enabled) {
 		stopPreview();
 		clearVideo();
@@ -400,8 +546,10 @@ function setVideoEnabled(enabled: boolean): void {
 	if (current()?.cues.length && !invalid) schedulePreview();
 }
 async function save(): Promise<void> {
-	if (!file || saving || !captureCue()) return;
-	const edits = [...tracks.entries()].filter(([, track]) => track.offsetMs || track.changes.size).map(([id, track]) => editFor(id, track));
+	if (!file || saving || !commitRaw() || !captureCue()) return;
+	const edits = [...tracks.entries()]
+		.filter(([, track]) => track.offsetMs || track.changes.size || track.documentEdited)
+		.map(([id, track]) => editFor(id, track));
 	if (!edits.length) return;
 	saving = true;
 	stopPreview();
@@ -412,9 +560,15 @@ async function save(): Promise<void> {
 	setError("");
 	status("Saving subtitle changes and verifying MKV...");
 	try {
-		const data = await jsonRequest("save", { path: file.path, fingerprint: file.fingerprint, edits });
-		byId("subtitle-editor-output").textContent = `Saved: ${data.outputPath}`;
-		status("Saved. Video and audio were copied unchanged.");
+		const replaceTarget = select("subtitle-editor-save-mode").value === "existing";
+		const data = await jsonRequest("save", { path: file.path, fingerprint: file.fingerprint, edits, replaceTarget });
+		if (data.replaced) {
+			// The file on disk changed, so reopen it to pick up the saved tracks and new fingerprint.
+			saving = false;
+			await loadFile(file.path, { trackId, selected: current()?.selected ?? 0 });
+		}
+		byId("subtitle-editor-output").textContent = data.replaced ? `Replaced: ${data.outputPath}` : `Saved: ${data.outputPath}`;
+		status(`${data.replaced ? "Replaced after verification" : "Saved"}. Video and audio were copied unchanged.`);
 	} catch (error) {
 		setError(errorMessage(error));
 		status("");
@@ -436,7 +590,7 @@ export function initSubtitleEditor(): void {
 	byId("subtitle-editor-pick").addEventListener("click", pickSubtitleEditorFile);
 	byId("subtitle-editor-save").addEventListener("click", save);
 	select("subtitle-editor-track").addEventListener("change", () => {
-		if (!captureCue()) {
+		if (!commitRaw() || !captureCue()) {
 			select("subtitle-editor-track").value = String(trackId);
 			return;
 		}
@@ -451,11 +605,19 @@ export function initSubtitleEditor(): void {
 		event.preventDefault();
 		findCue();
 	});
-	applyVideoEnabled();
+	applyView();
+	byId("subtitle-editor-view-cues").addEventListener("click", () => setRawView(false));
+	byId("subtitle-editor-view-raw").addEventListener("click", () => setRawView(true));
+	byId("subtitle-editor-raw").addEventListener("input", () => {
+		rawPending = true;
+		updateSave();
+		schedulePreview();
+	});
 	byId("subtitle-editor-video-toggle").addEventListener("change", () => setVideoEnabled(inputById("subtitle-editor-video-toggle").checked));
 	for (const id of ["subtitle-editor-cue-start", "subtitle-editor-cue-end", "subtitle-editor-text"])
 		byId(id).addEventListener("input", () => {
 			if (!captureCue()) return;
+			renderCueLabel();
 			try {
 				if (!manualLoop) loopFromCue();
 				schedulePreview();

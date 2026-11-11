@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { editSubtitleDocument, editorCues, editorFormat, effectiveEditorOffset, previewAssDocument, validateEditorEdit } from "../../src/subtitles/editor";
+import {
+	editSubtitleDocument,
+	editorCueLines,
+	editorCues,
+	editorFormat,
+	effectiveEditorOffset,
+	previewAssDocument,
+	validateEditorEdit,
+} from "../../src/subtitles/editor";
 
 const srt = "1\n00:00:01,000 --> 00:00:02,000 align:start\nHello\n\n2\n00:00:04,000 --> 00:00:06,000\nTwo\nlines\n";
 const ass = `[Script Info]
@@ -13,6 +21,20 @@ Comment: 0,0:00:02.00,0:00:04.00,Sign,,0,0,0,,A comment
 `;
 
 describe("subtitle editor documents", () => {
+	test("uses a hand edited raw document in place of the extracted track", () => {
+		const raw = ass.replace("Hello, world", "Hand edited").replace("[Script Info]", "[Script Info]\nTitle: Raw");
+		const out = editSubtitleDocument(ass, "ass", { trackId: 2, offsetMs: 0, cues: [], document: raw });
+		expect(out).toBe(raw);
+		const cue = editorCues(raw, "ass")[0]!;
+		expect(editSubtitleDocument(ass, "ass", { trackId: 2, offsetMs: 100, cues: [{ ...cue, text: "Then cue edited" }], document: raw })).toContain(
+			"Dialogue: 2,0:00:01.10,0:00:03.10,Sign,Actor,10,20,30,,Then cue edited",
+		);
+		expect(() => validateEditorEdit({ trackId: 2, offsetMs: 0, cues: [], document: "bad\0" })).toThrow("Invalid raw subtitle file");
+	});
+	test("finds the line each cue starts on for the raw view", () => {
+		expect(editorCueLines(srt, "srt")).toEqual([1, 5]);
+		expect(editorCueLines(ass, "ass")).toEqual([6]);
+	});
 	test("rewrites SRT timing lines and applies one absolute offset to original and edited cues", () => {
 		const cues = editorCues(srt, "srt");
 		const edit = { trackId: 2, offsetMs: 1250, cues: [{ ...cues[1]!, startMs: 4500, text: "Edited\nline" }] };

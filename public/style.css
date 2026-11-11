@@ -1904,11 +1904,45 @@ a.btn {
 	gap: 12px;
 	margin: 12px 0;
 }
+.subtitle-editor-view {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 14px;
+}
+.subtitle-editor-view-tabs {
+	display: flex;
+}
+.subtitle-editor-view-tabs button:first-child {
+	border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+.subtitle-editor-view-tabs button:last-child {
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	margin-left: -1px;
+}
+.subtitle-editor-view-tabs button[aria-pressed="true"] {
+	position: relative;
+	background: var(--accent-glow);
+	border-color: var(--accent);
+	color: var(--text-0);
+}
+#subtitle-editor-raw {
+	display: block;
+	width: 100%;
+	margin-top: 8px;
+	resize: vertical;
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	line-height: 1.5;
+	white-space: pre;
+	overflow: auto;
+}
 .subtitle-editor-find {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	margin-top: 14px;
+	margin-top: 12px;
 }
 .subtitle-editor-find input {
 	flex: 1;
