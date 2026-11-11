@@ -33,6 +33,23 @@ const effectiveCue = (track: LoadedTrack, index: number) => {
 	return cue ? track.changes.get(cue.id) || cue : undefined;
 };
 const select = (id: string) => byId<HTMLSelectElement>(id);
+const VIDEO_STORAGE_KEY = "rabbit-subtitle-editor-video";
+let videoEnabled = localStorage.getItem(VIDEO_STORAGE_KEY) !== "0";
+const plainText = (text: string) => text.replace(/\{[^}]*\}/g, "").replace(/\\[Nn]/g, " ");
+
+function formatCueTime(ms: number): string {
+	const total = Math.floor(Math.max(0, ms) / 1000);
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const hours = Math.floor(total / 3600);
+	const clock = `${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+	return hours ? `${hours}:${clock}` : clock;
+}
+function parseCueTime(value: string): number | null {
+	const match = /^(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?$/.exec(value.trim());
+	if (!match) return null;
+	const [, hours = "0", minutes, seconds, fraction = ""] = match;
+	return (Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds)) * 1000 + Number(fraction.padEnd(3, "0"));
+}
 
 function setError(message: string): void {
 	byId("subtitle-editor-error").textContent = message;
@@ -168,12 +185,7 @@ async function loadTrack(id: number): Promise<void> {
 		const cues = select("subtitle-editor-cues");
 		cues.replaceChildren();
 		track.cues.forEach((cue, i) =>
-			cues.add(
-				new Option(
-					`${i + 1} · ${(cue.startMs / 1000).toFixed(2)}s · ${cue.name ? `${cue.name}: ` : ""}${cue.text.replace(/\{[^}]*\}/g, "").slice(0, 90)}`,
-					String(i),
-				),
-			),
+			cues.add(new Option(`${i + 1} · ${formatCueTime(cue.startMs)} · ${cue.name ? `${cue.name}: ` : ""}${plainText(cue.text).slice(0, 90)}`, String(i))),
 		);
 		if (!track.cues.length) {
 			status("This subtitle track has no cues.");
@@ -216,7 +228,7 @@ function renderCue(): void {
 	buttonById("subtitle-editor-previous").disabled = track.selected === 0;
 	buttonById("subtitle-editor-next").disabled = track.selected === track.cues.length - 1;
 	byId("subtitle-editor-cue-label").textContent =
-		`Cue ${track.selected + 1} of ${track.cues.length}${cue.style ? ` · ${cue.style}` : ""}${cue.name ? ` · Speaker: ${cue.name}` : ""}`;
+		`Cue ${track.selected + 1} of ${track.cues.length} · ${formatCueTime(cue.startMs)} to ${formatCueTime(cue.endMs)}${cue.style ? ` · ${cue.style}` : ""}${cue.name ? ` · Speaker: ${cue.name}` : ""}`;
 	manualLoop = false;
 	invalid = false;
 	try {
@@ -281,12 +293,16 @@ function captureCue(): boolean {
 
 function schedulePreview(): void {
 	stopPreview();
+	if (!videoEnabled) {
+		status("Video preview is off.");
+		return;
+	}
 	status("Updating preview...");
 	previewTimer = setTimeout(() => void refreshPreview(), 500);
 }
 async function refreshPreview(): Promise<void> {
 	const track = current();
-	if (!file || !track || !track.cues.length || invalid) return;
+	if (!file || !track || !track.cues.length || invalid || !videoEnabled) return;
 	const version = ++previewGeneration;
 	previewAbort?.abort();
 	previewAbort = new AbortController();
@@ -339,6 +355,50 @@ function navigate(index: number): void {
 	track.selected = Math.max(0, Math.min(track.cues.length - 1, index));
 	renderCue();
 }
+
+function findCue(): void {
+	const track = current();
+	const query = inputById("subtitle-editor-find").value.trim();
+	if (!track || !track.cues.length || !query) return;
+	const timeMs = parseCueTime(query);
+	if (timeMs !== null) {
+		const offset = effectiveEditorOffset(track.offsetMs, track.format);
+		const distance = (index: number) => {
+			const cue = effectiveCue(track, index)!;
+			return Math.max(0, cue.startMs + offset - (timeMs + 999), timeMs - (cue.endMs + offset));
+		};
+		let best = 0;
+		for (let i = 1; i < track.cues.length; i++) if (distance(i) < distance(best)) best = i;
+		navigate(best);
+		return;
+	}
+	const needle = query.toLocaleLowerCase();
+	for (let step = 1; step <= track.cues.length; step++) {
+		const index = (track.selected + step) % track.cues.length;
+		const cue = effectiveCue(track, index)!;
+		if (`${cue.name} ${plainText(cue.text)}`.toLocaleLowerCase().includes(needle)) {
+			navigate(index);
+			return;
+		}
+	}
+	status(`No cue contains "${query}".`);
+}
+
+function applyVideoEnabled(): void {
+	inputById("subtitle-editor-video-toggle").checked = videoEnabled;
+	video().style.display = videoEnabled ? "" : "none";
+	byId("subtitle-editor-loop").style.display = videoEnabled ? "" : "none";
+}
+function setVideoEnabled(enabled: boolean): void {
+	videoEnabled = enabled;
+	localStorage.setItem(VIDEO_STORAGE_KEY, enabled ? "1" : "0");
+	applyVideoEnabled();
+	if (!enabled) {
+		stopPreview();
+		clearVideo();
+	}
+	if (current()?.cues.length && !invalid) schedulePreview();
+}
 async function save(): Promise<void> {
 	if (!file || saving || !captureCue()) return;
 	const edits = [...tracks.entries()].filter(([, track]) => track.offsetMs || track.changes.size).map(([id, track]) => editFor(id, track));
@@ -385,6 +445,14 @@ export function initSubtitleEditor(): void {
 	select("subtitle-editor-cues").addEventListener("change", () => navigate(Number(select("subtitle-editor-cues").value)));
 	byId("subtitle-editor-previous").addEventListener("click", () => navigate((current()?.selected || 0) - 1));
 	byId("subtitle-editor-next").addEventListener("click", () => navigate((current()?.selected || 0) + 1));
+	byId("subtitle-editor-find-btn").addEventListener("click", findCue);
+	byId("subtitle-editor-find").addEventListener("keydown", (event) => {
+		if (event.key !== "Enter") return;
+		event.preventDefault();
+		findCue();
+	});
+	applyVideoEnabled();
+	byId("subtitle-editor-video-toggle").addEventListener("change", () => setVideoEnabled(inputById("subtitle-editor-video-toggle").checked));
 	for (const id of ["subtitle-editor-cue-start", "subtitle-editor-cue-end", "subtitle-editor-text"])
 		byId(id).addEventListener("input", () => {
 			if (!captureCue()) return;

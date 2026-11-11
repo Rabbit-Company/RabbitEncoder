@@ -1595,6 +1595,18 @@
 									Positive offsets show subtitles later. Negative offsets show them earlier. The offset applies to every cue in this track.
 								</p>
 								<div id="subtitle-editor-cue-fields" style="display: none">
+									<div class="subtitle-editor-find">
+										<input
+											class="repair-input"
+											id="subtitle-editor-find"
+											type="search"
+											placeholder="Go to a time like 05:41 or find text"
+											aria-label="Go to a time or find subtitle text"
+										/><button class="btn btn-ghost" id="subtitle-editor-find-btn">Find</button
+										><label class="toggle-label subtitle-editor-video-toggle"
+											><input type="checkbox" id="subtitle-editor-video-toggle" checked /><span>Video preview</span></label
+										>
+									</div>
 									<div class="subtitle-editor-navigation">
 										<button class="btn btn-ghost" id="subtitle-editor-previous">← Previous</button
 										><select class="select-input" id="subtitle-editor-cues" aria-label="Select subtitle cue"></select
@@ -1617,19 +1629,21 @@
 									<label
 										>Subtitle text<textarea class="repair-input" id="subtitle-editor-text" rows="3" maxlength="100000" spellcheck="false"></textarea>
 									</label>
-									<div class="subtitle-editor-loop-settings">
-										<label
-											>Seconds before cue<input class="repair-input" type="number" id="subtitle-editor-before" min="0" max="60" step="0.5" value="3"
-										/></label>
-										<label
-											>Seconds after cue<input class="repair-input" type="number" id="subtitle-editor-after" min="0" max="60" step="0.5" value="3"
-										/></label>
-										<label>Loop start (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-start" min="0" step="0.1" /></label>
-										<label
-											>Loop duration (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-duration" min="0.1" max="120" step="0.1"
-										/></label>
+									<div id="subtitle-editor-loop">
+										<div class="subtitle-editor-loop-settings">
+											<label
+												>Seconds before cue<input class="repair-input" type="number" id="subtitle-editor-before" min="0" max="60" step="0.5" value="3"
+											/></label>
+											<label
+												>Seconds after cue<input class="repair-input" type="number" id="subtitle-editor-after" min="0" max="60" step="0.5" value="3"
+											/></label>
+											<label>Loop start (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-start" min="0" step="0.1" /></label>
+											<label
+												>Loop duration (seconds)<input class="repair-input" type="number" id="subtitle-editor-loop-duration" min="0.1" max="120" step="0.1"
+											/></label>
+										</div>
+										<button class="btn btn-ghost btn-sm" id="subtitle-editor-cue-loop">Reset loop around cue</button>
 									</div>
-									<button class="btn btn-ghost btn-sm" id="subtitle-editor-cue-loop">Reset loop around cue</button>
 								</div>
 							</fieldset>
 						</div>

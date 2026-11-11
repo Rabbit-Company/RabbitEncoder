@@ -1904,8 +1904,28 @@ a.btn {
 	gap: 12px;
 	margin: 12px 0;
 }
-.subtitle-editor-navigation {
+.subtitle-editor-find {
+	display: flex;
+	align-items: center;
+	gap: 12px;
 	margin-top: 14px;
+}
+.subtitle-editor-find input {
+	flex: 1;
+	min-width: 0;
+}
+.subtitle-editor-find button {
+	flex-shrink: 0;
+}
+#subtitle-editor-controls .subtitle-editor-video-toggle {
+	flex-direction: row;
+	flex-shrink: 0;
+	gap: 8px;
+	font-size: 0.8rem;
+	white-space: nowrap;
+}
+.subtitle-editor-navigation {
+	margin-top: 10px;
 }
 .subtitle-editor-navigation select {
 	flex: 1;
@@ -1936,8 +1956,12 @@ a.btn {
 	.subtitle-editor-track-row {
 		grid-template-columns: 1fr;
 	}
-	.subtitle-editor-file-row {
+	.subtitle-editor-file-row,
+	.subtitle-editor-find {
 		flex-wrap: wrap;
+	}
+	.subtitle-editor-find input {
+		flex-basis: 100%;
 	}
 	.subtitle-editor-navigation {
 		gap: 5px;
