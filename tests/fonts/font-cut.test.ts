@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { getDefaultJobSettings } from "../../src/core/config";
@@ -9,11 +9,8 @@ import { clearOriginals, fontSha, originalMarker, originalsDir, originalsUsage, 
 import { dropAttachmentArgs, fileFontState, refreshFonts } from "../../src/fonts/rabbit-faces";
 import { buildRepairFontPlans, sanitizeRepairPlan } from "../../src/pipeline/repair";
 
-const LIBERATION = "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf";
-const hasTools =
-	["mkvmerge", "mkvextract", "fc-scan"].every((tool) => Bun.which(tool)) &&
-	existsSync(LIBERATION) &&
-	Bun.spawnSync(["python3", "-c", "import fontTools"]).exitCode === 0;
+const FONT = join(import.meta.dir, "../../fonts/Noto Sans/latin.ttf");
+const hasTools = ["mkvmerge", "mkvextract", "fc-scan"].every((tool) => Bun.which(tool)) && Bun.spawnSync(["python3", "-c", "import fontTools"]).exitCode === 0;
 
 let root = "";
 beforeAll(() => {
@@ -84,7 +81,7 @@ describe.skipIf(!hasTools)("cutting a release's fonts", () => {
 			"",
 			"[V4+ Styles]",
 			"Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-			"Style: Sign,Liberation Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,8,10,10,10,1",
+			"Style: Sign,Noto Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,8,10,10,10,1",
 			"",
 			"[Events]",
 			"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -95,24 +92,14 @@ describe.skipIf(!hasTools)("cutting a release's fonts", () => {
 		const dir = mkdtempSync(join(root, "case-"));
 		writeFileSync(join(dir, "signs.ass"), ass("Café"));
 		const mkv = join(dir, "show.mkv");
-		const muxed = await run([
-			"mkvmerge",
-			"-q",
-			"-o",
-			mkv,
-			join(dir, "signs.ass"),
-			"--attachment-name",
-			"LiberationSans-Regular.ttf",
-			"--attach-file",
-			LIBERATION,
-		]);
+		const muxed = await run(["mkvmerge", "-q", "-o", mkv, join(dir, "signs.ass"), "--attachment-name", "NotoSans-Regular.ttf", "--attach-file", FONT]);
 		expect(muxed.code).toBe(0);
 		const settings = getDefaultJobSettings();
 
 		const cut = await refreshFonts({ mkvPath: mkv, texts: [ass("Café")], settings, tempDir: dir, cutOthers: true });
 		expect(cut.cut).toBe(1);
-		expect(cut.attach[0]!.fileName).toBe("LiberationSans-Regular.ttf");
-		expect(Bun.file(cut.attach[0]!.path).size).toBeLessThan(Bun.file(LIBERATION).size / 4);
+		expect(cut.attach[0]!.fileName).toBe("NotoSans-Regular.ttf");
+		expect(Bun.file(cut.attach[0]!.path).size).toBeLessThan(Bun.file(FONT).size / 4);
 		expect(originalsUsage().count).toBe(1);
 
 		const cutMkv = join(dir, "cut.mkv");
@@ -127,7 +114,7 @@ describe.skipIf(!hasTools)("cutting a release's fonts", () => {
 
 		// Rebuilding without cutting puts the full original back.
 		const whole = await refreshFonts({ mkvPath: cutMkv, texts: [ass("Café")], state, settings, tempDir: dir, uncut: true });
-		expect(Bun.file(whole.attach[0]!.path).size).toBe(Bun.file(LIBERATION).size);
+		expect(Bun.file(whole.attach[0]!.path).size).toBe(Bun.file(FONT).size);
 		clearOriginals();
 	}, 60_000);
 });
