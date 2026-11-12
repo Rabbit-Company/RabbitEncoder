@@ -63,6 +63,7 @@ import { decodePriorSettings } from "../core/mkv-tags";
 import { cpus } from "os";
 import { getEncoder } from "../core/encoders";
 import { createFaceMaterializer } from "../fonts/inject";
+import { buildRabbitFaces, rabbitFaceArgs } from "../fonts/rabbit-faces";
 import { DEFAULT_STYLE_APPEARANCE } from "../subtitles/subtitle-style";
 import { runTranslateStep, orderOutputSubtitles, describeAddedSubtitles, type TranslatedTrack } from "../translate/translate-step";
 import { subtitleDownloadEnabled } from "../subsearch/auto";
@@ -1133,6 +1134,8 @@ export async function encodeJob(
 		const sourceAttachmentUsedFonts = new Set<string>();
 		let effectiveRemoveUnusedFonts = job.settings.removeUnusedFonts;
 		const resolvedFaces = new Map<string, ResolvedFace>();
+		/** ASS text of tracks muxed without restyling, which may still draw in an injected family. */
+		const unstyledAssText = new Map<string, string>();
 		const applyAxes = createFaceMaterializer({ tempDir, occupiedNames: occupiedFontNames, signal: stageSignal });
 
 		const encodeVideo = async (): Promise<void> => {
@@ -2190,6 +2193,8 @@ export async function encodeJob(
 							writeFileSync(outAss, restyleAssDialogueFont(prepared.rawText, { ...appearance, fontName: family }, true), "utf-8");
 							planned.subFile = outAss;
 							if (face) resolvedFaces.set(face.path, face);
+						} else {
+							unstyledAssText.set(planned.subFile, prepared.rawText);
 						}
 					}
 				}
@@ -2452,9 +2457,23 @@ export async function encodeJob(
 			Logger.info("[subtitle] subtitleProcessing=copy. Including source subtitles verbatim via mkvmerge passthrough.");
 		}
 
-		for (const face of resolvedFaces.values()) {
-			mkvArgs.push("--attachment-mime-type", face.mime, "--attachment-name", face.fileName, "--attach-file", face.path);
-			Logger.info(`[fonts] Injecting ${face.fileName} (${face.family})`);
+		if (resolvedFaces.size > 0) {
+			// The bold, italic and cut-down faces follow from the text every output track ends with.
+			setStep(S_MUX, { progress: 3, detail: "Preparing fonts" });
+			const finalAss = (file: string) => (extname(file).toLowerCase() === ".ass" && existsSync(file) ? readFileSync(file, "utf-8") : unstyledAssText.get(file));
+			const texts = [...plannedSubs.map((planned) => planned.subFile), ...translatedTracks.map((track) => track.file)]
+				.map(finalAss)
+				.filter((text): text is string => text !== undefined);
+			const built = await buildRabbitFaces({
+				families: [...resolvedFaces.values()].map((base) => ({ family: base.family, base })),
+				texts,
+				subset: !!job.settings.subsetFonts,
+				tempDir,
+				signal,
+			});
+			checkCancelled();
+			mkvArgs.push(...rabbitFaceArgs(built.faces));
+			for (const face of built.faces) Logger.info(`[fonts] Injecting ${face.fileName} (${face.family})`);
 		}
 
 		if (sourceExt === ".mkv" || sourceExt === ".mks") {

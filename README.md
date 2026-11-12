@@ -381,6 +381,23 @@ the ASS styles it rewrites. The attachment **filename** is slugified
 (`Noto Sans 2` -> `noto_sans_2.ttf`). The internal family name keeps its spaces,
 so rendering is unaffected.
 
+Lines drawn in bold or italic, through their style or `\b1` and `\i1`, get real
+faces of the same family next to the face the style names: `noto_sans_bold.ttf`,
+`noto_sans_italic.ttf` and `noto_sans_bold_italic.ttf`. Bold is the group's weight
+plus 300, up to the font's heaviest. Italic comes from an italic font of the same
+family in the group, such as the `latin-italic.ttf` that Noto Sans and Noto Serif
+ship with. Scripts with no italic font, such as Arabic or Japanese, are slanted by
+the player. A shipped face added in a later version is copied into an existing
+group once, and stays deleted if you remove it.
+
+With **Attach only the characters the subtitles use** enabled, each of these faces
+keeps only the characters its lines draw, plus ASCII, Latin-1 and common
+punctuation, which brings a face from about 650 KB to about 40 KB. A face cut down
+this way cannot show new characters typed into the subtitles in another tool.
+Every face records how it was made, so adding, translating, editing, repairing or
+removing subtitles in Rabbit Encoder makes the faces again for the text the file
+then has.
+
 With **Remove unused fonts** enabled, source attachments are kept only when
 surviving untouched ASS styles or inline `\fn` overrides still reference them.
 

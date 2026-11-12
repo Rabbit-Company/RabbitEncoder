@@ -392,7 +392,7 @@ export async function runTranslateOnlyJob(job: Job, config: AppConfig, updateJob
 			const addition = await prepareRemuxAddition(job.inputPath, ordered, job.settings, tempDir, signal);
 			checkCancelled();
 
-			const mkvArgs = ["mkvmerge", "-o", finalOutput, job.inputPath];
+			const mkvArgs = ["mkvmerge", "-o", finalOutput, ...addition.inputArgs, job.inputPath];
 			for (const track of ordered) {
 				mkvArgs.push("--language", `0:${sanitizeLanguageTag(track.language, `translated ${track.language}`)}`);
 				mkvArgs.push("--track-name", `0:${track.trackName}`);

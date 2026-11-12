@@ -5,6 +5,7 @@ import { run } from "../core/process";
 import type { JobSettings } from "../core/types";
 import { FONT_EXTS, fontRegistry, listMkvAttachments, scanFontNames, type ResolvedFace } from "../fonts/fonts";
 import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
+import { assTrackIds, dropAttachmentArgs, rabbitFacesInFile, readAssTracks, refreshRabbitFaces } from "../fonts/rabbit-faces";
 import { normalizeFontName } from "./ass-classifier";
 import { restyleAssDialogueFont } from "./ass-style";
 import { zlibWorthIt } from "./zlib-probe";
@@ -95,6 +96,8 @@ export function addedFontArgs(faces: ResolvedFace[], attachedFiles: Set<string>)
 export interface RemuxAddition {
 	/** Attachment arguments for the fonts the added tracks need. */
 	fontArgs: string[];
+	/** Arguments placed before the file's own input, leaving out the faces rebuilt in `fontArgs`. */
+	inputArgs: string[];
 	/** Per-track mkvmerge compression arguments, empty when compression is off. */
 	compressionArgs: Map<string, string[]>;
 }
@@ -111,12 +114,34 @@ export async function prepareRemuxAddition(
 	signal?: AbortSignal,
 ): Promise<RemuxAddition> {
 	let fontArgs: string[] = [];
-	if (tracks.some((t) => t.restyle && t.format === "ass")) {
+	let inputArgs: string[] = [];
+	const restyled = tracks.some((t) => t.restyle && t.format === "ass");
+	const existing = await rabbitFacesInFile(mkvPath, settings, tempDir, signal);
+	if (restyled || existing.families.length) {
 		const reservations = await remuxFontReservations(mkvPath, settings, tempDir, signal);
 		const materialize = createFaceMaterializer({ tempDir, occupiedNames: reservations.occupied, signal });
-		const faces = await finishAddedTracks(tracks, settings, tempDir, materialize);
-		fontArgs = addedFontArgs(faces, reservations.attachedFiles);
-		if (fontArgs.length) Logger.info(`[fonts] Attaching ${faces.map((f) => f.fileName).join(", ")} for the added subtitles`);
+		const faces = restyled ? await finishAddedTracks(tracks, settings, tempDir, materialize) : [];
+		// The faces cover the text the file keeps and the text it gains, so both are read.
+		const ids = await assTrackIds(mkvPath, signal);
+		const kept = ids && (await readAssTracks(mkvPath, ids, tempDir, signal));
+		if (kept) {
+			const added = tracks.filter((t) => t.format === "ass" && existsSync(t.file)).map((t) => readFileSync(t.file, "utf-8"));
+			const refreshed = await refreshRabbitFaces({
+				mkvPath,
+				texts: [...kept, ...added],
+				added: faces.map((base) => ({ family: base.family, base })),
+				existing,
+				settings,
+				tempDir,
+				signal,
+			});
+			fontArgs = refreshed.attachArgs;
+			inputArgs = dropAttachmentArgs(refreshed.dropAttachmentIds);
+		} else {
+			// Without the file's own text the faces it has stay, and only missing ones are added.
+			fontArgs = addedFontArgs(faces, reservations.attachedFiles);
+		}
+		if (fontArgs.length) Logger.info(`[fonts] Attaching ${fontArgs.filter((_, i) => fontArgs[i - 1] === "--attachment-name").join(", ")}`);
 	}
 	const compressionArgs = new Map<string, string[]>();
 	if (settings.compressSubtitles) {
@@ -126,5 +151,5 @@ export async function prepareRemuxAddition(
 			compressionArgs.set(track.file, ["--compression", worth ? "0:zlib" : "0:none"]);
 		}
 	}
-	return { fontArgs, compressionArgs };
+	return { fontArgs, inputArgs, compressionArgs };
 }

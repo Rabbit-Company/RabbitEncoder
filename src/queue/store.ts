@@ -352,6 +352,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	convertSrtToAss: bool,
 	restyleAssFont: bool,
 	removeUnusedFonts: bool,
+	subsetFonts: bool,
 	assRestyleTargets: strList,
 	fontGroup: str(256),
 

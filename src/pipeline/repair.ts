@@ -24,8 +24,9 @@ import type {
 } from "../core/types";
 import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
-import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttachmentFontNames, type KeptAttachment } from "../fonts/fonts";
+import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttachmentFontNames, type KeptAttachment, type ResolvedFace } from "../fonts/fonts";
 import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
+import { dropAttachmentArgs, rabbitFaceArgs, rabbitFacesInFile, refreshRabbitFaces } from "../fonts/rabbit-faces";
 import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
@@ -1019,6 +1020,8 @@ interface PreparedTrack {
 	attachFontPath?: string;
 	attachFontName?: string;
 	attachFontMime?: string;
+	/** The font group face the track's dialogue was given. */
+	face?: ResolvedFace;
 }
 
 /**
@@ -1116,6 +1119,7 @@ async function styleRabbitTrack(
 		attachFontPath: changed ? face?.path : undefined,
 		attachFontName: changed ? face?.fileName : undefined,
 		attachFontMime: changed ? face?.mime : undefined,
+		face: face ?? undefined,
 	};
 }
 
@@ -1277,8 +1281,13 @@ export function buildRepairMkvmergeArgs(options: {
 	 * where they clashed. Sources then bring no attachments of their own.
 	 */
 	sourceFonts?: KeptAttachment[] | null;
+	/**
+	 * The font group faces, rebuilt for the text the output will have. They
+	 * replace the target's earlier faces, which are left out of the target.
+	 */
+	rabbitFaces?: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null;
 }): string[] {
-	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts } = options;
+	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts, rabbitFaces } = options;
 	const sourceIds = options.sources ?? (options.source ? [options.source] : []);
 	const sourcePaths = repairSources(plan).map((s) => s.path);
 	const rewriteAttachments = !!keptAttachments;
@@ -1316,6 +1325,7 @@ export function buildRepairMkvmergeArgs(options: {
 		targetAudioTrack(target, track);
 		args.push(...audioTrackOptions(track));
 	}
+	if (rabbitFaces && !rewriteAttachments) args.push(...dropAttachmentArgs(rabbitFaces.dropTargetAttachmentIds));
 	args.push(plan.targetPath);
 
 	// Passing through, a source brings only attachments no earlier input has under the same name.
@@ -1360,7 +1370,9 @@ export function buildRepairMkvmergeArgs(options: {
 		availableAttachmentNames.clear();
 		for (const attachment of keptAttachments!) availableAttachmentNames.add(attachment.fileName.toLowerCase());
 	}
+	if (rabbitFaces) args.push(...rabbitFaceArgs(rabbitFaces.faces));
 	for (const item of prepared) {
+		if (rabbitFaces) break;
 		if (!item.attachFontPath || attached.has(item.attachFontPath)) continue;
 		if (item.attachFontName && availableAttachmentNames.has(item.attachFontName.toLowerCase())) continue;
 		attached.add(item.attachFontPath);
@@ -1666,9 +1678,10 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		// a copied or partly-restyled track is kept and keeps its family name; the
 		// rest are dropped, which frees their names for the faces we inject.
 		const occupiedFontNames = new Set<string>();
+		let copied: { texts: string[]; complete: boolean } | null = null;
 		if (rabbitPlans.length > 0) {
 			setStep(S_PREPARE, { progress: 55, detail: "Checking which fonts are still used" });
-			const copied = await readCopiedAssText(plan, targetId, sourceIds, tempDir, signal, prepared);
+			copied = await readCopiedAssText(plan, targetId, sourceIds, tempDir, signal, prepared);
 			checkCancelled();
 			const dropUnusedFonts = job.settings.removeUnusedFonts && copied.complete;
 			if (job.settings.removeUnusedFonts && !copied.complete) {
@@ -1725,6 +1738,40 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			});
 			prepared.push(await styleRabbitTrack(item, tempDir, job.settings, materializeFace));
 		}
+
+		// The font group faces follow the text the output will have: an earlier
+		// pass's faces are made again with the new tracks' faces, so an added,
+		// edited or removed track gets the bold, italic and characters it needs.
+		let rabbitFaces: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null = null;
+		if (!(isMetadataOnlyRepair(plan, targetId) && prepared.length === 0)) {
+			const existing = await rabbitFacesInFile(plan.targetPath, job.settings, tempDir, signal);
+			const added = prepared.flatMap((item) => (item.face ? [{ family: item.face.family, base: item.face }] : []));
+			if (existing.families.length || added.length) {
+				setStep(S_PREPARE, { progress: 98, detail: "Preparing fonts" });
+				copied ??= await readCopiedAssText(plan, targetId, sourceIds, tempDir, signal, prepared);
+				checkCancelled();
+				if (copied.complete) {
+					const styled = prepared
+						.filter((item) => item.plan.mode === "rabbit" && extname(item.path).toLowerCase() === ".ass")
+						.map((item) => readFileSync(item.path, "utf-8"));
+					const refreshed = await refreshRabbitFaces({
+						mkvPath: plan.targetPath,
+						texts: [...copied.texts, ...styled],
+						added,
+						existing,
+						settings: job.settings,
+						tempDir,
+						signal,
+					});
+					checkCancelled();
+					rabbitFaces = { faces: refreshed.faces, dropTargetAttachmentIds: refreshed.dropAttachmentIds };
+					const dropped = new Set((targetId.attachments || []).filter((a) => refreshed.dropAttachmentIds.includes(a.id)).map((a) => a.file_name.toLowerCase()));
+					if (keptAttachments) keptAttachments = keptAttachments.filter((a) => !dropped.has(a.fileName.toLowerCase()));
+				} else {
+					Logger.warn("[repair] Could not read every copied subtitle track; keeping the font group faces the file has.");
+				}
+			}
+		}
 		setStep(S_PREPARE, {
 			status: "done",
 			progress: 100,
@@ -1767,6 +1814,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				prepared,
 				keptAttachments,
 				sourceFonts,
+				rabbitFaces,
 				sourceSyncs: timings.map((timing) => (timing ? mkvmergeSync(timing.map) : null)),
 			});
 			Logger.info(`[repair] Remuxing ${basename(plan.targetPath)} with ${plan.tracks.length} subtitle track(s)`);

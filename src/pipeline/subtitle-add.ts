@@ -199,7 +199,15 @@ export async function runSubtitleAddJob(job: Job, config: AppConfig, updateJob: 
 				...existingSubtitleKind(t.properties),
 			}));
 		const finalOutput = join(tempDir, "final.mkv");
-		const args = ["mkvmerge", "--gui-mode", "-o", finalOutput, ...(dropIds.size ? ["--subtitle-tracks", `!${[...dropIds].join(",")}`] : []), plan.targetPath];
+		const args = [
+			"mkvmerge",
+			"--gui-mode",
+			"-o",
+			finalOutput,
+			...(dropIds.size ? ["--subtitle-tracks", `!${[...dropIds].join(",")}`] : []),
+			...addition.inputArgs,
+			plan.targetPath,
+		];
 		for (const track of ordered) {
 			args.push("--language", `0:${sanitizeLanguageTag(track.language, `added ${track.language}`)}`);
 			args.push("--track-name", `0:${track.trackName}`, "--sub-charset", "0:UTF-8");

@@ -1,21 +1,26 @@
 import { extname, join } from "path";
 import { Logger } from "../core/logger";
 import { fontRegistry, type ResolvedFace } from "./fonts";
-import { axisSuffix, chooseAvailableFontFamily, fontAttachmentFileName, instancedFontNames, instanceFont } from "./font-instance";
+import { axisSuffix, chooseAvailableFontFamily, familyVariantNames, fontAttachmentFileName, instanceFont, type FaceRecipe } from "./font-instance";
 import type { StyleAppearance } from "../subtitles/subtitle-style";
 import { normalizeFontName } from "../subtitles/ass-classifier";
+import type { FaceStyle } from "../subtitles/face-usage";
 
 /**
  * A face Rabbit attached in an earlier pass, recognised by a family of the
  * font group, plus the " 2" a collision gave it, and the file name Rabbit
- * gives such a face, "noto_sans.ttf" for "Noto Sans". Its names stay free, so
- * the materializer reuses it instead of attaching a copy as "Noto Sans 2".
+ * gives such a face, "noto_sans.ttf" for "Noto Sans" and "noto_sans_italic.ttf"
+ * for its italic. Its names stay free, so the materializer reuses it instead
+ * of attaching a copy as "Noto Sans 2".
  */
 export function isRabbitGroupFace(fileName: string, family: string, fontGroup: string): boolean {
 	if (!family) return false;
 	const groupFamilies = new Set((fontRegistry.findFamily(fontGroup)?.faces ?? []).map((f) => normalizeFontName(f.family)));
 	const base = family.replace(/ \d+$/, "");
-	return groupFamilies.has(normalizeFontName(base)) && fileName.toLowerCase() === fontAttachmentFileName(family, extname(fileName).toLowerCase());
+	const ext = extname(fileName).toLowerCase();
+	const name = fileName.toLowerCase();
+	const styles: Array<FaceStyle | undefined> = [undefined, "regular", "bold", "italic", "bold italic"];
+	return groupFamilies.has(normalizeFontName(base)) && styles.some((style) => name === fontAttachmentFileName(family, ext, style));
 }
 
 /**
@@ -70,7 +75,8 @@ export function createFaceMaterializer(options: {
 		const cached = cache.get(cacheKey);
 		if (cached) return cached;
 
-		const family = chooseAvailableFontFamily(face.family, occupiedNames, appearance.bold);
+		const family = chooseAvailableFontFamily(face.family, occupiedNames);
+		const recipe: FaceRecipe | undefined = face.group ? { group: face.group, face: face.fileName, coords, bold: appearance.bold } : undefined;
 		const familyChanged = family !== face.family;
 		const needsMaterializedCopy = axisKey.length > 0 || familyChanged;
 		const sourceFontExt = cleanAttachmentExtension(face.fileName);
@@ -80,7 +86,7 @@ export function createFaceMaterializer(options: {
 		if (needsMaterializedCopy) {
 			const materializeKey = `${cacheKey}|${family}`;
 			const out = join(tempDir, `inst_${Buffer.from(materializeKey).toString("base64url").slice(0, 40)}${materializedExt}`);
-			const inst = await instance(face.path, coords, family, appearance.bold, out, signal);
+			const inst = await instance(face.path, coords, family, appearance.bold, out, signal, { recipe });
 			if (inst) {
 				resolved = {
 					...face,
@@ -89,18 +95,18 @@ export function createFaceMaterializer(options: {
 					names: inst.names,
 					fileName: fontAttachmentFileName(family, materializedExt),
 					mime: fontRegistry.mime(inst.path),
+					recipe,
 				};
 			} else {
 				Logger.warn(`[fonts] Could not materialize ${face.fileName} as "${family}"; using the original face`);
 				resolved = { ...face, fileName: fontAttachmentFileName(face.family, sourceFontExt) };
 			}
 		} else {
-			resolved = { ...face, fileName: fontAttachmentFileName(family, sourceFontExt) };
+			resolved = { ...face, fileName: fontAttachmentFileName(family, sourceFontExt), recipe };
 		}
 
-		for (const name of resolved.names.length > 0 ? resolved.names : instancedFontNames(resolved.family, false)) {
-			occupiedNames.add(name);
-		}
+		// The bold and italic faces built later share the family, so their names are taken too.
+		for (const name of [...resolved.names, ...familyVariantNames(resolved.family)]) occupiedNames.add(name);
 		cache.set(cacheKey, resolved);
 		return resolved;
 	};

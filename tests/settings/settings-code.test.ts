@@ -297,3 +297,16 @@ describe("settings code - HDR10+", () => {
 		expect(encodeSettingsCode({ ...getDefaultJobSettings(), videoEncode: "off", hdr10Plus: false })).not.toContain("hp=");
 	});
 });
+
+describe("settings code - font subsetting", () => {
+	it("writes sf only when subsetting is on, so older codes stay the same", () => {
+		const base = getDefaultJobSettings();
+		expect(encodeSettingsCode({ ...base, subsetFonts: false })).toBe("RE1");
+		expect(encodeSettingsCode({ ...base, subsetFonts: true })).toBe("RE1|st~sf=1");
+	});
+
+	it("round-trips it and reads older codes as off", () => {
+		expect(decodeSettingsCode(encodeSettingsCode({ ...getDefaultJobSettings(), subsetFonts: true })).subsetFonts).toBe(true);
+		expect(decodeSettingsCode("RE1|st~ru=1").subsetFonts).toBe(false);
+	});
+});

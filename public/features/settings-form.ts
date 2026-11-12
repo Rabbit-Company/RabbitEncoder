@@ -472,6 +472,7 @@ export function renderSettingsForm(prefix: SettingsFormPrefix, settings: JobSett
 		(v) => (settings.assRestyleTargets = v),
 	);
 	renderLabeledToggle(el("remove-unused-fonts"), settings.removeUnusedFonts ?? false, "Remove unused fonts from MKV", (v) => (settings.removeUnusedFonts = v));
+	renderLabeledToggle(el("subset-fonts"), settings.subsetFonts ?? false, "Attach only the characters the subtitles use", (v) => (settings.subsetFonts = v));
 
 	renderAudioLanguagesInput(el("audio-languages"), settings.audioLanguages || [], (v) => (settings.audioLanguages = v));
 	renderLanguageFilterInput(el("subtitle-languages"), settings.subtitleLanguages || [], (v) => (settings.subtitleLanguages = v));

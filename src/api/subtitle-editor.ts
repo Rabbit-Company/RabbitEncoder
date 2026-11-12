@@ -7,6 +7,8 @@ import { buildRepairMkvmergeArgs, identifyMatroska, inspectRepairFile } from "..
 import { resolveUniqueOutputPath } from "../pipeline/output";
 import { editSubtitleDocument, editorCues, editorFormat, previewAssDocument, validateEditorEdit, type SubtitleEditorEdit } from "../subtitles/editor";
 import { resolveAllowedMkv } from "./repair";
+import type { ResolvedFace } from "../fonts/fonts";
+import { rabbitFacesInFile, readAssTracks, refreshRabbitFaces } from "../fonts/rabbit-faces";
 
 function fingerprint(path: string): string {
 	const stat = statSync(path);
@@ -304,8 +306,24 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 					writeFileSync(output, editSubtitleDocument(document, format, edit));
 					prepared.push({ plan: tracks.find((plan) => plan.trackId === track.id)!, path: output });
 				}
+				// The font group faces follow the edited text, which may draw new characters or italics.
+				const settings = config.defaults;
+				const existing = await rabbitFacesInFile(path, settings, temp, signal);
+				let rabbitFaces: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null = null;
+				if (existing.families.length) {
+					const edited = new Map(prepared.map((item) => [item.plan.trackId, item.path]));
+					const unedited = file.subtitles
+						.filter((track) => ["ass", "ssa"].includes(editorFormat(track.codecId) ?? "") && !edited.has(track.id))
+						.map((track) => track.id);
+					const kept = await readAssTracks(path, unedited, temp, signal);
+					if (kept) {
+						const texts = [...kept, ...[...edited.values()].filter((p) => /\.(ass|ssa)$/.test(p)).map((p) => readFileSync(p, "utf-8"))];
+						const refreshed = await refreshRabbitFaces({ mkvPath: path, texts, existing, settings, tempDir: temp, signal });
+						rabbitFaces = { faces: refreshed.faces, dropTargetAttachmentIds: refreshed.dropAttachmentIds };
+					}
+				}
 				stage = join(dirname(path), `.rabbit-subtitles-${basename(temp)}.mkv`);
-				const args = buildRepairMkvmergeArgs({ outputPath: stage, plan: { targetPath: path, replaceTarget: false, tracks }, target, prepared });
+				const args = buildRepairMkvmergeArgs({ outputPath: stage, plan: { targetPath: path, replaceTarget: false, tracks }, target, prepared, rabbitFaces });
 				const sourceIndex = args.indexOf(path);
 				args.splice(
 					sourceIndex,

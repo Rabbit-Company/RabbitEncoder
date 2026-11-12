@@ -4,7 +4,7 @@ import { run } from "../core/process";
 import { Logger } from "../core/logger";
 import { normalizeFontName } from "../subtitles/ass-classifier";
 import { detectScript, extractDialogueText, faceCandidateKeys } from "./script-detect";
-import { readFontAxes, type FontAxis } from "./font-instance";
+import { readFontAxes, type FaceRecipe, type FontAxis } from "./font-instance";
 import { resolveStyleAppearance, type GroupStyleConfig, type StyleAppearance } from "../subtitles/subtitle-style";
 
 export const FONT_EXTS = new Set([".ttf", ".otf", ".ttc", ".otc"]);
@@ -33,6 +33,8 @@ export interface FontFace {
 	names: string[]; // all normalized internal names (for cleanup matching)
 	mime: string;
 	axes: FontAxis[];
+	/** An italic face, used only as the italic partner of an upright one. */
+	italic: boolean;
 }
 export interface FontFamily {
 	label: string; // dropdown label = folder name (or internal family for a loose file)
@@ -47,6 +49,13 @@ export interface ResolvedFace {
 	fileName: string;
 	mime: string;
 	axes: FontAxis[];
+	/** The font group it came from. */
+	group?: string;
+	/** How Rabbit made it from the group, once materialized. */
+	recipe?: FaceRecipe;
+	/** A bold or italic face Rabbit built next to the one the style names. */
+	bold?: boolean;
+	italic?: boolean;
 }
 
 function mimeForFont(p: string): string {
@@ -56,20 +65,25 @@ function mimeForFont(p: string): string {
 	return "font/ttf";
 }
 
-export async function scanFontNames(p: string, signal?: AbortSignal): Promise<{ family: string; names: string[] }> {
-	const res = await run(["fc-scan", "--format", "%{family}\n%{fullname}\n%{postscriptname}\n", p], { signal });
-	if (res.code !== 0) return { family: "", names: [] };
+export async function scanFontNames(p: string, signal?: AbortSignal): Promise<{ family: string; names: string[]; italic: boolean }> {
+	const res = await run(["fc-scan", "--format", "%{family}\t%{fullname}\t%{postscriptname}\t%{slant}\n", p], { signal });
+	if (res.code !== 0) return { family: "", names: [], italic: false };
 	const names = new Set<string>();
 	let family = "";
-	for (const raw of res.stdout.split("\n")) {
-		for (const piece of raw.split(",")) {
-			const n = piece.trim();
-			if (!n) continue;
-			if (!family) family = n;
-			names.add(normalizeFontName(n));
+	let italic = false;
+	for (const row of res.stdout.split("\n")) {
+		const fields = row.split("\t");
+		if (Number(fields[3]) > 0) italic = true;
+		for (const raw of fields.slice(0, 3)) {
+			for (const piece of raw.split(",")) {
+				const n = piece.trim();
+				if (!n) continue;
+				if (!family) family = n;
+				names.add(normalizeFontName(n));
+			}
 		}
 	}
-	return { family, names: [...names] };
+	return { family, names: [...names], italic };
 }
 
 interface Metadata {
@@ -80,7 +94,7 @@ interface Metadata {
 }
 
 async function buildFace(path: string, stemKey: string, meta: Metadata | null, signal?: AbortSignal): Promise<FontFace> {
-	const { family, names } = await scanFontNames(path, signal);
+	const { family, names, italic } = await scanFontNames(path, signal);
 	const fileName = basename(path);
 	const override = meta?.faces?.[fileName];
 	const keys = new Set<string>([stemKey.toLowerCase()]);
@@ -88,7 +102,7 @@ async function buildFace(path: string, stemKey: string, meta: Metadata | null, s
 	const fam = override?.family || family || basename(fileName, extname(fileName));
 	const allNames = new Set(names);
 	allNames.add(normalizeFontName(fam));
-	return { fileName, path, keys: [...keys], family: fam, names: [...allNames], mime: mimeForFont(path), axes: [] };
+	return { fileName, path, keys: [...keys], family: fam, names: [...allNames], mime: mimeForFont(path), axes: [], italic };
 }
 
 class FontRegistry {
@@ -101,22 +115,60 @@ class FontRegistry {
 		this.userDir = userDir;
 	}
 
-	/** Copy shipped groups into the user dir if missing. First-run only. */
+	/**
+	 * Copy shipped groups into the user dir if missing. A group the user
+	 * already has gets the shipped faces added since, such as an italic face,
+	 * once. A ledger of the faces offered keeps a face the user deleted deleted.
+	 */
 	seed(names: string[]): void {
 		if (!existsSync(this.userDir)) {
 			try {
 				mkdirSync(this.userDir, { recursive: true });
 			} catch {}
 		}
+		const ledgerPath = join(this.userDir, ".rabbit-seeded.json");
+		let ledger: Record<string, string[]> = {};
+		try {
+			if (existsSync(ledgerPath)) ledger = JSON.parse(readFileSync(ledgerPath, "utf-8"));
+		} catch {}
+		let changed = false;
 		for (const name of names) {
 			const dst = join(this.userDir, name);
 			const src = join(this.stockDir, name);
-			if (existsSync(dst) || !existsSync(src)) continue;
+			if (!existsSync(src)) continue;
+			const stockFaces = readdirSync(src).filter((f) => FONT_EXTS.has(extname(f).toLowerCase()));
+			if (!existsSync(dst)) {
+				try {
+					cpSync(src, dst, { recursive: true });
+					Logger.info(`[fonts] Seeded "${name}" into ${this.userDir}`);
+				} catch (err: any) {
+					Logger.warn(`[fonts] Failed to seed "${name}": ${err?.message || err}`);
+					continue;
+				}
+			} else {
+				const offered = new Set(ledger[name] ?? []);
+				for (const face of stockFaces) {
+					if (offered.has(face) || existsSync(join(dst, face))) continue;
+					try {
+						copyFileSync(join(src, face), join(dst, face));
+						Logger.info(`[fonts] Added the shipped ${face} to "${name}"`);
+					} catch (err: any) {
+						Logger.warn(`[fonts] Failed to add ${face} to "${name}": ${err?.message || err}`);
+					}
+				}
+			}
+			const before = ledger[name] ?? [];
+			const after = [...new Set([...before, ...stockFaces])];
+			if (after.length !== before.length) {
+				ledger[name] = after;
+				changed = true;
+			}
+		}
+		if (changed) {
 			try {
-				cpSync(src, dst, { recursive: true });
-				Logger.info(`[fonts] Seeded "${name}" into ${this.userDir}`);
+				writeFileSync(ledgerPath, JSON.stringify(ledger, null, "\t"), "utf-8");
 			} catch (err: any) {
-				Logger.warn(`[fonts] Failed to seed "${name}": ${err?.message || err}`);
+				Logger.warn(`[fonts] Could not record the seeded fonts: ${err?.message || err}`);
 			}
 		}
 	}
@@ -201,18 +253,30 @@ class FontRegistry {
 	/** Pick the face for a track given its language tag and a text sample. */
 	resolve(label: string, langCode: string | undefined, text: string): ResolvedFace | null {
 		const fam = this.findFamily(label);
-		if (!fam || fam.faces.length === 0) return null;
+		const faces = uprightFaces(fam);
+		if (!fam || faces.length === 0) return null;
 		const script = detectScript(extractDialogueText(text));
 		for (const cand of faceCandidateKeys(langCode, script)) {
-			const face = fam.faces.find((f) => f.keys.includes(cand));
-			if (face) return { family: face.family, names: face.names, path: face.path, fileName: face.fileName, mime: face.mime, axes: face.axes };
+			const face = faces.find((f) => f.keys.includes(cand));
+			if (face) return this.toResolved(face, fam.label);
 		}
-		const f = fam.faces[0]!;
-		return { family: f.family, names: f.names, path: f.path, fileName: f.fileName, mime: f.mime, axes: f.axes };
+		return this.toResolved(faces[0]!, fam.label);
 	}
 
-	private toResolved(f: FontFace): ResolvedFace {
-		return { family: f.family, names: f.names, path: f.path, fileName: f.fileName, mime: f.mime, axes: f.axes };
+	private toResolved(f: FontFace, group: string): ResolvedFace {
+		return { family: f.family, names: f.names, path: f.path, fileName: f.fileName, mime: f.mime, axes: f.axes, group };
+	}
+
+	/**
+	 * The italic face that goes with an upright face of the group: an italic
+	 * face of the same family, such as NotoSans-Italic next to NotoSans.
+	 */
+	italicPartner(label: string, uprightFileName: string): FontFace | undefined {
+		const fam = this.findFamily(label);
+		const upright = fam?.faces.find((f) => f.fileName === uprightFileName);
+		if (!fam || !upright) return undefined;
+		const family = normalizeFontName(upright.family);
+		return fam.faces.find((f) => f.italic && f !== upright && normalizeFontName(f.family) === family);
 	}
 
 	/** Resolve face + appearance together (one script detection). */
@@ -221,15 +285,16 @@ class FontRegistry {
 		const script = detectScript(extractDialogueText(text));
 		const appearance = resolveStyleAppearance(fam?.style ?? null, langCode, script);
 		let face: ResolvedFace | null = null;
-		if (fam && fam.faces.length > 0) {
+		const faces = uprightFaces(fam);
+		if (fam && faces.length > 0) {
 			for (const cand of faceCandidateKeys(langCode, script)) {
-				const hit = fam.faces.find((f) => f.keys.includes(cand));
+				const hit = faces.find((f) => f.keys.includes(cand));
 				if (hit) {
-					face = this.toResolved(hit);
+					face = this.toResolved(hit, fam.label);
 					break;
 				}
 			}
-			if (!face) face = this.toResolved(fam.faces[0]!);
+			if (!face) face = this.toResolved(faces[0]!, fam.label);
 		}
 		return { face, appearance };
 	}
@@ -434,6 +499,13 @@ class FontRegistry {
 	}
 
 	mime = mimeForFont;
+}
+
+/** Faces a track can be given. An italic face only stands in for italic text of its upright face. */
+function uprightFaces(fam: FontFamily | undefined): FontFace[] {
+	const faces = fam?.faces ?? [];
+	const upright = faces.filter((f) => !f.italic);
+	return upright.length ? upright : faces;
 }
 
 export const fontRegistry = new FontRegistry();

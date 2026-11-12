@@ -286,6 +286,8 @@ export interface JobSettings {
 	assRestyleTargets: string[];
 	/** Drop attachment fonts not referenced by any surviving ASS subtitle. Default off. */
 	removeUnusedFonts: boolean;
+	/** Cut the font group faces Rabbit attaches down to the characters the subtitles use. Default off. */
+	subsetFonts?: boolean;
 	/** Selected font group (folder label under the user fonts dir). */
 	fontGroup: string;
 	// Subtitle translation

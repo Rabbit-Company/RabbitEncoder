@@ -104,6 +104,7 @@ export function previewSettingsFingerprint(s: JobSettings): string {
 		convertSrtToAss: s.convertSrtToAss,
 		restyleAssFont: s.restyleAssFont,
 		removeUnusedFonts: s.removeUnusedFonts,
+		subsetFonts: s.subsetFonts ?? false,
 	});
 }
 

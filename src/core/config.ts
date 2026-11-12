@@ -109,6 +109,7 @@ const DEFAULT_JOB_SETTINGS: JobSettings = {
 	restyleAssFont: false,
 	assRestyleTargets: ["full", "honorifics", "forced", "sdh", "commentary"],
 	removeUnusedFonts: false,
+	subsetFonts: false,
 	fontGroup: "Noto Sans",
 	audioBitrates: DEFAULT_BITRATES,
 	translateSubtitles: false,

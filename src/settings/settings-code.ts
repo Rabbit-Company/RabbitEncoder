@@ -478,6 +478,8 @@ export function encodeSettingsCode(s: JobSettings): string {
 	if (s.convertSrtToAss !== BASELINE.convertSrtToAss) st.put("cv", s.convertSrtToAss);
 	if (s.restyleAssFont !== BASELINE.restyleAssFont) st.put("ra", s.restyleAssFont);
 	if (s.removeUnusedFonts !== BASELINE.removeUnusedFonts) st.put("ru", s.removeUnusedFonts);
+	// RE1 codes from before subsetting existed mean no subsetting.
+	if (s.subsetFonts) st.put("sf", true);
 	if (s.assRestyleTargets.join("+") !== BASELINE.assRestyleTargets.join("+")) {
 		st.putRaw("tg", s.assRestyleTargets.map(esc).join("+"));
 	}
@@ -586,7 +588,7 @@ export function decodeSettingsCode(code: string): Partial<JobSettings> {
 	}
 
 	// Start from a deep copy of the baseline, then apply overrides.
-	const out: JobSettings = { ...structuredClone(BASELINE), ...FILM_GRAIN_BASELINE };
+	const out: JobSettings = { ...structuredClone(BASELINE), ...FILM_GRAIN_BASELINE, subsetFonts: false };
 	const vsFilters: VsFilterEntry[] = [];
 
 	for (let i = 1; i < tokens.length; i++) {
@@ -734,6 +736,7 @@ function applySubtitleStyle(out: JobSettings, kv: Record<string, string>): void 
 	if (kv.cv !== undefined) out.convertSrtToAss = kv.cv === "1";
 	if (kv.ra !== undefined) out.restyleAssFont = kv.ra === "1";
 	if (kv.ru !== undefined) out.removeUnusedFonts = kv.ru === "1";
+	if (kv.sf !== undefined) out.subsetFonts = kv.sf === "1";
 	if (kv.tg !== undefined) out.assRestyleTargets = splitList(kv.tg);
 }
 

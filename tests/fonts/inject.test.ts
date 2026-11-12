@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createFaceMaterializer } from "../../src/fonts/inject";
-import { instancedFontNames } from "../../src/fonts/font-instance";
+import { instancedFontNames, type FaceRecipe, type InstanceOptions } from "../../src/fonts/font-instance";
 import { DEFAULT_STYLE_APPEARANCE } from "../../src/subtitles/subtitle-style";
 import type { ResolvedFace } from "../../src/fonts/fonts";
 import type { StyleAppearance } from "../../src/subtitles/subtitle-style";
@@ -25,9 +25,17 @@ const appearance = (over: Partial<StyleAppearance> = {}): StyleAppearance => ({ 
 
 /** Records what the real instancer would have been asked to produce. */
 function fakeInstancer() {
-	const calls: { src: string; coords: Record<string, number>; family: string; bold: boolean; out: string }[] = [];
-	const instance = async (src: string, coords: Record<string, number>, family: string, bold: boolean, out: string) => {
-		calls.push({ src, coords, family, bold, out });
+	const calls: { src: string; coords: Record<string, number>; family: string; bold: boolean; out: string; recipe?: FaceRecipe }[] = [];
+	const instance = async (
+		src: string,
+		coords: Record<string, number>,
+		family: string,
+		bold: boolean,
+		out: string,
+		_s?: AbortSignal,
+		options: InstanceOptions = {},
+	) => {
+		calls.push({ src, coords, family, bold, out, recipe: options.recipe });
 		return { path: out, family, names: instancedFontNames(family, bold) };
 	};
 	return { calls, instance };
@@ -56,6 +64,26 @@ describe("createFaceMaterializer", () => {
 
 		expect(face!.family).toBe("Noto Sans 2");
 		expect(face!.fileName).toBe("noto_sans_2.ttf");
+	});
+
+	it("renames the family when its italic or bold name is already taken", async () => {
+		const { instance } = fakeInstancer();
+		const materialize = createFaceMaterializer({ tempDir: "/tmp/job", occupiedNames: new Set(["noto sans italic"]), instance });
+
+		const face = await materialize(variableFace(), appearance({ fontAxes: { wght: 700 } }));
+
+		expect(face!.family).toBe("Noto Sans 2");
+	});
+
+	it("stores the recipe of a group face in the face it makes", async () => {
+		const { calls, instance } = fakeInstancer();
+		const materialize = createFaceMaterializer({ tempDir: "/tmp/job", occupiedNames: new Set(), instance });
+
+		const face = await materialize({ ...variableFace(), group: "Noto Sans" }, appearance({ fontAxes: { wght: 700 } }));
+
+		const recipe = { group: "Noto Sans", face: "latin.ttf", coords: { wght: 700 }, bold: false };
+		expect(face!.recipe).toEqual(recipe);
+		expect(calls[0]!.recipe).toEqual(recipe);
 	});
 
 	it("reserves the identity it took, so a second distinct face cannot reuse it", async () => {
