@@ -26,7 +26,15 @@ import { Logger } from "../core/logger";
 import { CancelledError, humanSize, run } from "../core/process";
 import { collectKeptAttachments, fontRegistry, keptAttachmentArgs, scanMkvAttachmentFontNames, type KeptAttachment, type ResolvedFace } from "../fonts/fonts";
 import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
-import { dropAttachmentArgs, rabbitFaceArgs, rabbitFacesInFile, refreshRabbitFaces } from "../fonts/rabbit-faces";
+import {
+	dropAttachmentArgs,
+	fileFontState,
+	needsFontPass,
+	rabbitFaceArgs,
+	refreshFonts,
+	type FontAttachment,
+	type FontPassResult,
+} from "../fonts/rabbit-faces";
 import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier";
 import { styleSrtAss, restyleAssDialogueFont } from "../subtitles/ass-style";
 import { zlibWorthIt } from "../subtitles/zlib-probe";
@@ -523,6 +531,34 @@ export function buildRepairSubtitleOrderPlans(
 	return plans;
 }
 
+/** One repair per file that rebuilds its fonts and changes no track. */
+export function buildRepairFontPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], options: { subset: boolean; replaceTarget: boolean }): RepairPlan[] {
+	return files.map((file) =>
+		sanitizeRepairPlan({
+			targetPath: file.path,
+			replaceTarget: options.replaceTarget,
+			fonts: { rebuild: true, subset: options.subset },
+			tracks: file.tracks
+				.filter((track) => track.type === "subtitles")
+				.map((track, order) => ({
+					title: track.title,
+					language: track.language,
+					isDefault: track.isDefault,
+					isForced: track.isForced,
+					isEnabled: track.isEnabled,
+					isHearingImpaired: track.isHearingImpaired,
+					isOriginal: track.isOriginal,
+					isCommentary: track.isCommentary,
+					source: "target",
+					trackId: track.id,
+					mode: "copy",
+					order,
+					compression: "preserve",
+				})),
+		}),
+	);
+}
+
 function audioMetadataOf(track: RepairAuditTrack | RepairAudioTrackPlan): RepairAuditAudioMetadata {
 	return {
 		title: track.title,
@@ -704,6 +740,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	const audioTracks = sanitizeAudioTracks(raw.audioTracks);
 	const audioOrder = sanitizeAudioOrder(raw.audioOrder);
 	const fontFix = sanitizeFontFix(raw.fontFix);
+	const fonts = raw.fonts ? { rebuild: true as const, subset: !!raw.fonts.subset } : null;
 	return {
 		targetPath,
 		sourcePath,
@@ -714,6 +751,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...(audioTracks.length ? { audioTracks } : {}),
 		...(audioOrder ? { audioOrder } : {}),
 		...(fontFix ? { fontFix } : {}),
+		...(fonts ? { fonts } : {}),
 	};
 }
 
@@ -1173,6 +1211,16 @@ async function readCopiedAssText(
 	return { texts, complete };
 }
 
+/** What a font pass changed, for the job's step. */
+function fontPassSummary(pass: FontPassResult): string {
+	const parts: string[] = [];
+	const faces = pass.attach.length - pass.cut - pass.restored;
+	if (faces > 0) parts.push(`${faces} font group face${faces === 1 ? "" : "s"} rebuilt`);
+	if (pass.cut) parts.push(`${pass.cut} font${pass.cut === 1 ? "" : "s"} cut down`);
+	if (pass.restored) parts.push(`${pass.restored} font${pass.restored === 1 ? "" : "s"} made whole again or given back characters`);
+	return parts.join(", ") || "Unused font group faces removed";
+}
+
 /** Private stand-in for the injected family, so it never counts as a source font. */
 const FONT_PROBE_FAMILY = "__RabbitEncoderRepairFontProbe_9C2E17__";
 
@@ -1285,7 +1333,7 @@ export function buildRepairMkvmergeArgs(options: {
 	 * The font group faces, rebuilt for the text the output will have. They
 	 * replace the target's earlier faces, which are left out of the target.
 	 */
-	rabbitFaces?: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null;
+	rabbitFaces?: { faces: FontAttachment[]; dropTargetAttachmentIds: number[] } | null;
 }): string[] {
 	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts, rabbitFaces } = options;
 	const sourceIds = options.sources ?? (options.source ? [options.source] : []);
@@ -1742,11 +1790,12 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		// The font group faces follow the text the output will have: an earlier
 		// pass's faces are made again with the new tracks' faces, so an added,
 		// edited or removed track gets the bold, italic and characters it needs.
-		let rabbitFaces: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null = null;
-		if (!(isMetadataOnlyRepair(plan, targetId) && prepared.length === 0)) {
-			const existing = await rabbitFacesInFile(plan.targetPath, job.settings, tempDir, signal);
+		let rabbitFaces: { faces: FontAttachment[]; dropTargetAttachmentIds: number[] } | null = null;
+		let fontPass: FontPassResult | null = null;
+		if (plan.fonts || !(isMetadataOnlyRepair(plan, targetId) && prepared.length === 0)) {
+			const state = await fileFontState(plan.targetPath, job.settings, tempDir, signal);
 			const added = prepared.flatMap((item) => (item.face ? [{ family: item.face.family, base: item.face }] : []));
-			if (existing.families.length || added.length) {
+			if (needsFontPass(state, added, !!plan.fonts?.subset)) {
 				setStep(S_PREPARE, { progress: 98, detail: "Preparing fonts" });
 				copied ??= await readCopiedAssText(plan, targetId, sourceIds, tempDir, signal, prepared);
 				checkCancelled();
@@ -1754,23 +1803,34 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 					const styled = prepared
 						.filter((item) => item.plan.mode === "rabbit" && extname(item.path).toLowerCase() === ".ass")
 						.map((item) => readFileSync(item.path, "utf-8"));
-					const refreshed = await refreshRabbitFaces({
+					fontPass = await refreshFonts({
 						mkvPath: plan.targetPath,
 						texts: [...copied.texts, ...styled],
 						added,
-						existing,
+						state,
 						settings: job.settings,
 						tempDir,
 						signal,
+						// A font rebuild asks for its own cutting, whatever the setting says.
+						...(plan.fonts ? { subset: plan.fonts.subset, cutOthers: plan.fonts.subset, uncut: !plan.fonts.subset } : {}),
 					});
 					checkCancelled();
-					rabbitFaces = { faces: refreshed.faces, dropTargetAttachmentIds: refreshed.dropAttachmentIds };
-					const dropped = new Set((targetId.attachments || []).filter((a) => refreshed.dropAttachmentIds.includes(a.id)).map((a) => a.file_name.toLowerCase()));
+					rabbitFaces = { faces: fontPass.attach, dropTargetAttachmentIds: fontPass.dropAttachmentIds };
+					const dropped = new Set((targetId.attachments || []).filter((a) => fontPass!.dropAttachmentIds.includes(a.id)).map((a) => a.file_name.toLowerCase()));
 					if (keptAttachments) keptAttachments = keptAttachments.filter((a) => !dropped.has(a.fileName.toLowerCase()));
 				} else {
-					Logger.warn("[repair] Could not read every copied subtitle track; keeping the font group faces the file has.");
+					Logger.warn("[repair] Could not read every subtitle track; keeping the fonts the file has.");
 				}
 			}
+		}
+		const fontsChanged = !!fontPass && (fontPass.attach.length > 0 || fontPass.dropAttachmentIds.length > 0);
+		// A font rebuild with nothing to change leaves the file alone.
+		if (plan.fonts && !fontsChanged && prepared.length === 0 && isMetadataOnlyRepair(plan, targetId)) {
+			setStep(S_PREPARE, { status: "done", progress: 100, detail: "Fonts already fit the subtitles" });
+			setStep(S_MUX, { status: "done", progress: 100, detail: "Nothing to change" });
+			updateJob({ status: "done", currentStage: "Complete", progress: 100, outputFilename: plan.targetPath, finishedAt: Date.now() });
+			Logger.info(`[repair] Fonts of ${basename(plan.targetPath)} already fit its subtitles`);
+			return;
 		}
 		setStep(S_PREPARE, {
 			status: "done",
@@ -1779,7 +1839,9 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				? `${rabbitPlans.length} track(s) processed`
 				: timings.some(Boolean)
 					? "Source subtitles retimed"
-					: "No subtitle conversion needed",
+					: fontsChanged
+						? fontPassSummary(fontPass!)
+						: "No subtitle conversion needed",
 		});
 
 		await resolveAutoCompression({
@@ -1793,7 +1855,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		});
 		checkCancelled();
 
-		const metadataOnly = isMetadataOnlyRepair(plan, targetId) && prepared.length === 0;
+		const metadataOnly = isMetadataOnlyRepair(plan, targetId) && prepared.length === 0 && !fontsChanged;
 		setStep(S_MUX, { status: "active", progress: 10, detail: metadataOnly ? "Creating safe metadata-edit copy" : "Copying streams without video encoding" });
 		updateJob({ status: "muxing" });
 		if (metadataOnly) {

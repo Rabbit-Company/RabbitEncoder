@@ -29,7 +29,7 @@ from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 cfg = json.loads(sys.argv[1])
 family, bold, italic = cfg["family"], cfg["bold"], cfg["italic"]
-f = TTFont(cfg["src"])
+f = TTFont(cfg["src"], recalcTimestamp=False)  # same input, same bytes
 if "fvar" in f:
     instantiateVariableFont(f, cfg["coords"], inplace=True)  # coords cover all axes -> fully static
 nm = f["name"]
@@ -91,9 +91,10 @@ from fontTools.ttLib import TTFont
 out = {}
 for p in sys.argv[1:]:
     try:
-        out[p] = TTFont(p, lazy=True)["name"].getDebugName(3)
+        nm = TTFont(p, lazy=True)["name"]
+        out[p] = [nm.getDebugName(3), nm.getDebugName(21061)]
     except Exception:
-        out[p] = None
+        out[p] = [None, None]
 print(json.dumps(out))
 `;
 
@@ -132,13 +133,19 @@ export function decodeRecipe(value: string | null | undefined): FaceRecipe | nul
 }
 
 /** The recipe each font carries, or null for a font Rabbit did not make. */
-export async function readFontRecipes(paths: string[], signal?: AbortSignal): Promise<Map<string, FaceRecipe | null>> {
-	const map = new Map<string, FaceRecipe | null>();
+/**
+ * What Rabbit stored in each font: the recipe of a face it made, and the hash
+ * of the full original of a font it cut down (the raw name, read by font-cut).
+ */
+export async function readFontMarks(paths: string[], signal?: AbortSignal): Promise<Map<string, { recipe: FaceRecipe | null; original: string | null }>> {
+	const map = new Map<string, { recipe: FaceRecipe | null; original: string | null }>();
 	if (paths.length === 0) return map;
 	const res = await run(["python3", "-c", RECIPES_PY, ...paths], { signal });
 	if (res.code !== 0) return map;
 	try {
-		for (const [p, v] of Object.entries(JSON.parse(res.stdout) as Record<string, string | null>)) map.set(p, decodeRecipe(v));
+		for (const [p, [recipe, original]] of Object.entries(JSON.parse(res.stdout) as Record<string, [string | null, string | null]>)) {
+			map.set(p, { recipe: decodeRecipe(recipe), original });
+		}
 	} catch {
 		/* leave empty */
 	}

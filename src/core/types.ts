@@ -889,6 +889,11 @@ export interface RepairPlan {
 	audioOrder?: number[];
 	/** Fonts the target's subtitles use but it does not carry. */
 	fontFix?: RepairFontFix;
+	/**
+	 * Rebuild the fonts without changing any track: the font group faces for
+	 * the text the file has, and with `subset` every font cut to its characters.
+	 */
+	fonts?: { rebuild: true; subset: boolean };
 }
 
 export interface RepairFontFix {

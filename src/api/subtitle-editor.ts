@@ -7,8 +7,7 @@ import { buildRepairMkvmergeArgs, identifyMatroska, inspectRepairFile } from "..
 import { resolveUniqueOutputPath } from "../pipeline/output";
 import { editSubtitleDocument, editorCues, editorFormat, previewAssDocument, validateEditorEdit, type SubtitleEditorEdit } from "../subtitles/editor";
 import { resolveAllowedMkv } from "./repair";
-import type { ResolvedFace } from "../fonts/fonts";
-import { rabbitFacesInFile, readAssTracks, refreshRabbitFaces } from "../fonts/rabbit-faces";
+import { fileFontState, needsFontPass, readAssTracks, refreshFonts, type FontAttachment } from "../fonts/rabbit-faces";
 
 function fingerprint(path: string): string {
 	const stat = statSync(path);
@@ -308,9 +307,9 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 				}
 				// The font group faces follow the edited text, which may draw new characters or italics.
 				const settings = config.defaults;
-				const existing = await rabbitFacesInFile(path, settings, temp, signal);
-				let rabbitFaces: { faces: ResolvedFace[]; dropTargetAttachmentIds: number[] } | null = null;
-				if (existing.families.length) {
+				const state = await fileFontState(path, settings, temp, signal);
+				let rabbitFaces: { faces: FontAttachment[]; dropTargetAttachmentIds: number[] } | null = null;
+				if (needsFontPass(state)) {
 					const edited = new Map(prepared.map((item) => [item.plan.trackId, item.path]));
 					const unedited = file.subtitles
 						.filter((track) => ["ass", "ssa"].includes(editorFormat(track.codecId) ?? "") && !edited.has(track.id))
@@ -318,8 +317,8 @@ export function registerSubtitleEditorRoutes(app: Web, config: AppConfig): void 
 					const kept = await readAssTracks(path, unedited, temp, signal);
 					if (kept) {
 						const texts = [...kept, ...[...edited.values()].filter((p) => /\.(ass|ssa)$/.test(p)).map((p) => readFileSync(p, "utf-8"))];
-						const refreshed = await refreshRabbitFaces({ mkvPath: path, texts, existing, settings, tempDir: temp, signal });
-						rabbitFaces = { faces: refreshed.faces, dropTargetAttachmentIds: refreshed.dropAttachmentIds };
+						const refreshed = await refreshFonts({ mkvPath: path, texts, state, settings, tempDir: temp, signal });
+						rabbitFaces = { faces: refreshed.attach, dropTargetAttachmentIds: refreshed.dropAttachmentIds };
 					}
 				}
 				stage = join(dirname(path), `.rabbit-subtitles-${basename(temp)}.mkv`);

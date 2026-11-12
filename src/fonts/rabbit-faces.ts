@@ -6,7 +6,8 @@ import type { JobSettings } from "../core/types";
 import { normalizeFontName } from "../subtitles/ass-classifier";
 import { faceStyle, faceUsage, type FaceStyle } from "../subtitles/face-usage";
 import { resolveStyleAppearance } from "../subtitles/subtitle-style";
-import { axisSuffix, fontAttachmentFileName, instanceFont, readFontRecipes, type FaceRecipe } from "./font-instance";
+import { axisSuffix, fontAttachmentFileName, instanceFont, readFontMarks, type FaceRecipe } from "./font-instance";
+import { cutFonts, fontSha, originalPath, readOriginalMarker, storeOriginal, type CutRequest } from "./font-cut";
 import { FONT_EXTS, fontRegistry, listMkvAttachments, scanFontNames, type FontFace, type ResolvedFace } from "./fonts";
 import { isRabbitGroupFace } from "./inject";
 
@@ -164,53 +165,91 @@ export interface FileRabbitFaces {
 	cut?: Set<string>;
 }
 
+/** A font attached to a file, extracted for reading. */
+export interface FileFont {
+	id: number;
+	fileName: string;
+	path: string;
+	family: string;
+	names: string[];
+	recipe: FaceRecipe | null;
+	/** Hash of the full original, for a font Rabbit cut down. */
+	original: string | null;
+}
+
+/** The fonts of a file as the font pass sees them. */
+export interface FileFontState {
+	fonts: FileFont[];
+	rabbit: FileRabbitFaces;
+	/** Fonts of the release Rabbit cut down earlier. */
+	cutCount: number;
+	/** The fonts could be read. When false, the pass leaves them as they are. */
+	readable: boolean;
+}
+
 /** Rabbit only gives its faces file names like these. */
 const RABBIT_FILE_NAME = /^[a-z0-9_]+\.(ttf|otf)$/;
 
-/**
- * The faces an earlier pass of Rabbit attached to `mkvPath`, with the recipe
- * each was made from. A face from before recipes were stored is recognised by
- * its file name and given the group's current look.
- */
-export async function rabbitFacesInFile(mkvPath: string, settings: JobSettings, tempDir: string, signal?: AbortSignal): Promise<FileRabbitFaces> {
-	const families: RabbitFamily[] = [];
-	const attachmentIds = new Map<string, number[]>();
-	const styles = new Map<string, Set<FaceStyle>>();
-	const cut = new Set<string>();
-	const candidates = (await listMkvAttachments(mkvPath, signal)).filter(
-		(a) => FONT_EXTS.has(extname(a.fileName).toLowerCase()) && RABBIT_FILE_NAME.test(a.fileName),
-	);
-	if (!candidates.length) return { families, attachmentIds, styles, cut };
+/** A file attached as mkvmerge needs it. */
+export interface FontAttachment {
+	fileName: string;
+	path: string;
+	mime: string;
+}
 
-	const paths = new Map(candidates.map((a) => [a.id, join(tempDir, `rabbitface_${a.id}${extname(a.fileName).toLowerCase()}`)]));
-	const extracted = await run(["mkvextract", mkvPath, "attachments", ...candidates.map((a) => `${a.id}:${paths.get(a.id)}`)], { signal });
+/**
+ * Read every font attached to `mkvPath`: its names, the recipe of a face
+ * Rabbit made and the original of a font Rabbit cut down. Rabbit's faces are
+ * gathered by family with their recipes. A face from before recipes were
+ * stored is recognised by its file name and given the group's current look.
+ */
+export async function fileFontState(mkvPath: string, settings: JobSettings, tempDir: string, signal?: AbortSignal): Promise<FileFontState> {
+	const rabbit: FileRabbitFaces = { families: [], attachmentIds: new Map(), styles: new Map(), cut: new Set() };
+	const empty = (readable: boolean): FileFontState => ({ fonts: [], rabbit, cutCount: 0, readable });
+	const attached = (await listMkvAttachments(mkvPath, signal)).filter((a) => FONT_EXTS.has(extname(a.fileName).toLowerCase()));
+	if (!attached.length) return empty(true);
+
+	const paths = new Map(attached.map((a) => [a.id, join(tempDir, `filefont_${a.id}${extname(a.fileName).toLowerCase()}`)]));
+	const extracted = await run(["mkvextract", mkvPath, "attachments", ...attached.map((a) => `${a.id}:${paths.get(a.id)}`)], { signal });
 	if (extracted.code !== 0) {
 		Logger.warn(`[fonts] Could not read the fonts of ${basename(mkvPath)}: ${(extracted.stderr || extracted.stdout).slice(-200)}`);
-		return { families, attachmentIds, styles, cut };
+		return empty(false);
 	}
-	const present = candidates.filter((a) => existsSync(paths.get(a.id)!));
-	const recipes = await readFontRecipes(
+	const present = attached.filter((a) => existsSync(paths.get(a.id)!));
+	const marks = await readFontMarks(
 		present.map((a) => paths.get(a.id)!),
 		signal,
 	);
+	const fonts: FileFont[] = [];
 	for (const a of present) {
 		const path = paths.get(a.id)!;
-		const { family } = await scanFontNames(path, signal);
-		if (!family) continue;
-		const stored = recipes.get(path);
-		const recipe = stored ?? (isRabbitGroupFace(a.fileName, family, settings.fontGroup) ? legacyRecipe(settings.fontGroup, family) : null);
-		if (!recipe) continue;
-		const key = normalizeFontName(family);
-		if (!attachmentIds.has(key)) {
-			attachmentIds.set(key, []);
-			styles.set(key, new Set());
-			families.push({ family, recipe: { ...recipe, subset: undefined } });
-		}
-		attachmentIds.get(key)!.push(a.id);
-		styles.get(key)!.add(styleOfFile(a.fileName, family, recipe));
-		if (stored?.subset) cut.add(key);
+		const { family, names } = await scanFontNames(path, signal);
+		const mark = marks.get(path);
+		fonts.push({ id: a.id, fileName: a.fileName, path, family, names, recipe: mark?.recipe ?? null, original: readOriginalMarker(mark?.original) });
 	}
-	return { families, attachmentIds, styles, cut };
+
+	for (const font of fonts) {
+		if (!font.family || !RABBIT_FILE_NAME.test(font.fileName)) continue;
+		const recipe = font.recipe ?? (isRabbitGroupFace(font.fileName, font.family, settings.fontGroup) ? legacyRecipe(settings.fontGroup, font.family) : null);
+		if (!recipe) continue;
+		const key = normalizeFontName(font.family);
+		if (!rabbit.attachmentIds.has(key)) {
+			rabbit.attachmentIds.set(key, []);
+			rabbit.styles!.set(key, new Set());
+			rabbit.families.push({ family: font.family, recipe: { ...recipe, subset: undefined } });
+		}
+		rabbit.attachmentIds.get(key)!.push(font.id);
+		rabbit.styles!.get(key)!.add(styleOfFile(font.fileName, font.family, recipe));
+		if (font.recipe?.subset) rabbit.cut!.add(key);
+	}
+	const rabbitIds = new Set([...rabbit.attachmentIds.values()].flat());
+	const cutCount = fonts.filter((f) => !rabbitIds.has(f.id) && f.original).length;
+	return { fonts, rabbit, cutCount, readable: true };
+}
+
+/** Whether a remux has font work to do: Rabbit faces to keep right, cut fonts to keep whole enough, or fonts to cut. */
+export function needsFontPass(state: FileFontState, added: readonly RabbitFamily[] = [], cutOthers = false): boolean {
+	return state.readable && (state.rabbit.families.length > 0 || state.cutCount > 0 || added.length > 0 || (cutOthers && state.fonts.length > 0));
 }
 
 /** The style a face Rabbit attached is for, read from its file name. */
@@ -244,8 +283,8 @@ export async function readAssTracks(mkvPath: string, trackIds: readonly number[]
 	return outs.map((p) => readFileSync(p, "utf-8"));
 }
 
-/** mkvmerge arguments attaching faces under their file names. */
-export function rabbitFaceArgs(faces: readonly ResolvedFace[]): string[] {
+/** mkvmerge arguments attaching fonts under their file names. */
+export function rabbitFaceArgs(faces: readonly FontAttachment[]): string[] {
 	const args: string[] = [];
 	const seen = new Set<string>();
 	for (const face of faces) {
@@ -256,41 +295,187 @@ export function rabbitFaceArgs(faces: readonly ResolvedFace[]): string[] {
 	return args;
 }
 
+export interface FontPassResult {
+	attachArgs: string[];
+	/** Attachments of the file the new ones replace. */
+	dropAttachmentIds: number[];
+	attach: FontAttachment[];
+	/** Fonts of the release cut down or restored, for the job's summary. */
+	cut: number;
+	restored: number;
+}
+
 /**
- * Rebuild the Rabbit faces of a file whose subtitles are being rewritten
- * without an encode: an earlier pass's faces are dropped and made again, with
- * the faces of `added` families, for the text the file will have. A face that
- * cannot be made again stays as it is.
+ * The font work of a remux that rewrites a file's subtitles without an
+ * encode. An earlier pass's Rabbit faces are made again, with the faces of
+ * `added` families, for the text the file will have. A face that cannot be
+ * made again stays as it is. A font of the release Rabbit cut down earlier
+ * gets back from its stored original any character the text now needs. With
+ * `cutOthers`, the release's other fonts are cut down too, keeping their
+ * originals, and with `uncut` every cut font is made whole again. A file cut
+ * once stays cut through later passes. `subset` overrides that for Rabbit's faces.
  */
-export async function refreshRabbitFaces(options: {
+export async function refreshFonts(options: {
 	mkvPath: string;
 	/** Final ASS text of every track the output keeps or adds. */
 	texts: readonly string[];
 	/** Families the tracks added by this pass use. */
 	added?: readonly RabbitFamily[];
-	/** The file's faces, when the caller already read them. */
-	existing?: FileRabbitFaces;
+	/** The file's fonts, when the caller already read them. */
+	state?: FileFontState;
 	settings: JobSettings;
 	tempDir: string;
 	signal?: AbortSignal;
-}): Promise<{ attachArgs: string[]; dropAttachmentIds: number[]; faces: ResolvedFace[] }> {
-	const existing = options.existing ?? (await rabbitFacesInFile(options.mkvPath, options.settings, options.tempDir, options.signal));
-	if (!options.added?.length && alreadyCovered(existing, options.texts, !!options.settings.subsetFonts)) {
-		return { attachArgs: [], dropAttachmentIds: [], faces: [] };
+	subset?: boolean;
+	cutOthers?: boolean;
+	uncut?: boolean;
+}): Promise<FontPassResult> {
+	const { texts, tempDir, signal } = options;
+	const state = options.state ?? (await fileFontState(options.mkvPath, options.settings, tempDir, signal));
+	const result: FontPassResult = { attachArgs: [], dropAttachmentIds: [], attach: [], cut: 0, restored: 0 };
+	if (!state.readable) return result;
+	const existing = state.rabbit;
+	const subset = options.subset ?? (!!options.settings.subsetFonts || (existing.cut?.size ?? 0) > 0);
+
+	if (options.added?.length || !alreadyCovered(existing, texts, subset)) {
+		const built = await buildRabbitFaces({ families: [...existing.families, ...(options.added ?? [])], texts, subset, tempDir, signal });
+		for (const [key, ids] of existing.attachmentIds) if (!built.unbuilt.has(key)) result.dropAttachmentIds.push(...ids);
+		const unchanged = sameFiles(built.faces, state.fonts, result.dropAttachmentIds);
+		result.dropAttachmentIds = result.dropAttachmentIds.filter((id) => !unchanged.ids.has(id));
+		result.attach.push(...built.faces.filter((face) => !unchanged.faces.has(face)));
+		if (result.attach.length || result.dropAttachmentIds.length) {
+			Logger.info(`[fonts] Rebuilt the font group faces: ${result.attach.map((f) => f.fileName).join(", ") || "none needed"}`);
+		}
 	}
-	const built = await buildRabbitFaces({
-		families: [...existing.families, ...(options.added ?? [])],
-		texts: options.texts,
-		subset: !!options.settings.subsetFonts,
-		tempDir: options.tempDir,
-		signal: options.signal,
+
+	if (options.uncut) restoreReleaseFonts(state, result);
+	else await cutReleaseFonts(state, texts, !!options.cutOthers, tempDir, signal, result);
+	result.attachArgs = rabbitFaceArgs(result.attach);
+	return result;
+}
+
+/** Built faces identical to the attachment they would replace, which then stays. */
+function sameFiles(
+	faces: readonly FontAttachment[],
+	fonts: readonly FileFont[],
+	dropping: readonly number[],
+): { faces: Set<FontAttachment>; ids: Set<number> } {
+	const out = { faces: new Set<FontAttachment>(), ids: new Set<number>() };
+	for (const face of faces) {
+		const old = fonts.find((f) => dropping.includes(f.id) && f.fileName.toLowerCase() === face.fileName.toLowerCase());
+		if (old && !out.ids.has(old.id) && sameBytes(old.path, face.path)) {
+			out.faces.add(face);
+			out.ids.add(old.id);
+		}
+	}
+	return out;
+}
+
+function sameBytes(a: string, b: string): boolean {
+	try {
+		return readFileSync(a).equals(readFileSync(b));
+	} catch {
+		return false;
+	}
+}
+
+/** Put the full original back in place of every release font Rabbit cut down. */
+function restoreReleaseFonts(state: FileFontState, result: FontPassResult): void {
+	const rabbitIds = new Set([...state.rabbit.attachmentIds.values()].flat());
+	for (const font of state.fonts) {
+		if (rabbitIds.has(font.id) || !font.original) continue;
+		const original = originalPath(font.original);
+		if (!original) {
+			Logger.warn(`[fonts] The full copy of ${font.fileName} is gone, so it stays cut down`);
+			continue;
+		}
+		result.dropAttachmentIds.push(font.id);
+		result.attach.push({ fileName: font.fileName, path: original, mime: fontRegistry.mime(original) });
+		result.restored++;
+	}
+}
+
+/** A cut is only worth a replaced attachment when it saves this much. */
+const MIN_CUT_SAVING = (size: number) => Math.max(1024, size * 0.02);
+
+async function cutReleaseFonts(
+	state: FileFontState,
+	texts: readonly string[],
+	cutOthers: boolean,
+	tempDir: string,
+	signal: AbortSignal | undefined,
+	result: FontPassResult,
+) {
+	const rabbitIds = new Set([...state.rabbit.attachmentIds.values()].flat());
+	const usage = faceUsage(texts);
+	const requests: Array<CutRequest & { font: FileFont; restoring: boolean }> = [];
+	for (const font of state.fonts) {
+		if (rabbitIds.has(font.id) || !font.names.length) continue;
+		const ext = extname(font.fileName).toLowerCase();
+		if (ext !== ".ttf" && ext !== ".otf") continue; // a collection holds several fonts and is left whole
+		const needed = new Set<number>();
+		for (const name of font.names) for (const cp of usage.get(name)?.codepoints ?? []) needed.add(cp);
+		if (!needed.size) continue; // a font no text draws in is not Rabbit's to cut
+		let original: string | null = null;
+		let sha: string;
+		if (font.original) {
+			original = originalPath(font.original);
+			sha = font.original;
+			if (!original) {
+				Logger.warn(`[fonts] The full copy of ${font.fileName} is gone, so characters it lacks cannot be restored`);
+				continue;
+			}
+		} else if (cutOthers) {
+			original = font.path;
+			sha = fontSha(font.path);
+		} else continue;
+		requests.push({
+			font,
+			restoring: !!font.original,
+			current: font.path,
+			original,
+			out: join(tempDir, `cut_${font.id}${ext}`),
+			needed: [...needed],
+			unicodes: [...new Set([...KEPT_CODEPOINTS, ...needed])].sort((a, b) => a - b),
+			sha,
+		});
+	}
+	if (!requests.length) return;
+
+	const results = await cutFonts(requests, tempDir, signal);
+	if (!results) {
+		Logger.warn("[fonts] Could not cut fonts down; leaving them as they are");
+		return;
+	}
+	requests.forEach((req, i) => {
+		const r = results[i];
+		if (!r || "error" in r) {
+			if (r) Logger.warn(`[fonts] Could not cut ${req.font.fileName}: ${r.error}`);
+			return;
+		}
+		if ("restricted" in r) {
+			Logger.info(`[fonts] ${req.font.fileName} does not allow cutting down, so it stays whole`);
+			return;
+		}
+		const size = statSafe(req.font.path);
+		const restore = req.restoring && r.missing > 0;
+		const smaller = cutOthers && r.size <= size - MIN_CUT_SAVING(size);
+		if (!restore && !smaller) return;
+		if (!req.restoring) storeOriginal(req.font.path, req.sha);
+		result.dropAttachmentIds.push(req.font.id);
+		result.attach.push({ fileName: req.font.fileName, path: req.out, mime: fontRegistry.mime(req.out) });
+		if (restore) result.restored++;
+		else result.cut++;
+		Logger.info(`[fonts] ${restore ? "Restored characters to" : "Cut down"} ${req.font.fileName}: ${size} -> ${r.size} B`);
 	});
-	const dropAttachmentIds: number[] = [];
-	for (const [key, ids] of existing.attachmentIds) if (!built.unbuilt.has(key)) dropAttachmentIds.push(...ids);
-	if (dropAttachmentIds.length || built.faces.length) {
-		Logger.info(`[fonts] Rebuilt the font group faces: ${built.faces.map((f) => f.fileName).join(", ") || "none needed"}`);
+}
+
+function statSafe(path: string): number {
+	try {
+		return Bun.file(path).size;
+	} catch {
+		return 0;
 	}
-	return { attachArgs: rabbitFaceArgs(built.faces), dropAttachmentIds, faces: built.faces };
 }
 
 /**

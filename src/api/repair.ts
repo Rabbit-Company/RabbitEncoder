@@ -16,6 +16,7 @@ import {
 	buildRepairAuditGroupPlans,
 	buildRepairLanguageRemovalPlans,
 	buildRepairSubtitleOrderPlans,
+	buildRepairFontPlans,
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
 	inspectRepairAuditFile,
@@ -26,6 +27,7 @@ import {
 	subtitlesOutOfOrder,
 } from "../pipeline/repair";
 import { run } from "../core/process";
+import { clearOriginals, originalsUsage } from "../fonts/font-cut";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
 import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
 import { addRepairJob, getAllJobs, getAppConfig, getJob } from "../queue/store";
@@ -393,6 +395,37 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
 		}
+	});
+
+	/** Rebuilds the fonts of the audited files without changing a track, one repair job per file. */
+	app.post("/api/repair/audit/rebuild-fonts", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { paths?: unknown; subset?: unknown; replaceTarget?: unknown };
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(String(path), config, "Audit file")))];
+			const inspected = await inspectAuditPaths(
+				paths.map((path) => ({ path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairFontPlans(inspected.files, { subset: raw.subset === true, replaceTarget: raw.replaceTarget === true });
+			assertNoPendingJobs(
+				plans.map((plan) => plan.targetPath),
+				"rebuilding fonts",
+			);
+			if (c.req.signal.aborted) throw new Error("Font rebuild request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** Full copies of the fonts Rabbit cut down, kept to restore characters later edits need. */
+	app.get("/api/fonts/originals", (c) => c.json(originalsUsage()));
+	app.delete("/api/fonts/originals", (c) => {
+		clearOriginals();
+		return c.json(originalsUsage());
 	});
 
 	/** The order an encode gives a list of subtitle tracks, as positions in the list. */

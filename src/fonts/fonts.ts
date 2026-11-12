@@ -195,6 +195,7 @@ class FontRegistry {
 			return families;
 		}
 		for (const entry of entries) {
+			if (entry.startsWith(".")) continue; // Rabbit's own folders and files, such as the cut fonts' originals
 			const full = join(dir, entry);
 			let isDir = false;
 			try {

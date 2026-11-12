@@ -12,6 +12,8 @@ import {
 	downloadSubtitleTrack,
 	fetchRepairFolderAudit,
 	orderRepairAuditSubtitles,
+	rebuildRepairAuditFonts,
+	fetchFontOriginals,
 	removeRepairAuditLanguages,
 } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
@@ -263,8 +265,113 @@ function renderAudit(): void {
 		})
 		.join("");
 	renderLanguages();
+	renderFonts();
 	renderFileList();
 	renderDetails();
+}
+
+let fontsOpen = false;
+let cutFonts = false;
+let originals: { count: number; bytes: number } | null = null;
+
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+
+/** Rebuilding the fonts of every audited file, and the full copies kept of fonts cut down. */
+function renderFonts(): void {
+	const container = byId("repair-audit-fonts");
+	const files = audit?.files.filter((file) => !queuedPaths.has(file.path)) ?? [];
+	if (!audit?.files.length) {
+		container.innerHTML = "";
+		return;
+	}
+	const previous = container.querySelector("details");
+	if (previous) fontsOpen = previous.open;
+	const stored = originals?.count
+		? `Full copies of ${originals.count} cut font${originals.count === 1 ? "" : "s"}: ${megabytes(originals.bytes)}`
+		: "No full copies of cut fonts are stored";
+	container.innerHTML = `<details class="settings-subsection repair-audit-fonts"${fontsOpen ? " open" : ""}>
+		<summary>Fonts <span class="hdr-note">Rebuild the font group faces, or cut fonts down</span></summary>
+		<div class="settings-subsection-body">
+			<p class="repair-audit-fonts-note">Gives the dialogue font real bold and italic faces where lines use them. Tracks are not changed, and a file whose fonts already fit is left alone.</p>
+			<label class="repair-audit-fonts-cut"><input type="checkbox" data-audit-cut-fonts ${cutFonts ? "checked" : ""} ${queueingGroup ? "disabled" : ""}> Cut every font to the characters the subtitles use</label>
+			<p class="repair-audit-fonts-note">Fonts that came with the release are cut too. Rabbit keeps one full copy of each, shared by every file that uses it, and restores characters from it when later changes in Rabbit need them. Fonts whose licence does not allow cutting stay whole. Left off, fonts cut earlier are made whole again.</p>
+			<div class="repair-audit-language-actions">
+				<label class="repair-audit-save-mode">Save changes to
+					<select class="select-input" id="repair-audit-fonts-save-mode" ${queueingGroup ? "disabled" : ""}>
+						<option value="existing" selected>Existing MKV files</option>
+						<option value="copies">New .repaired.mkv copies</option>
+					</select>
+				</label>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-rebuild-fonts ${files.length && !queueingGroup ? "" : "disabled"}>
+					Rebuild fonts in ${files.length} file${files.length === 1 ? "" : "s"}
+				</button>
+			</div>
+			<div class="repair-audit-language-actions">
+				<span class="repair-audit-fonts-stored">${escapeHtml(stored)}</span>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-clear-originals title="Files keep their cut fonts and play the same, but characters can no longer be restored to them" ${originals?.count && !queueingGroup ? "" : "disabled"}>Clear</button>
+			</div>
+		</div>
+	</details>`;
+}
+
+async function loadOriginals(clear = false): Promise<void> {
+	try {
+		originals = await fetchFontOriginals(clear);
+	} catch {
+		originals = null;
+	}
+	renderFonts();
+}
+
+export function handleRepairAuditFontsChange(event: Event): void {
+	const input = event.target instanceof HTMLInputElement ? event.target : null;
+	if (input?.dataset.auditCutFonts === undefined) return;
+	cutFonts = input.checked;
+}
+
+export function handleRepairAuditFontsClick(event: MouseEvent): void {
+	if (queueingGroup || !audit) return;
+	const target = event.target instanceof Element ? event.target : null;
+	if (target?.closest("[data-audit-rebuild-fonts]")) void queueFontRebuild();
+	if (target?.closest("[data-audit-clear-originals]")) {
+		if (
+			confirm(
+				"Delete the stored full copies of cut fonts?\n\nFiles keep their cut fonts and play the same, but characters later edits need can no longer be restored to them.",
+			)
+		)
+			void loadOriginals(true);
+	}
+}
+
+async function queueFontRebuild(): Promise<void> {
+	if (!audit || queueingGroup) return;
+	const currentAudit = audit;
+	const files = audit.files.filter((file) => !queuedPaths.has(file.path));
+	if (!files.length) return;
+	const replaceTarget = (byId("repair-audit-fonts-save-mode") as HTMLSelectElement).value === "existing";
+	const where = replaceTarget ? "Files that change are rewritten in place." : "New .repaired.mkv copies are written next to the files that change.";
+	const cut = cutFonts ? " and cut every font to the characters its subtitles use" : "";
+	if (!confirm(`Rebuild the fonts of ${files.length} file${files.length === 1 ? "" : "s"}${cut}?\n\nNo track changes. ${where}`)) return;
+	queueingGroup = true;
+	buttonById("repair-audit-pick-folder-btn").disabled = true;
+	renderFonts();
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} file${files.length === 1 ? "" : "s"}...`;
+	try {
+		const result = await rebuildRepairAuditFonts({ paths: files.map((file) => file.path), subset: cutFonts, replaceTarget });
+		if (audit === currentAudit) {
+			files.forEach((file) => queuedPaths.add(file.path));
+			byId("repair-audit-status").textContent =
+				`Queued ${result.jobIds.length} font rebuild${result.jobIds.length === 1 ? "" : "s"}. Follow their progress in the job list.`;
+		}
+		void update().catch(() => {});
+	} catch (error) {
+		if (audit === currentAudit) byId("repair-audit-status").textContent = errorMessage(error);
+	} finally {
+		queueingGroup = false;
+		buttonById("repair-audit-pick-folder-btn").disabled = false;
+		if (audit === currentAudit) renderAudit();
+		void loadOriginals();
+	}
 }
 
 const languageNames = (() => {
@@ -447,6 +554,8 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	removeLanguages.clear();
 	languagesOpen = null;
 	byId("repair-audit-languages").innerHTML = "";
+	byId("repair-audit-fonts").innerHTML = "";
+	void loadOriginals();
 	byId("repair-audit-status").textContent = "";
 	byId("repair-audit-modal").style.display = "";
 	byId("repair-audit-title-note").textContent = label || options.path || "Completed encoding folder";

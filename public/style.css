@@ -2546,6 +2546,25 @@ a.btn {
 	margin-top: 0;
 }
 
+.repair-audit-fonts-note {
+	margin: 0 0 10px;
+	color: var(--text-2);
+	font-size: 0.82rem;
+	line-height: 1.45;
+}
+
+.repair-audit-fonts-stored {
+	color: var(--text-2);
+	font-size: 0.82rem;
+}
+
+.repair-audit-fonts-cut {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+
 .repair-audit-group-fields {
 	border: 0;
 	padding: 0;

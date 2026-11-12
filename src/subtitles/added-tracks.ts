@@ -5,7 +5,7 @@ import { run } from "../core/process";
 import type { JobSettings } from "../core/types";
 import { FONT_EXTS, fontRegistry, listMkvAttachments, scanFontNames, type ResolvedFace } from "../fonts/fonts";
 import { createFaceMaterializer, isRabbitGroupFace, type FaceMaterializer } from "../fonts/inject";
-import { assTrackIds, dropAttachmentArgs, rabbitFacesInFile, readAssTracks, refreshRabbitFaces } from "../fonts/rabbit-faces";
+import { assTrackIds, dropAttachmentArgs, fileFontState, needsFontPass, readAssTracks, refreshFonts } from "../fonts/rabbit-faces";
 import { normalizeFontName } from "./ass-classifier";
 import { restyleAssDialogueFont } from "./ass-style";
 import { zlibWorthIt } from "./zlib-probe";
@@ -116,8 +116,8 @@ export async function prepareRemuxAddition(
 	let fontArgs: string[] = [];
 	let inputArgs: string[] = [];
 	const restyled = tracks.some((t) => t.restyle && t.format === "ass");
-	const existing = await rabbitFacesInFile(mkvPath, settings, tempDir, signal);
-	if (restyled || existing.families.length) {
+	const state = await fileFontState(mkvPath, settings, tempDir, signal);
+	if (restyled || needsFontPass(state)) {
 		const reservations = await remuxFontReservations(mkvPath, settings, tempDir, signal);
 		const materialize = createFaceMaterializer({ tempDir, occupiedNames: reservations.occupied, signal });
 		const faces = restyled ? await finishAddedTracks(tracks, settings, tempDir, materialize) : [];
@@ -126,11 +126,11 @@ export async function prepareRemuxAddition(
 		const kept = ids && (await readAssTracks(mkvPath, ids, tempDir, signal));
 		if (kept) {
 			const added = tracks.filter((t) => t.format === "ass" && existsSync(t.file)).map((t) => readFileSync(t.file, "utf-8"));
-			const refreshed = await refreshRabbitFaces({
+			const refreshed = await refreshFonts({
 				mkvPath,
 				texts: [...kept, ...added],
 				added: faces.map((base) => ({ family: base.family, base })),
-				existing,
+				state,
 				settings,
 				tempDir,
 				signal,
