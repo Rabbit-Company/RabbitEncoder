@@ -303,6 +303,8 @@ export interface FontPassResult {
 	/** Fonts of the release cut down or restored, for the job's summary. */
 	cut: number;
 	restored: number;
+	/** With `dryRun`, the full copies a cut would keep, by hash, with their sizes. */
+	originals: Map<string, number>;
 }
 
 /**
@@ -329,10 +331,12 @@ export async function refreshFonts(options: {
 	subset?: boolean;
 	cutOthers?: boolean;
 	uncut?: boolean;
+	/** Work out the result without keeping full copies of the fonts cut. */
+	dryRun?: boolean;
 }): Promise<FontPassResult> {
 	const { texts, tempDir, signal } = options;
 	const state = options.state ?? (await fileFontState(options.mkvPath, options.settings, tempDir, signal));
-	const result: FontPassResult = { attachArgs: [], dropAttachmentIds: [], attach: [], cut: 0, restored: 0 };
+	const result: FontPassResult = { attachArgs: [], dropAttachmentIds: [], attach: [], cut: 0, restored: 0, originals: new Map() };
 	if (!state.readable) return result;
 	const existing = state.rabbit;
 	const subset = options.subset ?? (!!options.settings.subsetFonts || (existing.cut?.size ?? 0) > 0);
@@ -343,13 +347,13 @@ export async function refreshFonts(options: {
 		const unchanged = sameFiles(built.faces, state.fonts, result.dropAttachmentIds);
 		result.dropAttachmentIds = result.dropAttachmentIds.filter((id) => !unchanged.ids.has(id));
 		result.attach.push(...built.faces.filter((face) => !unchanged.faces.has(face)));
-		if (result.attach.length || result.dropAttachmentIds.length) {
+		if (!options.dryRun && (result.attach.length || result.dropAttachmentIds.length)) {
 			Logger.info(`[fonts] Rebuilt the font group faces: ${result.attach.map((f) => f.fileName).join(", ") || "none needed"}`);
 		}
 	}
 
 	if (options.uncut) restoreReleaseFonts(state, result);
-	else await cutReleaseFonts(state, texts, !!options.cutOthers, tempDir, signal, result);
+	else await cutReleaseFonts(state, texts, !!options.cutOthers, tempDir, signal, result, !!options.dryRun);
 	result.attachArgs = rabbitFaceArgs(result.attach);
 	return result;
 }
@@ -405,6 +409,7 @@ async function cutReleaseFonts(
 	tempDir: string,
 	signal: AbortSignal | undefined,
 	result: FontPassResult,
+	dryRun: boolean,
 ) {
 	const rabbitIds = new Set([...state.rabbit.attachmentIds.values()].flat());
 	const usage = faceUsage(texts);
@@ -461,12 +466,13 @@ async function cutReleaseFonts(
 		const restore = req.restoring && r.missing > 0;
 		const smaller = cutOthers && r.size <= size - MIN_CUT_SAVING(size);
 		if (!restore && !smaller) return;
-		if (!req.restoring) storeOriginal(req.font.path, req.sha);
+		if (dryRun && !req.restoring) result.originals.set(req.sha, size);
+		else if (!req.restoring) storeOriginal(req.font.path, req.sha);
 		result.dropAttachmentIds.push(req.font.id);
 		result.attach.push({ fileName: req.font.fileName, path: req.out, mime: fontRegistry.mime(req.out) });
 		if (restore) result.restored++;
 		else result.cut++;
-		Logger.info(`[fonts] ${restore ? "Restored characters to" : "Cut down"} ${req.font.fileName}: ${size} -> ${r.size} B`);
+		if (!dryRun) Logger.info(`[fonts] ${restore ? "Restored characters to" : "Cut down"} ${req.font.fileName}: ${size} -> ${r.size} B`);
 	});
 }
 
@@ -513,4 +519,39 @@ export async function assTrackIds(mkvPath: string, signal?: AbortSignal): Promis
 	} catch {
 		return null;
 	}
+}
+
+export interface FontSavings {
+	/** Bytes of the fonts the file has now. */
+	now: number;
+	/** After a rebuild that leaves fonts whole. */
+	whole: number;
+	/** After a rebuild that cuts every font. */
+	cut: number;
+	/** Full copies the cut would keep, by hash, with their sizes. */
+	originals: Map<string, number>;
+}
+
+/**
+ * What a font rebuild would do to the size of the fonts of `mkvPath`, both
+ * leaving them whole and cutting them, without changing the file or keeping
+ * any full copies. Null when its fonts or subtitles cannot be read.
+ */
+export async function estimateFontSavings(mkvPath: string, settings: JobSettings, tempDir: string, signal?: AbortSignal): Promise<FontSavings | null> {
+	const state = await fileFontState(mkvPath, settings, tempDir, signal);
+	if (!state.readable) return null;
+	const now = state.fonts.reduce((n, f) => n + statSafe(f.path), 0);
+	const ids = await assTrackIds(mkvPath, signal);
+	const texts = ids && (await readAssTracks(mkvPath, ids, tempDir, signal));
+	if (!texts) return null;
+	const sizeAfter = (pass: FontPassResult) => {
+		const dropped = new Set(pass.dropAttachmentIds);
+		const kept = state.fonts.filter((f) => !dropped.has(f.id)).reduce((n, f) => n + statSafe(f.path), 0);
+		return kept + pass.attach.reduce((n, f) => n + statSafe(f.path), 0);
+	};
+	// Each pass writes its fonts to the same names, so each is measured before the next runs.
+	const base = { mkvPath, texts, state, settings, tempDir, signal };
+	const whole = sizeAfter(await refreshFonts({ ...base, subset: false, uncut: true, dryRun: true }));
+	const cutPass = await refreshFonts({ ...base, subset: true, cutOthers: true, dryRun: true });
+	return { now, whole, cut: sizeAfter(cutPass), originals: cutPass.originals };
 }

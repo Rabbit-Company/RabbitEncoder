@@ -446,6 +446,29 @@ export async function rebuildRepairAuditFonts(request: { paths: string[]; subset
 	return data;
 }
 
+export interface FontSavings {
+	files: number;
+	analyzed: number;
+	now: number;
+	whole: number;
+	cut: number;
+	/** Full copies cutting would keep that are not stored yet: bytes by hash. */
+	originals: Record<string, number>;
+}
+
+/** What rebuilding the fonts of up to 8 files would save, without changing them. */
+export async function analyzeRepairAuditFonts(paths: string[], signal?: AbortSignal): Promise<FontSavings> {
+	const response = await authFetch(`${API}/api/repair/audit/font-savings`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ paths }),
+		signal,
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not work out the font savings");
+	return data;
+}
+
 /** The full copies Rabbit keeps of the fonts it cut down. */
 export async function fetchFontOriginals(clear = false): Promise<{ count: number; bytes: number }> {
 	const response = await authFetch(`${API}/api/fonts/originals`, { method: clear ? "DELETE" : "GET" });

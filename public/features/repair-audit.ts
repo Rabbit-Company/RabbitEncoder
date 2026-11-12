@@ -13,7 +13,9 @@ import {
 	fetchRepairFolderAudit,
 	orderRepairAuditSubtitles,
 	rebuildRepairAuditFonts,
+	analyzeRepairAuditFonts,
 	fetchFontOriginals,
+	type FontSavings,
 	removeRepairAuditLanguages,
 } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
@@ -273,6 +275,10 @@ function renderAudit(): void {
 let fontsOpen = false;
 let cutFonts = false;
 let originals: { count: number; bytes: number } | null = null;
+let savings: FontSavings | null = null;
+let savingsError = "";
+let analyzing: AbortController | null = null;
+let analyzedFiles = 0;
 
 const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 
@@ -289,29 +295,90 @@ function renderFonts(): void {
 	const stored = originals?.count
 		? `Full copies of ${originals.count} cut font${originals.count === 1 ? "" : "s"}: ${megabytes(originals.bytes)}`
 		: "No full copies of cut fonts are stored";
+	const busy = queueingGroup || !!analyzing;
 	container.innerHTML = `<details class="settings-subsection repair-audit-fonts"${fontsOpen ? " open" : ""}>
 		<summary>Fonts <span class="hdr-note">Rebuild the font group faces, or cut fonts down</span></summary>
 		<div class="settings-subsection-body">
 			<p class="repair-audit-fonts-note">Gives the dialogue font real bold and italic faces where lines use them. Tracks are not changed, and a file whose fonts already fit is left alone.</p>
-			<label class="repair-audit-fonts-cut"><input type="checkbox" data-audit-cut-fonts ${cutFonts ? "checked" : ""} ${queueingGroup ? "disabled" : ""}> Cut every font to the characters the subtitles use</label>
+			<label class="repair-audit-fonts-cut"><input type="checkbox" data-audit-cut-fonts ${cutFonts ? "checked" : ""} ${busy ? "disabled" : ""}> Cut every font to the characters the subtitles use</label>
 			<p class="repair-audit-fonts-note">Fonts that came with the release are cut too. Rabbit keeps one full copy of each, shared by every file that uses it, and restores characters from it when later changes in Rabbit need them. Fonts whose licence does not allow cutting stay whole. Left off, fonts cut earlier are made whole again.</p>
 			<div class="repair-audit-language-actions">
+				<span class="repair-audit-fonts-stored">${savingsSummary()}</span>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-analyze-fonts ${files.length && !queueingGroup ? "" : "disabled"}>${analyzing ? "Cancel" : savings ? "Analyze again" : "Analyze savings"}</button>
+			</div>
+			<div class="repair-audit-language-actions">
 				<label class="repair-audit-save-mode">Save changes to
-					<select class="select-input" id="repair-audit-fonts-save-mode" ${queueingGroup ? "disabled" : ""}>
+					<select class="select-input" id="repair-audit-fonts-save-mode" ${busy ? "disabled" : ""}>
 						<option value="existing" selected>Existing MKV files</option>
 						<option value="copies">New .repaired.mkv copies</option>
 					</select>
 				</label>
-				<button class="btn btn-primary btn-sm" type="button" data-audit-rebuild-fonts ${files.length && !queueingGroup ? "" : "disabled"}>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-rebuild-fonts ${files.length && !busy ? "" : "disabled"}>
 					Rebuild fonts in ${files.length} file${files.length === 1 ? "" : "s"}
 				</button>
 			</div>
 			<div class="repair-audit-language-actions">
 				<span class="repair-audit-fonts-stored">${escapeHtml(stored)}</span>
-				<button class="btn btn-ghost btn-sm" type="button" data-audit-clear-originals title="Files keep their cut fonts and play the same, but characters can no longer be restored to them" ${originals?.count && !queueingGroup ? "" : "disabled"}>Clear</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-clear-originals title="Files keep their cut fonts and play the same, but characters can no longer be restored to them" ${originals?.count && !busy ? "" : "disabled"}>Clear</button>
 			</div>
 		</div>
 	</details>`;
+}
+
+/** The result of the last analysis, or what it is doing. */
+function savingsSummary(): string {
+	if (analyzing)
+		return `Working out the savings, ${analyzedFiles} of ${savings?.files ?? 0} files done. Fonts are cut in a scratch folder, so no file changes.`;
+	if (savingsError) return escapeHtml(savingsError);
+	if (!savings) return "See what a rebuild would do to the size of the fonts before queueing it.";
+	if (!savings.analyzed) return "None of the files could be read.";
+	const of = savings.analyzed < savings.files ? ` (${savings.analyzed} of ${savings.files} files could be read)` : "";
+	const change = (after: number) => {
+		const diff = savings!.now - after;
+		if (Math.abs(diff) < 100 * 1024) return `${megabytes(after)}, about the same`;
+		return `${megabytes(after)}, ${diff > 0 ? `${megabytes(diff)} smaller` : `${megabytes(-diff)} larger`}`;
+	};
+	const keptBytes = Object.values(savings.originals).reduce((n, bytes) => n + bytes, 0);
+	const kept = keptBytes ? ` Rabbit would keep ${megabytes(keptBytes)} of full copies.` : "";
+	return escapeHtml(`Fonts now: ${megabytes(savings.now)}${of}. Rebuilt whole: ${change(savings.whole)}. Cut: ${change(savings.cut)}.${kept}`);
+}
+
+async function analyzeFonts(): Promise<void> {
+	if (analyzing) {
+		analyzing.abort();
+		return;
+	}
+	if (!audit) return;
+	const currentAudit = audit;
+	const controller = new AbortController();
+	const paths = audit.files.filter((file) => !queuedPaths.has(file.path)).map((file) => file.path);
+	const total: FontSavings = { files: paths.length, analyzed: 0, now: 0, whole: 0, cut: 0, originals: {} };
+	analyzing = controller;
+	analyzedFiles = 0;
+	savings = total;
+	savingsError = "";
+	renderFonts();
+	try {
+		for (let offset = 0; offset < paths.length; offset += 4) {
+			const batch = await analyzeRepairAuditFonts(paths.slice(offset, offset + 4), controller.signal);
+			if (audit !== currentAudit) return;
+			total.analyzed += batch.analyzed;
+			total.now += batch.now;
+			total.whole += batch.whole;
+			total.cut += batch.cut;
+			Object.assign(total.originals, batch.originals);
+			analyzedFiles = Math.min(paths.length, offset + 4);
+			renderFonts();
+		}
+	} catch (error) {
+		if (audit === currentAudit) {
+			savings = null;
+			if (!controller.signal.aborted) savingsError = errorMessage(error);
+		}
+	} finally {
+		if (analyzing === controller) analyzing = null;
+		if (audit === currentAudit) renderFonts();
+	}
 }
 
 async function loadOriginals(clear = false): Promise<void> {
@@ -332,6 +399,8 @@ export function handleRepairAuditFontsChange(event: Event): void {
 export function handleRepairAuditFontsClick(event: MouseEvent): void {
 	if (queueingGroup || !audit) return;
 	const target = event.target instanceof Element ? event.target : null;
+	if (target?.closest("[data-audit-analyze-fonts]")) void analyzeFonts();
+	if (analyzing) return;
 	if (target?.closest("[data-audit-rebuild-fonts]")) void queueFontRebuild();
 	if (target?.closest("[data-audit-clear-originals]")) {
 		if (
@@ -360,6 +429,7 @@ async function queueFontRebuild(): Promise<void> {
 		const result = await rebuildRepairAuditFonts({ paths: files.map((file) => file.path), subset: cutFonts, replaceTarget });
 		if (audit === currentAudit) {
 			files.forEach((file) => queuedPaths.add(file.path));
+			savings = null;
 			byId("repair-audit-status").textContent =
 				`Queued ${result.jobIds.length} font rebuild${result.jobIds.length === 1 ? "" : "s"}. Follow their progress in the job list.`;
 		}
@@ -553,6 +623,10 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	queuedPaths.clear();
 	removeLanguages.clear();
 	languagesOpen = null;
+	analyzing?.abort();
+	analyzing = null;
+	savings = null;
+	savingsError = "";
 	byId("repair-audit-languages").innerHTML = "";
 	byId("repair-audit-fonts").innerHTML = "";
 	void loadOriginals();

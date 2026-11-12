@@ -6,7 +6,7 @@ import { getDefaultJobSettings } from "../../src/core/config";
 import { run } from "../../src/core/process";
 import { fontRegistry } from "../../src/fonts/fonts";
 import { clearOriginals, fontSha, originalMarker, originalsDir, originalsUsage, readOriginalMarker, storeOriginal } from "../../src/fonts/font-cut";
-import { dropAttachmentArgs, fileFontState, refreshFonts } from "../../src/fonts/rabbit-faces";
+import { dropAttachmentArgs, estimateFontSavings, fileFontState, refreshFonts } from "../../src/fonts/rabbit-faces";
 import { buildRepairFontPlans, sanitizeRepairPlan } from "../../src/pipeline/repair";
 
 const FONT = join(import.meta.dir, "../../fonts/Noto Sans/latin.ttf");
@@ -95,6 +95,13 @@ describe.skipIf(!hasTools)("cutting a release's fonts", () => {
 		const muxed = await run(["mkvmerge", "-q", "-o", mkv, join(dir, "signs.ass"), "--attachment-name", "NotoSans-Regular.ttf", "--attach-file", FONT]);
 		expect(muxed.code).toBe(0);
 		const settings = getDefaultJobSettings();
+
+		// Working out the savings changes nothing and keeps no full copies.
+		const estimate = await estimateFontSavings(mkv, settings, dir);
+		expect(estimate!.now).toBe(Bun.file(FONT).size);
+		expect(estimate!.cut).toBeLessThan(estimate!.now / 4);
+		expect(estimate!.originals.size).toBe(1);
+		expect(originalsUsage().count).toBe(0);
 
 		const cut = await refreshFonts({ mkvPath: mkv, texts: [ass("Café")], settings, tempDir: dir, cutOthers: true });
 		expect(cut.cut).toBe(1);

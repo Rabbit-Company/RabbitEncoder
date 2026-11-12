@@ -26,8 +26,11 @@ import {
 	subtitleSortOrder,
 	subtitlesOutOfOrder,
 } from "../pipeline/repair";
+import { Logger } from "../core/logger";
 import { run } from "../core/process";
-import { clearOriginals, originalsUsage } from "../fonts/font-cut";
+import { mapPool } from "../core/concurrency";
+import { clearOriginals, originalPath, originalsUsage } from "../fonts/font-cut";
+import { estimateFontSavings } from "../fonts/rabbit-faces";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
 import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
 import { addRepairJob, getAllJobs, getAppConfig, getJob } from "../queue/store";
@@ -416,6 +419,38 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 			if (c.req.signal.aborted) throw new Error("Font rebuild request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** What rebuilding the fonts of a few audited files would save, without changing them. The client sends a folder in batches. */
+	app.post("/api/repair/audit/font-savings", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { paths?: unknown };
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 8) throw new Error("Choose between 1 and 8 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(String(path), config, "Audit file")))];
+			const totals = { files: paths.length, analyzed: 0, now: 0, whole: 0, cut: 0, originals: {} as Record<string, number> };
+			await mapPool(paths, 2, async (path) => {
+				if (c.req.signal.aborted) return;
+				const workDir = join(config.tempDir, `font-savings-${randomUUID()}`);
+				mkdirSync(workDir, { recursive: true });
+				try {
+					const savings = await estimateFontSavings(path, config.defaults, workDir, c.req.signal);
+					if (!savings) return;
+					totals.analyzed++;
+					totals.now += savings.now;
+					totals.whole += savings.whole;
+					totals.cut += savings.cut;
+					for (const [sha, bytes] of savings.originals) if (!originalPath(sha)) totals.originals[sha] = bytes;
+				} catch (error: any) {
+					if (!c.req.signal.aborted) Logger.warn(`[fonts] Could not work out the font savings of ${basename(path)}: ${error?.message || error}`);
+				} finally {
+					rmSync(workDir, { recursive: true, force: true });
+				}
+			});
+			if (c.req.signal.aborted) throw new Error("Font analysis was cancelled");
+			return c.json(totals);
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);
 		}
