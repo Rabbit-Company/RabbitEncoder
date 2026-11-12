@@ -133,7 +133,7 @@ Intermediate VapourSynth and prepare-filter stills are also exposed when those s
 
 ### Film grain tables
 
-Rabbit measures film grain with [regrain](https://github.com/Rabbit-Company/regrain), which compares the grainy original with the denoised video and writes an AV1 film grain table with an entry for every scene.
+Rabbit measures film grain with [regrain](https://github.com/Rabbit-Company/regrain), which compares the grainy original with the denoised video and writes an AV1 film grain table with an entry for every scene. AV1 draws a new grain pattern for every frame, while part of a source's grain often stays in place from frame to frame. regrain compares the grain of consecutive frames where the picture stands still and scales each scene's grain to match, so it shimmers no more than the source's.
 
 When adding externally denoised videos from the Library, choose an original file or a folder of originals in **Queue Videos**. Rabbit proposes unique episode or filename matches. Review the pairs and adjust any unmatched rows. **Generate FGS tables automatically for mapped videos** is on by default when a match is found and can be turned off. Mapped originals are also preselected in Preview. Unmapped videos encode without automatic FGS. Each mapped video measures its table as a **Film Grain** step of its own encode, right after **Analyze**. regrain uses every CPU core, so the step never runs beside another job's denoise or encode. The step shows frame progress, speed, and ETA. If generation fails, the job fails with the error, and retrying the job retries generation. Starting a Preview for a mapped job measures the table first when it does not exist yet.
 
@@ -153,7 +153,7 @@ When Rabbit denoises the video itself, turn on **Advanced Settings -> AV1 film g
 
 After the video is encoded, Rabbit writes the table into the AV1 stream with `regrain apply`, for previews and full encodes. regrain then reads the result back, checks every frame's grain, and decodes it with dav1d before Rabbit continues. SVT-AV1's own `--fgs-table` reads only the first entry of a table, so it is not used. A **Full video** table is applied scene by scene, and each segment keeps the grain measured for it. A **Quick** table is applied as one segment to the whole video. A table path you enter yourself is applied as written, so its timestamps have to match the video. Keep the source table available until encoding finishes. Do not combine the table with `--photon-noise`, `--film-grain`, or `--fgs-table` in custom encoder parameters. Grain the encoder wrote itself is replaced by the table.
 
-The container downloads the checksum-verified [regrain v0.3.7 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.3.7). It is a static binary that uses the container's FFmpeg.
+The container downloads the checksum-verified [regrain v0.3.8 release](https://github.com/Rabbit-Company/regrain/releases/tag/v0.3.8). It is a static binary that uses the container's FFmpeg.
 
 ### HDR10+ metadata
 

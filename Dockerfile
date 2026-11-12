@@ -175,6 +175,7 @@ RUN python3 -m venv /opt/vs-venv \
 		vapoursynth-znedi3 \
 		vapoursynth-descale \
 		vapoursynth-deblock \
+		vapoursynth-edgemasks \
 		vapoursynth-hysteresis \
 		ffms2 \
 		fonttools \
@@ -270,8 +271,8 @@ RUN set -eux; \
 
 # regrain measures film grain and writes it into the AV1 encode. It is a static binary
 # and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
-ARG REGRAIN_VERSION=0.3.7
-ARG REGRAIN_SHA256=8fd721fd0ba5964219591e7f41713aa497ddba96d12521b3f3858551d7c39d2e
+ARG REGRAIN_VERSION=0.3.8
+ARG REGRAIN_SHA256=e7625416e34443be642071f9d6c80a158a4f0cfc7d5f2706c66a07412a2b24f1
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/regrain/releases/download/v${REGRAIN_VERSION}/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/regrain.tar.gz \
