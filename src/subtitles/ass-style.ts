@@ -11,6 +11,9 @@ const TOOL_VERSION: string = pkg.version;
  */
 const tidy = (n: number): string => String(parseFloat(n.toFixed(3)));
 
+/** Margins are int fields in ASS. Aegisub refuses to load a style with a fractional one. */
+const int = (n: number): string => String(Math.max(0, Math.round(n)));
+
 /**
  * Column overwriters, resolved from the Format line (names are case-insensitive).
  * `sx` / `sy` are the PlayResX/1920 and PlayResY/1080 scale factors: the style
@@ -27,9 +30,9 @@ const RESTYLE_COLUMNS: Record<string, (s: SubtitleStyle, sx: number, sy: number)
 	bold: (s) => (s.bold ? "-1" : "0"),
 	outline: (s, _sx, sy) => tidy(s.outline * sy),
 	shadow: (s, _sx, sy) => tidy(s.shadow * sy),
-	marginl: (s, sx) => tidy(s.marginL * sx),
-	marginr: (s, sx) => tidy(s.marginR * sx),
-	marginv: (s, _sx, sy) => tidy(s.marginV * sy),
+	marginl: (s, sx) => int(s.marginL * sx),
+	marginr: (s, sx) => int(s.marginR * sx),
+	marginv: (s, _sx, sy) => int(s.marginV * sy),
 };
 
 type AlignRow = "bottom" | "middle" | "top";
@@ -157,7 +160,7 @@ function buildStyleLine(name: string, s: SubtitleStyle): string {
 	return (
 		`Style: ${name},${s.fontName},${s.fontSize},${s.primaryColour},&H000000FF,` +
 		`${s.outlineColour},${s.backColour},${bold},0,0,0,100,100,0,0,1,` +
-		`${s.outline},${s.shadow},${s.alignment},${s.marginL},${s.marginR},${s.marginV},1`
+		`${s.outline},${s.shadow},${s.alignment},${int(s.marginL)},${int(s.marginR)},${int(s.marginV)},1`
 	);
 }
 

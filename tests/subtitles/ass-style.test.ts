@@ -69,8 +69,17 @@ describe("restyleAssDialogueFont — PlayRes-aware scaling", () => {
 		const s = getStyle(restyleAssDialogueFont(ass720(), sampleStyle, true), "Default");
 		expect(Number(s.fontsize)).toBeCloseTo((64 * 720) / 1080, 2);
 		expect(Number(s.outline)).toBeCloseTo((3.5 * 720) / 1080, 2);
-		expect(Number(s.marginl)).toBeCloseTo((80 * 1280) / 1920, 2);
-		expect(Number(s.marginv)).toBeCloseTo((60 * 720) / 1080, 2);
+		expect(s.marginl).toBe("53");
+		expect(s.marginr).toBe("53");
+		expect(s.marginv).toBe("40");
+	});
+
+	it("writes margins as whole numbers when the scale leaves a fraction", () => {
+		const out = restyleAssDialogueFont(ass720(), { ...sampleStyle, marginL: 135, marginR: 135, marginV: 50 }, true);
+		const s = getStyle(out, "Default");
+		expect(s.marginl).toBe("90");
+		expect(s.marginv).toBe("33");
+		for (const v of [s.marginl, s.marginr, s.marginv]) expect(v).toMatch(/^\d+$/);
 	});
 
 	it("does not scale unitless fields (colour, alignment, bold)", () => {
