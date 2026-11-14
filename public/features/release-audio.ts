@@ -21,6 +21,9 @@ let checks = new Map<string, { loading: boolean; results?: ReleaseCheck[]; error
 let scanning = false;
 /** The folders the grid was read with. Other ones make it stale. */
 let scannedWith = "";
+let rescanQueued = false;
+/** Releases picked by hand, by video. They outlive a scan and replace what pairing found. */
+let chosenReleases = new Map<string, string[]>();
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -42,6 +45,7 @@ function setError(message: string): void {
 const currentOptions = () => ({
 	...(targetDir ? { targetDir } : { targets: targetVideos }),
 	sourceDirs: releaseDirs.map((dir) => ({ path: dir.path, ...(dir.offset.trim() ? { offset: Number(dir.offset) } : {}) })),
+	overrides: [...chosenReleases].map(([targetPath, sourcePaths]) => ({ targetPath, sourcePaths })),
 });
 const isStale = () => !!scan && scannedWith !== JSON.stringify(currentOptions());
 
@@ -94,6 +98,7 @@ function methodLabel(method: string, offset?: number): string {
 	if (method === "absolute")
 		return `<span class="repair-pair-method" title="The release numbers its episodes across seasons">Absolute number (+${offset ?? "?"})</span>`;
 	if (method === "order") return '<span class="repair-pair-method repair-pair-weak">Filename order</span>';
+	if (method === "manual") return '<span class="repair-pair-method">Chosen by hand</span>';
 	return '<span class="repair-pair-method repair-pair-none">No match</span>';
 }
 
@@ -159,7 +164,11 @@ function renderRow(row: ReleaseAudioRow, rowIndex: number): string {
 		<th class="release-row-head" scope="row">
 			<div class="repair-file-name" title="${escapeHtml(row.targetPath)}">${escapeHtml(row.targetName)}</div>
 			${sources}
-			${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
+			<div class="release-row-actions">
+				<button class="btn btn-ghost btn-sm" type="button" data-release-pick="${rowIndex}" ${scanning ? "disabled" : ""}>${row.sources.length ? "Change release..." : "Choose release..."}</button>
+				${chosenReleases.has(row.targetPath) ? `<button class="btn btn-ghost btn-sm" type="button" data-release-auto="${rowIndex}" ${scanning ? "disabled" : ""} title="Pair this episode from the release folders again">Automatic</button>` : ""}
+				${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
+			</div>
 			${renderCheck(row)}
 		</th>
 		${row.cells.map((cell) => renderCell(row, rowIndex, cell)).join("")}
@@ -297,24 +306,45 @@ export function handleReleaseAudioSourcesInput(event: Event): void {
 	renderGrid();
 }
 
-export async function scanReleaseAudio(): Promise<void> {
+/** With keep, the picks and turned off columns stay, as after choosing an episode's release by hand. */
+export async function scanReleaseAudio(keep = false): Promise<void> {
+	if (scanning) {
+		rescanQueued = true;
+		return;
+	}
 	setError("");
 	scanning = true;
 	renderFolders();
-	renderQueueButton();
+	renderGrid();
 	const options = currentOptions();
 	try {
 		scan = await fetchReleaseAudioScan(options);
 		scannedWith = JSON.stringify(options);
-		selections = new Map();
-		excluded = new Set();
-		checks = new Map();
+		if (keep === true) {
+			// Another release offers other tracks, so drop picks a cell no longer has.
+			for (const row of scan.rows) {
+				const byKey = selections.get(row.targetPath);
+				if (!byKey) continue;
+				for (const [key, value] of byKey) {
+					const cell = row.cells.find((c) => c.key === key);
+					if (value && !cell?.candidates.some((c) => candidateId(c) === value)) byKey.delete(key);
+				}
+			}
+		} else {
+			selections = new Map();
+			excluded = new Set();
+			checks = new Map();
+		}
 	} catch (error) {
 		setError(errorMessage(error));
 	} finally {
 		scanning = false;
 		renderFolders();
 		renderGrid();
+	}
+	if (rescanQueued) {
+		rescanQueued = false;
+		await scanReleaseAudio(true);
 	}
 }
 
@@ -338,8 +368,39 @@ export function handleReleaseAudioGridChange(event: Event): void {
 	renderGrid();
 }
 
+/** Pairs one episode with releases chosen by hand, or with null pairs it from the release folders again. */
+function setChosenReleases(targetPath: string, paths: string[] | null): void {
+	if (paths && paths.length > MAX_RELEASE_FOLDERS) {
+		setError(`Choose at most ${MAX_RELEASE_FOLDERS} releases for an episode.`);
+		return;
+	}
+	if (paths) chosenReleases.set(targetPath, paths);
+	else chosenReleases.delete(targetPath);
+	checks.delete(targetPath);
+	void scanReleaseAudio(true);
+}
+
 export async function handleReleaseAudioGridClick(event: MouseEvent): Promise<void> {
-	const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-release-check]") : null;
+	const target = event.target instanceof Element ? event.target : null;
+	const pick = target?.closest<HTMLButtonElement>("[data-release-pick]");
+	const auto = target?.closest<HTMLButtonElement>("[data-release-auto]");
+	if (scan && (pick || auto)) {
+		const row = scan.rows[Number((pick ?? auto)!.dataset.releasePick ?? (pick ?? auto)!.dataset.releaseAuto)];
+		if (!row) return;
+		if (auto) setChosenReleases(row.targetPath, null);
+		else
+			openMkvVideosPicker(
+				row.sources.map((s) => s.path),
+				`Choose releases for ${row.targetName}`,
+				(paths) =>
+					setChosenReleases(
+						row.targetPath,
+						paths.filter((path) => path !== row.targetPath),
+					),
+			);
+		return;
+	}
+	const button = target?.closest<HTMLButtonElement>("[data-release-check]");
 	if (!button || !scan) return;
 	const row = scan.rows[Number(button.dataset.releaseCheck)];
 	if (!row) return;

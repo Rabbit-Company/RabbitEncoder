@@ -379,7 +379,13 @@ export interface ReleaseColumn {
 
 export interface ReleaseRow extends ReleaseTargetPlan {
 	targetName: string;
-	sources: Array<{ path: string; name: string; method: RepairPairMethod; offset?: number }>;
+	sources: Array<{ path: string; name: string; method: RepairPairMethod | "manual"; offset?: number }>;
+}
+
+/** Releases chosen by hand for one target, in place of the ones pairing found. An empty list leaves it without one. */
+export interface ReleaseOverride {
+	targetPath: string;
+	sourcePaths: string[];
 }
 
 export interface ReleaseGrid {
@@ -491,8 +497,31 @@ export function releaseFilesIn(path: string): string[] {
 	return statSync(path).isFile() ? [path] : mkvFilesIn(path);
 }
 
-/** Every target's episode in each release folder or file, and the release files that matched no target. */
+/**
+ * Every target's episode in each release folder or file, and the release files
+ * that matched no target. A target with an override takes the releases chosen
+ * for it instead.
+ */
 export function pairReleaseFolders(
+	targets: string[],
+	folders: Array<string | ReleaseFolder>,
+	overrides: ReleaseOverride[] = [],
+): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[] } {
+	const { pairedSources, unmatchedSources } = pairReleaseFoldersAuto(targets, folders);
+	const chosen = new Set<string>();
+	for (const override of overrides) {
+		if (!pairedSources.has(override.targetPath)) continue;
+		const paths = [...new Set(override.sourcePaths)].filter((path) => path !== override.targetPath);
+		pairedSources.set(
+			override.targetPath,
+			paths.map((path) => ({ path, name: basename(path), method: "manual" as const })),
+		);
+		for (const path of paths) chosen.add(path);
+	}
+	return { pairedSources, unmatchedSources: unmatchedSources.filter((path) => !chosen.has(path)) };
+}
+
+function pairReleaseFoldersAuto(
 	targets: string[],
 	folders: Array<string | ReleaseFolder>,
 ): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[] } {
@@ -524,11 +553,12 @@ export async function scanReleaseSubtitles(input: {
 	targets: string[];
 	/** Release folders, each with the offset its numbering across seasons has when given by hand. */
 	sourceDirs: Array<string | ReleaseFolder>;
+	overrides?: ReleaseOverride[];
 	options: ReleaseSubsOptions;
 	signal?: AbortSignal;
 }): Promise<ReleaseScan> {
 	const { targets, options, signal } = input;
-	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs);
+	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
 	const files = [...new Set([...targets, ...[...pairedSources.values()].flat().map((s) => s.path)])];
 	const inspected = new Map<string, RepairInspectionFile>();
 	await mapPool(files, 4, async (path) => {

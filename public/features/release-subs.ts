@@ -26,6 +26,8 @@ let scannedWith = "";
 let mappings = new Map<string, ReleaseTrackMapping>();
 let mappingsOpen = false;
 let rescanQueued = false;
+/** Releases picked by hand, by encode. They outlive a scan and replace what pairing found. */
+let chosenReleases = new Map<string, string[]>();
 
 const KIND_NAMES: Record<string, string> = { full: "Full", honorifics: "Honorifics", sdh: "SDH", forced: "Signs & Songs" };
 const mappingId = (language: string, title: string): string => `${language}\n${title}`;
@@ -61,6 +63,7 @@ const currentOptions = () => ({
 	preferredSources: parseList(inputById("release-subs-preferred").value),
 	replaceWorse: inputById("release-subs-replace").checked,
 	mappings: mappingList(),
+	overrides: [...chosenReleases].map(([targetPath, sourcePaths]) => ({ targetPath, sourcePaths })),
 });
 const isStale = () => !!scan && scannedWith !== JSON.stringify(currentOptions());
 
@@ -116,6 +119,7 @@ function methodLabel(method: string, offset?: number): string {
 	if (method === "absolute")
 		return `<span class="repair-pair-method" title="The release numbers its episodes across seasons">Absolute number (+${offset ?? "?"})</span>`;
 	if (method === "order") return '<span class="repair-pair-method repair-pair-weak">Filename order</span>';
+	if (method === "manual") return '<span class="repair-pair-method">Chosen by hand</span>';
 	return '<span class="repair-pair-method repair-pair-none">No match</span>';
 }
 
@@ -189,7 +193,11 @@ function renderRow(row: ReleaseRow, rowIndex: number): string {
 		<th class="release-row-head" scope="row">
 			<div class="repair-file-name" title="${escapeHtml(row.targetPath)}">${escapeHtml(row.targetName)}</div>
 			${sources}
-			${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
+			<div class="release-row-actions">
+				<button class="btn btn-ghost btn-sm" type="button" data-release-pick="${rowIndex}" ${scanning ? "disabled" : ""}>${row.sources.length ? "Change release..." : "Choose release..."}</button>
+				${chosenReleases.has(row.targetPath) ? `<button class="btn btn-ghost btn-sm" type="button" data-release-auto="${rowIndex}" ${scanning ? "disabled" : ""} title="Pair this episode from the release folders again">Automatic</button>` : ""}
+				${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
+			</div>
 			${renderCheck(row)}
 			${(row.retags ?? []).map((r) => `<div class="release-row-retag" title="${escapeHtml(r.language)}">Renames a track to ${escapeHtml(r.title)} (${escapeHtml(r.language)})</div>`).join("")}
 		</th>
@@ -415,7 +423,7 @@ export async function scanReleaseSubs(keep = false): Promise<void> {
 	setError("");
 	scanning = true;
 	renderFolders();
-	renderQueueButton();
+	renderGrid();
 	const options = currentOptions();
 	try {
 		scan = await fetchReleaseScan(options);
@@ -469,8 +477,39 @@ export function handleReleaseSubsGridChange(event: Event): void {
 	renderGrid();
 }
 
+/** Pairs one episode with releases chosen by hand, or with null pairs it from the release folders again. */
+function setChosenReleases(targetPath: string, paths: string[] | null): void {
+	if (paths && paths.length > MAX_RELEASE_FOLDERS) {
+		setError(`Choose at most ${MAX_RELEASE_FOLDERS} releases for an episode.`);
+		return;
+	}
+	if (paths) chosenReleases.set(targetPath, paths);
+	else chosenReleases.delete(targetPath);
+	checks.delete(targetPath);
+	void scanReleaseSubs(true);
+}
+
 export async function handleReleaseSubsGridClick(event: MouseEvent): Promise<void> {
-	const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-release-check]") : null;
+	const target = event.target instanceof Element ? event.target : null;
+	const pick = target?.closest<HTMLButtonElement>("[data-release-pick]");
+	const auto = target?.closest<HTMLButtonElement>("[data-release-auto]");
+	if (scan && (pick || auto)) {
+		const row = scan.rows[Number((pick ?? auto)!.dataset.releasePick ?? (pick ?? auto)!.dataset.releaseAuto)];
+		if (!row) return;
+		if (auto) setChosenReleases(row.targetPath, null);
+		else
+			openMkvVideosPicker(
+				row.sources.map((s) => s.path),
+				`Choose releases for ${row.targetName}`,
+				(paths) =>
+					setChosenReleases(
+						row.targetPath,
+						paths.filter((path) => path !== row.targetPath),
+					),
+			);
+		return;
+	}
+	const button = target?.closest<HTMLButtonElement>("[data-release-check]");
 	if (!button || !scan) return;
 	const row = scan.rows[Number(button.dataset.releaseCheck)];
 	if (!row) return;

@@ -11,6 +11,7 @@ import {
 	planReleaseSubtitles,
 	scanReleaseSubtitles,
 	type ReleaseFolder,
+	type ReleaseOverride,
 	type ReleaseSubsOptions,
 	type ReleaseTrackMapping,
 } from "../pipeline/release-subs";
@@ -80,6 +81,21 @@ function resolveChoices(raw: unknown, sources: string[], config: AppConfig): Non
 	return out;
 }
 
+/** Releases chosen by hand for episodes the grid lists. Overrides for other files are dropped. */
+export function resolveReleaseOverrides(raw: unknown, targets: string[], config: AppConfig): ReleaseOverride[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_FILES) throw new Error("Invalid chosen releases");
+	const out: ReleaseOverride[] = [];
+	for (const item of raw as Array<{ targetPath?: unknown; sourcePaths?: unknown }>) {
+		const targetPath = resolveAllowedMkv(item?.targetPath, config, "Encoded target");
+		if (!targets.includes(targetPath) || out.some((o) => o.targetPath === targetPath)) continue;
+		if (!Array.isArray(item.sourcePaths)) throw new Error("Each chosen episode needs its list of releases");
+		if (item.sourcePaths.length > MAX_ROW_SOURCES) throw new Error(`Choose at most ${MAX_ROW_SOURCES} releases for an episode`);
+		out.push({ targetPath, sourcePaths: [...new Set(item.sourcePaths.map((path) => resolveAllowedMkv(path, config, "Release")))] });
+	}
+	return out;
+}
+
 /** Release folders and single release files, each folder with the numbering offset typed for it. */
 export function resolveReleaseFolders(raw: unknown, config: AppConfig): ReleaseFolder[] {
 	if (!Array.isArray(raw) || !raw.length) throw new Error("Choose at least one release folder or file");
@@ -113,6 +129,7 @@ export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void
 				preferredSources?: unknown;
 				replaceWorse?: unknown;
 				mappings?: unknown;
+				overrides?: unknown;
 			};
 			const targets = Array.isArray(raw.targets)
 				? raw.targets.map((path) => resolveAllowedMkv(path, config, "Encoded target"))
@@ -121,7 +138,14 @@ export function registerReleaseSubtitleRoutes(app: Web, config: AppConfig): void
 			const sourceDirs = resolveReleaseFolders(raw.sourceDirs, config);
 			if (targets.length > MAX_FILES || sourceDirs.some((dir) => releaseFilesIn(dir.path).length > MAX_FILES))
 				throw new Error(`Copying subtitles from releases is limited to ${MAX_FILES} files per folder`);
-			const scan = await scanReleaseSubtitles({ targets: [...new Set(targets)], sourceDirs, options: planOptions(config, raw), signal: c.req.signal });
+			const unique = [...new Set(targets)];
+			const scan = await scanReleaseSubtitles({
+				targets: unique,
+				sourceDirs,
+				overrides: resolveReleaseOverrides(raw.overrides, unique, config),
+				options: planOptions(config, raw),
+				signal: c.req.signal,
+			});
 			return c.json(scan);
 		} catch (error: any) {
 			return c.json({ error: error?.message || String(error) }, 400);

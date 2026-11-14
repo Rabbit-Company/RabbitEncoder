@@ -5888,7 +5888,10 @@ a.btn {
 	white-space: nowrap;
 }
 
-.release-row-head .btn {
+.release-row-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
 	margin-top: 4px;
 }
 

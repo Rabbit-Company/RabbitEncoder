@@ -6,6 +6,7 @@ import { run } from "../../src/core/process";
 import type { RepairInspectionFile, RepairSubtitleTrack } from "../../src/core/types";
 import {
 	buildReleaseRepairPlan,
+	pairReleaseFolders,
 	planReleaseSubtitles,
 	releaseCredit,
 	releaseGrid,
@@ -335,4 +336,29 @@ const hasTools = ["mkvmerge"].every((tool) => Bun.which(tool));
 		]);
 		expect(given.rows[0]!.additions.map((a) => a.key)).toEqual(["it:full"]);
 	}, 30_000);
+});
+
+describe("pairReleaseFolders with releases chosen by hand", () => {
+	const root = mkdtempSync(join(tmpdir(), "rabbit-release-override-"));
+	afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+	it("replaces the found release of a chosen episode only", () => {
+		for (const dir of ["enc", "rel", "other"]) mkdirSync(join(root, dir));
+		const targets = [join(root, "enc", "Show - S01E01.mkv"), join(root, "enc", "Show - S01E02.mkv")];
+		const releases = [join(root, "rel", "[Group] Show - 01.mkv"), join(root, "rel", "[Group] Show - 02.mkv")];
+		const picked = join(root, "other", "Show Special.mkv");
+		for (const path of [...targets, ...releases, picked]) writeFileSync(path, "");
+
+		const { pairedSources, unmatchedSources } = pairReleaseFolders(
+			targets,
+			[join(root, "rel"), join(root, "other")],
+			[
+				{ targetPath: targets[1]!, sourcePaths: [picked, targets[1]!] },
+				{ targetPath: join(root, "enc", "Not Listed.mkv"), sourcePaths: [releases[0]!] },
+			],
+		);
+		expect(pairedSources.get(targets[0]!)!.map((s) => [s.name, s.method])).toEqual([["[Group] Show - 01.mkv", "episode"]]);
+		expect(pairedSources.get(targets[1]!)).toEqual([{ path: picked, name: "Show Special.mkv", method: "manual" }]);
+		expect(unmatchedSources).not.toContain(picked);
+	});
 });

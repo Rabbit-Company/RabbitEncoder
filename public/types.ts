@@ -641,7 +641,7 @@ export interface ReleaseColumn {
 export interface ReleaseRow {
 	targetPath: string;
 	targetName: string;
-	sources: { path: string; name: string; method: "episode" | "absolute" | "order" | "none"; offset?: number }[];
+	sources: { path: string; name: string; method: "episode" | "absolute" | "order" | "none" | "manual"; offset?: number }[];
 	cells: ReleaseCell[];
 	/** Encode tracks a track mapping renames or retags. */
 	retags: { trackId: number; title: string; language: string }[];

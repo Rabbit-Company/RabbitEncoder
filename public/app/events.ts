@@ -350,7 +350,7 @@ export function initEventListeners() {
 	byId("release-audio-pick-videos-btn").addEventListener("click", pickReleaseAudioTargetVideos);
 	byId("release-audio-sources").addEventListener("click", handleReleaseAudioSourcesClick);
 	byId("release-audio-sources").addEventListener("input", handleReleaseAudioSourcesInput);
-	byId("release-audio-scan-btn").addEventListener("click", scanReleaseAudio);
+	byId("release-audio-scan-btn").addEventListener("click", () => scanReleaseAudio());
 	byId("release-audio-grid").addEventListener("change", handleReleaseAudioGridChange);
 	byId("release-audio-grid").addEventListener("click", handleReleaseAudioGridClick);
 	byId("release-audio-queue-btn").addEventListener("click", queueReleaseAudio);

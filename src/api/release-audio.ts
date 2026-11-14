@@ -14,7 +14,7 @@ import {
 import { mkvFilesIn, releaseFilesIn } from "../pipeline/release-subs";
 import { addAudioJob, getAllJobs } from "../queue/store";
 import { resolveAllowedDirectory, resolveAllowedMkv } from "./repair";
-import { resolveReleaseFolders } from "./release-subs";
+import { resolveReleaseFolders, resolveReleaseOverrides } from "./release-subs";
 
 const MAX_FILES = 500;
 const MAX_ROW_SOURCES = 10;
@@ -49,7 +49,7 @@ function resolveChoices(raw: unknown, sources: string[], config: AppConfig): Non
 export function registerReleaseAudioRoutes(app: Web, config: AppConfig): void {
 	app.post("/api/release-audio/scan", async (c) => {
 		try {
-			const raw = (await c.req.json()) as { targets?: unknown; targetDir?: unknown; sourceDirs?: unknown };
+			const raw = (await c.req.json()) as { targets?: unknown; targetDir?: unknown; sourceDirs?: unknown; overrides?: unknown };
 			const targets = Array.isArray(raw.targets)
 				? raw.targets.map((path) => resolveAllowedMkv(path, config, "Video"))
 				: mkvFilesIn(resolveAllowedDirectory(raw.targetDir, config));
@@ -57,9 +57,11 @@ export function registerReleaseAudioRoutes(app: Web, config: AppConfig): void {
 			const sourceDirs = resolveReleaseFolders(raw.sourceDirs, config);
 			if (targets.length > MAX_FILES || sourceDirs.some((dir) => releaseFilesIn(dir.path).length > MAX_FILES))
 				throw new Error(`Copying audio from releases is limited to ${MAX_FILES} files per folder`);
+			const unique = [...new Set(targets)];
 			const scan = await scanReleaseAudio({
-				targets: [...new Set(targets)],
+				targets: unique,
 				sourceDirs,
+				overrides: resolveReleaseOverrides(raw.overrides, unique, config),
 				options: releaseAudioDefaults(config.defaults),
 				signal: c.req.signal,
 			});

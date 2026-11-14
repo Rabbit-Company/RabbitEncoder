@@ -275,6 +275,7 @@ export async function fetchReleaseScan(options: {
 	preferredSources: string[];
 	replaceWorse: boolean;
 	mappings: ReleaseTrackMapping[];
+	overrides: { targetPath: string; sourcePaths: string[] }[];
 }): Promise<ReleaseScan> {
 	const response = await authFetch(`${API}/api/release-subs/scan`, {
 		method: "POST",
@@ -317,6 +318,7 @@ export async function fetchReleaseAudioScan(options: {
 	targetDir?: string;
 	targets?: string[];
 	sourceDirs: Array<{ path: string; offset?: number }>;
+	overrides: { targetPath: string; sourcePaths: string[] }[];
 }): Promise<ReleaseAudioScan> {
 	const response = await authFetch(`${API}/api/release-audio/scan`, {
 		method: "POST",

@@ -39,6 +39,7 @@ import {
 	releaseLanguageName,
 	type ReleaseCellAction,
 	type ReleaseFolder,
+	type ReleaseOverride,
 	type ReleaseSource,
 } from "./release-subs";
 
@@ -361,11 +362,12 @@ export function releaseAudioGrid(rows: ReleaseAudioRow[], languagePriority: stri
 export async function scanReleaseAudio(input: {
 	targets: string[];
 	sourceDirs: Array<string | ReleaseFolder>;
+	overrides?: ReleaseOverride[];
 	options: ReleaseAudioOptions;
 	signal?: AbortSignal;
 }): Promise<ReleaseAudioScan> {
 	const { targets, options, signal } = input;
-	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs);
+	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
 	const files = [...new Set([...targets, ...[...pairedSources.values()].flat().map((s) => s.path)])];
 	const inspected = new Map<string, ReleaseAudioFile>();
 	await mapPool(files, 4, async (path) => {
