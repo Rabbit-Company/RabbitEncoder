@@ -24,8 +24,9 @@ export function parseRatio(s: string | null | undefined): Rational | null {
 }
 
 /**
- * The source's pixel aspect ratio - the one property that survives cropping.
- * Prefer ffprobe's sample_aspect_ratio; derive from DAR only as a fallback.
+ * The pixel aspect ratio the source is flagged with, the one property that
+ * survives cropping. Prefer ffprobe's sample_aspect_ratio and derive from DAR
+ * only as a fallback.
  */
 export function resolveSourceSar(probe: { sampleAspectRatio: string; displayAspectRatio: string; width: number; height: number }): Rational {
 	const sar = parseRatio(probe.sampleAspectRatio);
@@ -37,6 +38,33 @@ export function resolveSourceSar(probe: { sampleAspectRatio: string; displayAspe
 		return reduceRatio({ num: dar.num * probe.height, den: dar.den * probe.width });
 	}
 	return { num: 1, den: 1 };
+}
+
+/**
+ * A frame that is 4:3 in square pixels but flagged to show at 16:9, like
+ * 1440x1080. Blu-ray only allows 1440x1080 as 16:9, so discs of 4:3 shows
+ * carry that flag although their pixels are square. The same frame holds real
+ * 16:9 on broadcast captures and on a few HD camera masters, so the flag alone
+ * cannot tell them apart. HDTV always keeps the flag.
+ */
+export function hasDoubtfulWideFlag(width: number, height: number, sar: Rational, sourceTag?: string): boolean {
+	return width > 0 && width * 3 === height * 4 && sar.num * 3 === sar.den * 4 && sourceTag !== "HDTV";
+}
+
+/**
+ * Pixel shape of the picture itself. A doubtful 16:9 flag is kept only when
+ * the picture has side bars, since a 4:3 picture pillarboxed inside the frame
+ * proves the frame really is 16:9. A picture filling the full width is 4:3
+ * with square pixels.
+ */
+export function resolvePictureSar(
+	frame: { width: number; height: number },
+	flagged: Rational,
+	sourceTag: string | undefined,
+	hasSideBars: boolean,
+): { sar: Rational; overridden: boolean } {
+	if (hasDoubtfulWideFlag(frame.width, frame.height, flagged, sourceTag) && !hasSideBars) return { sar: { num: 1, den: 1 }, overridden: true };
+	return { sar: flagged, overridden: false };
 }
 
 /**

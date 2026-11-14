@@ -16,7 +16,7 @@ import { Logger } from "../core/logger";
 import { buildAutoDenoiseFilter, describePlanLevels, type DenoisePlan, type DenoiseRange } from "./auto-denoise";
 import { avdEngineLabel, isAvdEngine } from "./avd";
 import { run } from "../core/process";
-import type { Rational } from "./aspect";
+import { hasDoubtfulWideFlag, resolvePictureSar, type Rational } from "./aspect";
 
 /** Default nlmeans parameters per level. Used when env vars / settings don't override. */
 export const DEFAULT_NLMEANS_PARAMS: NlmeansLevelParams = {
@@ -538,6 +538,60 @@ export function snapCropToStandardAspect(rect: CropRect, frame: FrameSize, sar: 
 	return best ?? rect;
 }
 
+export interface PictureGeometryInput {
+	inputPath: string;
+	crop: CropMode;
+	cropLimit: number;
+	sourceWidth: number;
+	sourceHeight: number;
+	/** Pixel aspect ratio the source is flagged with. */
+	sourceSar: Rational;
+	sourceTag?: string;
+}
+
+export interface PictureGeometry {
+	/** The area to keep, or null when nothing is cropped. */
+	cropRect: CropRect | null;
+	/** Pixel shape of the picture, after correcting a doubtful 16:9 flag. */
+	sar: Rational;
+}
+
+/**
+ * Finds the bars and the true pixel shape together, since a doubtful 16:9
+ * flag can only be settled by whether the picture has side bars. Bars are
+ * still looked for with crop off when the flag is in doubt, but not cropped.
+ */
+export async function detectPictureGeometry(input: PictureGeometryInput): Promise<PictureGeometry> {
+	const frame = { width: input.sourceWidth, height: input.sourceHeight };
+	const doubtful = hasDoubtfulWideFlag(frame.width, frame.height, input.sourceSar, input.sourceTag);
+
+	let rect: CropRect | null = null;
+	if (input.crop === "auto" || doubtful) {
+		rect = await detectCrop(input.inputPath, input.cropLimit, undefined, frame);
+		if (rect && isFullFrameCrop(rect, frame)) rect = null;
+	}
+
+	const hasSideBars = !!rect && rect.w < frame.width - FULL_FRAME_TOLERANCE_PX;
+	const picture = resolvePictureSar(frame, input.sourceSar, input.sourceTag, hasSideBars);
+	if (picture.overridden) {
+		Logger.info(`[aspect] ${frame.width}x${frame.height} is flagged 16:9 but the picture fills the full width. Treating it as 4:3 with square pixels.`);
+	} else if (doubtful) {
+		Logger.info(`[aspect] ${frame.width}x${frame.height} is flagged 16:9 and the picture has side bars. Keeping the 16:9 flag.`);
+	}
+
+	if (input.crop !== "auto") return { cropRect: null, sar: picture.sar };
+	if (!rect) {
+		Logger.info(`[crop] No bars detected at ${frame.width}x${frame.height}. Skipping crop step.`);
+		return { cropRect: null, sar: picture.sar };
+	}
+
+	const snapped = snapCropToStandardAspect(rect, frame, picture.sar);
+	if (snapped !== rect) {
+		Logger.info(`[crop] Snapping detected ${rect.w}x${rect.h}+${rect.x}+${rect.y} to standard aspect ` + `${snapped.w}x${snapped.h}+${snapped.x}+${snapped.y}`);
+	}
+	return { cropRect: snapped, sar: picture.sar };
+}
+
 export function buildCropFilter(rect: CropRect): string {
 	return `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y}`;
 }
@@ -565,14 +619,10 @@ export function buildCropFilter(rect: CropRect): string {
  * fixed levels and auto plans.
  */
 export interface PrepareFilterInput {
-	inputPath: string;
 	downscale: boolean;
-	crop: CropMode;
-	cropLimit: number;
+	/** The area to keep, from detectPictureGeometry. */
+	cropRect?: CropRect | null;
 	sourceHeight: number;
-	sourceWidth: number;
-	/** Source pixel aspect ratio. Square pixels when omitted. */
-	sourceSar?: Rational;
 	denoise: DenoiseLevel;
 	denoiseEngine: DenoiseEngine;
 	denoiseBackend: DenoiseBackend;
@@ -589,10 +639,7 @@ export interface PrepareFilterInput {
 export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promise<PrepareFilterConfig | null> {
 	const {
 		downscale,
-		crop,
-		cropLimit,
 		sourceHeight,
-		sourceWidth,
 		denoise,
 		denoiseEngine,
 		denoiseBackend,
@@ -606,31 +653,9 @@ export async function buildPrepareFilterConfig(input: PrepareFilterInput): Promi
 		totalDuration,
 	} = input;
 
-	let cropFilter: string | null = null;
-	let cropLabel: string | null = null;
-	let cropRect: CropRect | null = null;
-
-	if (crop === "auto") {
-		const frame = { width: input.sourceWidth, height: input.sourceHeight };
-		cropRect = await detectCrop(input.inputPath, cropLimit, undefined, frame);
-
-		if (cropRect && isFullFrameCrop(cropRect, frame)) cropRect = null;
-
-		if (cropRect) {
-			const snapped = snapCropToStandardAspect(cropRect, frame, input.sourceSar);
-			if (snapped !== cropRect) {
-				Logger.info(
-					`[crop] Snapping detected ${cropRect.w}x${cropRect.h}+${cropRect.x}+${cropRect.y} to standard aspect ` +
-						`${snapped.w}x${snapped.h}+${snapped.x}+${snapped.y}`,
-				);
-				cropRect = snapped;
-			}
-			cropFilter = buildCropFilter(cropRect);
-			cropLabel = `Cropping to ${cropRect.w}x${cropRect.h}`;
-		} else {
-			Logger.info(`[crop] No bars detected at ${input.sourceWidth}x${input.sourceHeight}. Skipping crop step.`);
-		}
-	}
+	const cropRect = input.cropRect ?? null;
+	const cropFilter = cropRect ? buildCropFilter(cropRect) : null;
+	const cropLabel = cropRect ? `Cropping to ${cropRect.w}x${cropRect.h}` : null;
 
 	let denoiseFilter: string | null = null;
 	let denoisePreInputArgs: string[] = [];

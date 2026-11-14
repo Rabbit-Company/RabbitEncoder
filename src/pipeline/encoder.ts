@@ -50,7 +50,7 @@ import { extractUsedFonts, normalizeFontName } from "../subtitles/ass-classifier
 import { fontRegistry, buildKeptAttachmentArgs, scanMkvAttachmentFontNames, type ResolvedFace } from "../fonts/fonts";
 import { detectSourceTag, detectReleaseGroup, getResolutionTag, extractBaseTitle, inferSourceFromStream } from "../core/naming";
 import pkg from "../../package.json";
-import { buildPrepareFilterConfig } from "../video/filters";
+import { buildPrepareFilterConfig, detectPictureGeometry } from "../video/filters";
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
 import { ffmpegProgress, mkvtoolnixProgress, preparePhaseProgress } from "./prepare-progress";
 import { shouldStageSource } from "./source-staging";
@@ -732,14 +732,19 @@ export async function encodeJob(
 		}
 
 		setStep(S_PREPARE, { progress: 35, detail: "Checking crop and filter settings" });
-		const prepareFilter = await buildPrepareFilterConfig({
+		const picture = await detectPictureGeometry({
 			inputPath: sourcePath,
 			crop: job.settings.crop,
 			cropLimit: job.settings.cropLimit,
+			sourceWidth: decodedFrameSize(probe).width,
+			sourceHeight: decodedFrameSize(probe).height,
+			sourceSar: resolveSourceSar(probe),
+			sourceTag,
+		});
+		const prepareFilter = await buildPrepareFilterConfig({
+			cropRect: picture.cropRect,
 			downscale: job.settings.downscale,
 			sourceHeight: decodedFrameSize(probe).height,
-			sourceWidth: decodedFrameSize(probe).width,
-			sourceSar: resolveSourceSar(probe),
 			denoise: job.settings.denoise,
 			denoiseEngine: job.settings.denoiseEngine,
 			denoiseBackend: job.settings.denoiseBackend,
@@ -2359,7 +2364,7 @@ export async function encodeJob(
 		if (!encodedDims) {
 			Logger.warn("[mux] Could not probe encoded dimensions. Leaving display dimensions unset (players will assume square pixels).");
 		} else {
-			const sar = resolveSourceSar(probe);
+			const sar = picture.sar;
 			const disp = computeDisplayDimensions(encodedDims.width, encodedDims.height, sar);
 			if (!isPlausibleDar(disp.width, disp.height)) {
 				Logger.warn(`[mux] Implausible DAR from source SAR ${sar.num}:${sar.den}. Falling back to square pixels.`);

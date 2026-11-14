@@ -6,6 +6,8 @@ import { run } from "../core/process";
 import { captureScreenshot, isHdrTransfer } from "../video/screenshot";
 import { DEFAULT_STILL_STYLE, STILL_STYLE_LABELS, type StillStyle } from "../core/still-style";
 import { createSemaphore } from "../core/concurrency";
+import { detectSourceTag } from "../core/naming";
+import { hasDoubtfulWideFlag, parseRatio as parseRational } from "../video/aspect";
 import { audioEnvelope, bestLag, ENVELOPE_RATE } from "../sync/audio-envelope";
 import { measureImagePairs, measureVideoPair, summarize, METRIC_NAMES, type FrameScores, type MetricName, type MetricSummary, type VsMatrix } from "./metrics";
 
@@ -251,13 +253,18 @@ export async function probeVideo(path: string, signal: AbortSignal): Promise<Vid
 	const streams = data.streams ?? [];
 	const video = streams.find((s) => s.codec_type === "video" && !s.disposition?.attached_pic);
 	if (!video) throw new Error(`${basename(path)} has no video stream`);
+	const width = Number(video.width) || 0;
+	const height = Number(video.height) || 0;
+	const flagged = parseRational(video.sample_aspect_ratio);
+	// Without a crop pass a doubtful 16:9 flag takes the common case, a 4:3 picture.
+	const doubtful = !!flagged && hasDoubtfulWideFlag(width, height, flagged, detectSourceTag(basename(path)));
 	return {
 		formatStart: Number(data.format?.start_time) || 0,
 		videoStart: (Number(video.start_time) || 0) - (Number(data.format?.start_time) || 0),
 		duration: Number(data.format?.duration) || 0,
-		width: Number(video.width) || 0,
-		height: Number(video.height) || 0,
-		sar: parseRatio(video.sample_aspect_ratio),
+		width,
+		height,
+		sar: doubtful ? 1 : parseRatio(video.sample_aspect_ratio),
 		fps: parseRate(video.avg_frame_rate) || parseRate(video.r_frame_rate),
 		codec: String(video.codec_name ?? ""),
 		range: video.color_range === "pc" ? "pc" : video.color_range === "tv" ? "tv" : null,
