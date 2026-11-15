@@ -1233,6 +1233,66 @@
 
 						<!-- Settings of each denoiser. Which one runs is chosen in the main settings (Video handling -> Denoiser). -->
 						<div class="setting-group">
+							<label>Rabbit Denoise Settings <span class="denoiser-in-use" id="advanced-rabbit-in-use">selected denoiser</span></label>
+							<div class="lang-filter-hint">
+								Used when the denoiser is <code>rabbit-denoise</code>. The defaults are the best quality measured, so most videos need no changes here.
+							</div>
+
+							<div class="nested-settings">
+								<div class="setting-group">
+									<label>Device</label>
+									<div class="radio-group" id="advanced-rabbit-device"></div>
+									<div class="lang-filter-hint" id="advanced-rabbit-device-help"></div>
+								</div>
+								<details class="settings-subsection" id="advanced-rabbit-strength-details">
+									<summary>Strength</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-rabbit-strength"></div>
+										<div class="lang-filter-hint" id="advanced-rabbit-strength-help"></div>
+										<div id="advanced-rabbit-strength-fields"></div>
+										<div id="advanced-rabbit-basic"></div>
+										<div class="lang-filter-hint" id="advanced-rabbit-basic-help"></div>
+									</div>
+								</details>
+								<details class="settings-subsection" id="advanced-rabbit-matching-details">
+									<summary>Matching</summary>
+									<div class="settings-subsection-body">
+										<div class="lang-filter-hint" id="advanced-rabbit-matching-help"></div>
+										<div id="advanced-rabbit-matching-fields"></div>
+									</div>
+								</details>
+								<details class="settings-subsection" id="advanced-rabbit-motion-details">
+									<summary>Motion</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-rabbit-motion"></div>
+										<div class="lang-filter-hint" id="advanced-rabbit-motion-help"></div>
+										<div id="advanced-rabbit-motion-fields"></div>
+										<div class="setting-group">
+											<label>Follow radius</label>
+											<div class="radio-group" id="advanced-rabbit-follow-radius"></div>
+											<div class="lang-filter-hint" id="advanced-rabbit-follow-radius-help"></div>
+										</div>
+										<div class="setting-group">
+											<label>Second stage follow radius</label>
+											<div class="radio-group" id="advanced-rabbit-wiener-follow-radius"></div>
+											<div class="lang-filter-hint" id="advanced-rabbit-wiener-follow-radius-help"></div>
+										</div>
+									</div>
+								</details>
+								<details class="settings-subsection" id="advanced-rabbit-measurement-details">
+									<summary>Grain measurement</summary>
+									<div class="settings-subsection-body">
+										<div id="advanced-rabbit-single-frame-cap"></div>
+										<div class="lang-filter-hint" id="advanced-rabbit-single-frame-cap-help"></div>
+										<div id="advanced-rabbit-luma-guided-chroma"></div>
+										<div class="lang-filter-hint" id="advanced-rabbit-luma-guided-chroma-help"></div>
+									</div>
+								</details>
+								<button type="button" class="btn btn-ghost btn-sm" id="advanced-rabbit-reset">Reset Rabbit Denoise settings to defaults</button>
+							</div>
+						</div>
+
+						<div class="setting-group">
 							<label>av-denoise Settings <span class="denoiser-in-use" id="advanced-avd-in-use">selected denoiser</span></label>
 							<div class="lang-filter-hint">
 								Used when the denoiser is <code>avd-nl4d</code>, <code>avd-nlmeans-hq</code> or <code>avd-nlmeans</code>. These run on the GPU only.

@@ -886,6 +886,28 @@ a.btn {
 	margin-top: 0;
 }
 
+/* Labels that hold a control carry no gap of their own here, so its hint can sit right under it. */
+.settings-subsection-body label.toggle-label,
+.settings-subsection-body label.auto-threshold-row {
+	margin-bottom: 0;
+}
+
+/* A hint describes the control right above it, so it sits close to that control and the gap goes before the next one. */
+.settings-subsection-body > * + .lang-filter-hint {
+	margin-top: -12px;
+}
+
+/* Generated rows of a control and its hint, apart from each other like the subsection's own rows. */
+.settings-field-list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.settings-field-list > .setting-group {
+	margin-top: 0;
+}
+
 .radio-group {
 	display: flex;
 	gap: 6px;

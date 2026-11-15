@@ -295,6 +295,19 @@ RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
  && rm -rf /tmp/retone.tar.gz "/tmp/retone-v${RETONE_VERSION}-linux-x86_64-v2" \
  && retone --version
 
+# rabbit-denoise removes film grain on the GPU, through Vulkan, behind the rabbit-denoise denoise engine.
+# It links glibc and loads the Vulkan driver at run time.
+ARG RABBIT_DENOISE_VERSION=0.1.0
+ARG RABBIT_DENOISE_SHA256=71688522b8ba69a9cd83ef3431ba1b672c4a3b77000dfc73f3fc6940dc1e86a6
+RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
+	"https://github.com/Rabbit-Company/rabbit-denoise/releases/download/v${RABBIT_DENOISE_VERSION}/rabbit-denoise-v${RABBIT_DENOISE_VERSION}-linux-x86_64-v2.tar.gz" \
+	-o /tmp/rabbit-denoise.tar.gz \
+ && echo "${RABBIT_DENOISE_SHA256}  /tmp/rabbit-denoise.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/rabbit-denoise.tar.gz -C /tmp \
+ && install -m 755 "/tmp/rabbit-denoise-v${RABBIT_DENOISE_VERSION}-linux-x86_64-v2/rabbit-denoise" /usr/local/bin/rabbit-denoise \
+ && rm -rf /tmp/rabbit-denoise.tar.gz "/tmp/rabbit-denoise-v${RABBIT_DENOISE_VERSION}-linux-x86_64-v2" \
+ && rabbit-denoise --version
+
 # Entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

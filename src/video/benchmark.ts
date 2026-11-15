@@ -4,7 +4,7 @@ import { getAllJobs } from "../queue/store";
 import { getCpuName } from "../core/system";
 import { listOpenClDevices, type OpenClDevice } from "./opencl";
 import { listVulkanDevices, type VulkanDevice } from "./vulkan";
-import { AVD_ENGINES, avdEngineLabel, benchmarkAvd, isAvdDeviceAvailable, isAvdEngine } from "./avd";
+import { AVD_ENGINES, avdEngineLabel, benchmarkAvd, isAvdDeviceAvailable, isAvdEngine, probeRabbitDenoise } from "./avd";
 import type { AvdEngine, DenoiseBackend } from "../core/types";
 
 const DURATION = 10;
@@ -15,7 +15,8 @@ const VULKAN_T = "8";
 
 export type BenchmarkLevel = "light" | "medium" | "heavy";
 export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | AvdEngine;
-export const BENCHMARK_MODES: readonly BenchmarkMode[] = ["cpu", "opencl", "vulkan", ...AVD_ENGINES];
+// Rabbit Denoise first, as the recommended engine.
+export const BENCHMARK_MODES: readonly BenchmarkMode[] = ["rabbit-denoise", "cpu", "opencl", "vulkan", ...AVD_ENGINES.filter((e) => e !== "rabbit-denoise")];
 export type BenchmarkStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 
 export interface StartBenchmarkOptions {
@@ -55,6 +56,8 @@ export interface BenchmarkState {
 	/** Whether av-denoise can see the configured device. */
 	avdAvailable: boolean | null;
 	avdDevice: string | null;
+	/** Whether rabbit-denoise runs on a GPU. */
+	rabbitAvailable: boolean | null;
 	/** Engines included in the current / last run. */
 	modes: BenchmarkMode[];
 	error: string | null;
@@ -87,6 +90,7 @@ function newIdleState(): BenchmarkState {
 		vulkanAvailable: null,
 		avdAvailable: null,
 		avdDevice: null,
+		rabbitAvailable: null,
 		modes: [],
 		error: null,
 		cpuName: getCpuName(),
@@ -134,7 +138,9 @@ export async function getBenchmarkState(currentGpuDevice: string, currentBackend
 		state.gpuDevice = currentGpuDevice;
 		state.denoiseBackend = currentBackend;
 		state.avdDevice = currentAvdDevice;
-		state.avdAvailable = await isAvdDeviceAvailable(currentAvdDevice);
+		const [avdOk, rabbitProblem] = await Promise.all([isAvdDeviceAvailable(currentAvdDevice), probeRabbitDenoise()]);
+		state.avdAvailable = avdOk;
+		state.rabbitAvailable = rabbitProblem === null;
 
 		const [oclDevices, vkDevices] = await Promise.all([listOpenClDevices(), listVulkanDevices()]);
 		const names = pickGpuName(currentBackend, currentGpuDevice, oclDevices, vkDevices);
@@ -348,25 +354,30 @@ async function runBenchmarkAsync(signal: AbortSignal, options: StartBenchmarkOpt
 	state.vulkanName = names.vulkanName;
 
 	const requested = options.modes && options.modes.length > 0 ? BENCHMARK_MODES.filter((m) => options.modes!.includes(m)) : [...BENCHMARK_MODES];
-	const wantsAvd = requested.some(isAvdEngine);
+	const wantsAvd = requested.some((m) => isAvdEngine(m) && m !== "rabbit-denoise");
+	const wantsRabbit = requested.includes("rabbit-denoise");
 
 	state.currentLabel = "Probing GPU backends";
 	const oclDevice = oclDevices.find((d) => d.id === options.gpuDevice)?.id ?? oclDevices[0]?.id ?? defaultDeviceFor("opencl");
 	const vkDevice = vkDevices.find((d) => d.id === options.gpuDevice)?.id ?? vkDevices[0]?.id ?? defaultDeviceFor("vulkan");
 
-	const [oclOk, vkOk, avdOk] = await Promise.all([
+	const [oclOk, vkOk, avdOk, rabbitProblem] = await Promise.all([
 		requested.includes("opencl") ? isOpenClAvailable(oclDevice) : Promise.resolve(null),
 		requested.includes("vulkan") ? isVulkanAvailable(vkDevice) : Promise.resolve(null),
 		wantsAvd ? isAvdDeviceAvailable(options.avdDevice) : Promise.resolve(null),
+		wantsRabbit ? probeRabbitDenoise() : Promise.resolve(undefined),
 	]);
+	const rabbitOk = rabbitProblem === undefined ? null : rabbitProblem === null;
 	state.openclAvailable = oclOk;
 	state.vulkanAvailable = vkOk;
 	state.avdAvailable = avdOk;
 	state.avdDevice = options.avdDevice;
-	state.gpuAvailable = !!oclOk || !!vkOk || !!avdOk;
+	state.rabbitAvailable = rabbitOk;
+	state.gpuAvailable = !!oclOk || !!vkOk || !!avdOk || !!rabbitOk;
 	if (oclOk === false) Logger.warn(`[benchmark] OpenCL not available on device ${oclDevice}`);
 	if (vkOk === false) Logger.warn(`[benchmark] Vulkan not available on device ${vkDevice}`);
 	if (avdOk === false) Logger.warn(`[benchmark] av-denoise cannot see device ${options.avdDevice}`);
+	if (rabbitProblem) Logger.warn(`[benchmark] rabbit-denoise cannot run on a GPU: ${rabbitProblem}`);
 
 	if (signal.aborted) {
 		state.status = "cancelled";
@@ -375,7 +386,9 @@ async function runBenchmarkAsync(signal: AbortSignal, options: StartBenchmarkOpt
 	}
 
 	const levels: BenchmarkLevel[] = ["light", "medium", "heavy"];
-	const modes = requested.filter((m) => (m === "cpu" ? true : m === "opencl" ? !!oclOk : m === "vulkan" ? !!vkOk : !!avdOk));
+	const modes = requested.filter((m) =>
+		m === "cpu" ? true : m === "opencl" ? !!oclOk : m === "vulkan" ? !!vkOk : m === "rabbit-denoise" ? !!rabbitOk : !!avdOk,
+	);
 
 	state.modes = modes;
 	state.totalSteps = levels.length * modes.length;

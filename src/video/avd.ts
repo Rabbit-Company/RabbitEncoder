@@ -10,13 +10,120 @@ import {
 	type DenoiseRange,
 	type StreamFormat,
 } from "./auto-denoise";
-import type { AvdEngine, AvdLevelStrengths, AvdParams, AvdPreset, AvdSelfTuningEngine } from "../core/types";
+import type { AvdEngine, AvdLevelStrengths, AvdParams, AvdPreset, AvdSelfTuningEngine, RabbitDenoiseParams, RabbitDevice } from "../core/types";
 
 const AVD_BIN = "av-denoise";
+const RABBIT_DENOISE_BIN = "rabbit-denoise";
 /** Backends tried in order. The device ordinal is counted per backend. */
 const AVD_ACCELERATORS = "vulkan,cuda";
 
-export const AVD_ENGINES: readonly AvdEngine[] = ["avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
+/**
+ * Every denoiser that runs as a program of its own: the av-denoise engines and
+ * rabbit-denoise. They share the piped FFV1 pass below and differ in their arguments.
+ */
+export const AVD_ENGINES: readonly AvdEngine[] = ["rabbit-denoise", "avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
+
+/** rabbit-denoise refuses a --sigma-scale outside this range. */
+const RABBIT_SCALE_MIN = 0.25;
+const RABBIT_SCALE_MAX = 4;
+
+/** rabbit-denoise's own defaults. Values equal to these are not passed, so newer defaults apply. */
+export const DEFAULT_RABBIT_PARAMS: RabbitDenoiseParams = {
+	device: "auto",
+	chromaScale: 1.0,
+	lambda: 2.7,
+	basic: false,
+	step: 3,
+	temporalRadius: 3,
+	searchRadius: 5,
+	matchesPerFrame: 2,
+	minShift: 4,
+	groupSize: 16,
+	matchLimit: 2.0,
+	wienerMatchLimit: 0.5,
+	followRadius: null,
+	wienerFollowRadius: null,
+	motionRange: 16,
+	motion: true,
+	singleFrameCap: true,
+	lumaGuidedChroma: true,
+};
+
+export const RABBIT_DEVICES: readonly RabbitDevice[] = ["auto", "gpu", "cpu"];
+
+type RabbitNumberKey = {
+	[K in keyof RabbitDenoiseParams]: RabbitDenoiseParams[K] extends number | null ? K : never;
+}[keyof RabbitDenoiseParams];
+type RabbitSwitchKey = "basic" | "motion" | "singleFrameCap" | "lumaGuidedChroma";
+
+/**
+ * rabbit-denoise's numeric options: its flag, the settings code key and the range it accepts.
+ * Whole numbers are rounded. A null value, where allowed, lets rabbit-denoise choose.
+ */
+export const RABBIT_NUMBER_OPTIONS: readonly { key: RabbitNumberKey; flag: string; code: string; min: number; max: number; whole: boolean }[] = [
+	{ key: "chromaScale", flag: "--chroma-scale", code: "qc", min: 0.25, max: 4, whole: false },
+	{ key: "lambda", flag: "--lambda", code: "ql", min: 1, max: 6, whole: false },
+	{ key: "step", flag: "--step", code: "qs", min: 1, max: 6, whole: true },
+	{ key: "temporalRadius", flag: "--temporal-radius", code: "qt", min: 0, max: 16, whole: true },
+	{ key: "searchRadius", flag: "--search-radius", code: "qr", min: 0, max: 7, whole: true },
+	{ key: "matchesPerFrame", flag: "--matches-per-frame", code: "qm", min: 1, max: 8, whole: true },
+	{ key: "minShift", flag: "--min-shift", code: "qn", min: 1, max: 8, whole: true },
+	{ key: "groupSize", flag: "--group-size", code: "qg", min: 2, max: 16, whole: true },
+	{ key: "matchLimit", flag: "--match-limit", code: "qk", min: 0.5, max: 8, whole: false },
+	{ key: "wienerMatchLimit", flag: "--wiener-match-limit", code: "qw", min: 0.1, max: 4, whole: false },
+	{ key: "followRadius", flag: "--follow-radius", code: "qf", min: 0, max: 7, whole: true },
+	{ key: "wienerFollowRadius", flag: "--wiener-follow-radius", code: "qfw", min: 0, max: 7, whole: true },
+	{ key: "motionRange", flag: "--motion-range", code: "qo", min: 0, max: 32, whole: true },
+];
+
+/** rabbit-denoise's switches: the flag passed when the value differs from the default, and the settings code key. */
+export const RABBIT_SWITCH_OPTIONS: readonly { key: RabbitSwitchKey; flag: string; code: string }[] = [
+	{ key: "basic", flag: "--basic", code: "qb" },
+	{ key: "motion", flag: "--no-motion", code: "qmo" },
+	{ key: "singleFrameCap", flag: "--no-single-frame-cap", code: "qsc" },
+	{ key: "lumaGuidedChroma", flag: "--no-luma-guided-chroma", code: "qlg" },
+];
+
+/** A rabbit-denoise number within its range, or the fallback. */
+function rabbitNumber(v: unknown, fallback: number | null, option: (typeof RABBIT_NUMBER_OPTIONS)[number]): number | null {
+	if (v === null && (option.key === "followRadius" || option.key === "wienerFollowRadius")) return null;
+	const n = typeof v === "number" ? v : parseFloat(String(v));
+	if (!Number.isFinite(n)) return fallback;
+	const clamped = Math.max(option.min, Math.min(option.max, n));
+	return option.whole ? Math.round(clamped) : Math.round(clamped * 1000) / 1000;
+}
+
+/** Validate & clamp rabbit-denoise's options, filling anything missing from `fallback`. */
+export function normalizeRabbitParams(p: Partial<RabbitDenoiseParams> | undefined | null, fallback: RabbitDenoiseParams): RabbitDenoiseParams {
+	const out: RabbitDenoiseParams = { ...DEFAULT_RABBIT_PARAMS, ...fallback };
+	out.device = p?.device && RABBIT_DEVICES.includes(p.device) ? p.device : out.device;
+	for (const option of RABBIT_NUMBER_OPTIONS) {
+		const value = p && option.key in p ? rabbitNumber(p[option.key], out[option.key], option) : out[option.key];
+		(out as any)[option.key] = value;
+	}
+	for (const option of RABBIT_SWITCH_OPTIONS) {
+		if (typeof p?.[option.key] === "boolean") out[option.key] = p[option.key]!;
+	}
+	return out;
+}
+
+/** rabbit-denoise's arguments for the options that differ from its defaults. */
+export function rabbitOptionArgs(r: RabbitDenoiseParams): string[] {
+	const args: string[] = [];
+	for (const option of RABBIT_NUMBER_OPTIONS) {
+		const value = r[option.key];
+		if (value !== null && value !== DEFAULT_RABBIT_PARAMS[option.key]) args.push(option.flag, String(value));
+	}
+	for (const option of RABBIT_SWITCH_OPTIONS) {
+		if (r[option.key] !== DEFAULT_RABBIT_PARAMS[option.key]) args.push(option.flag);
+	}
+	return args;
+}
+
+/** The program that runs an engine. */
+function engineBinary(engine: AvdEngine): string {
+	return engine === "rabbit-denoise" ? RABBIT_DENOISE_BIN : AVD_BIN;
+}
 export const AVD_PRESETS: readonly AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
 export const DEFAULT_AVD_DEVICE = "default";
 
@@ -29,11 +136,12 @@ export const DEFAULT_AVD_DEVICE = "default";
 export const DEFAULT_AVD_PARAMS: AvdParams = {
 	preset: "base",
 	nlmeansStrength: { light: 1.0, medium: 1.5, heavy: 2.0 },
-	scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0 },
+	scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0, "rabbit-denoise": 1.0 },
+	rabbit: DEFAULT_RABBIT_PARAMS,
 };
 
 export function isAvdSelfTuningEngine(engine: string | undefined | null): engine is AvdSelfTuningEngine {
-	return engine === "avd-nlmeans-hq" || engine === "avd-nl4d";
+	return engine === "avd-nlmeans-hq" || engine === "avd-nl4d" || engine === "rabbit-denoise";
 }
 
 /** The value passed to the engine's main dial for a scene at `level`. */
@@ -41,15 +149,16 @@ export function avdStrengthFor(engine: AvdEngine, level: DenoiseRange["level"], 
 	return isAvdSelfTuningEngine(engine) ? params.scales[engine] : params.nlmeansStrength[level];
 }
 
-/** NL4D always runs at its default preset, since the ladder changes little for it. */
+/** NL4D always runs at its default preset, since the ladder changes little for it. rabbit-denoise has none. */
 export function avdEngineUsesPreset(engine: AvdEngine): boolean {
-	return engine !== "avd-nl4d";
+	return engine !== "avd-nl4d" && engine !== "rabbit-denoise";
 }
 
 const AVD_ENGINE_LABELS: Record<AvdEngine, string> = {
 	"avd-nlmeans": "AVD NLMeans",
 	"avd-nlmeans-hq": "AVD NLMeans-HQ",
 	"avd-nl4d": "AVD NL4D",
+	"rabbit-denoise": "Rabbit Denoise",
 };
 
 export function isAvdEngine(engine: string | undefined | null): engine is AvdEngine {
@@ -64,10 +173,10 @@ export function isValidAvdDeviceSpec(spec: string): boolean {
 	return /^(default|cpu|(discrete|integrated|virtual)(:\d+)?)$/.test(spec);
 }
 
-function clampStrength(v: unknown, fallback: number): number {
+function clampStrength(v: unknown, fallback: number, min = 0.1, max = 10): number {
 	const n = typeof v === "number" ? v : parseFloat(String(v));
 	if (!Number.isFinite(n)) return fallback;
-	return Math.round(Math.max(0.1, Math.min(10, n)) * 1000) / 1000;
+	return Math.round(Math.max(min, Math.min(max, n)) * 1000) / 1000;
 }
 
 function normalizeStrengths(p: Partial<AvdLevelStrengths> | undefined, fallback: AvdLevelStrengths): AvdLevelStrengths {
@@ -87,7 +196,9 @@ export function normalizeAvdParams(p: Partial<AvdParams> | undefined | null, fal
 		scales: {
 			"avd-nlmeans-hq": clampStrength(p?.scales?.["avd-nlmeans-hq"], fallback.scales["avd-nlmeans-hq"]),
 			"avd-nl4d": clampStrength(p?.scales?.["avd-nl4d"], fallback.scales["avd-nl4d"]),
+			"rabbit-denoise": clampStrength(p?.scales?.["rabbit-denoise"], fallback.scales["rabbit-denoise"] ?? 1, RABBIT_SCALE_MIN, RABBIT_SCALE_MAX),
 		},
+		rabbit: normalizeRabbitParams(p?.rabbit, fallback.rabbit ?? DEFAULT_RABBIT_PARAMS),
 	};
 }
 
@@ -156,10 +267,47 @@ export async function isAvdDeviceAvailable(device: string): Promise<boolean> {
 	return devices.some((d) => d.id === device);
 }
 
-/** Fail with a clear message before any work starts when av-denoise has no usable GPU. */
-export async function assertAvdDeviceUsable(engine: AvdEngine, device: string): Promise<void> {
+/**
+ * Whether rabbit-denoise runs on a GPU here: it denoises one small frame with --device gpu.
+ * rabbit-denoise picks the GPU itself, so there is no device to choose. Returns the reason when not.
+ */
+export async function probeRabbitDenoise(): Promise<string | null> {
+	const script =
+		"set -o pipefail; ffmpeg -v error -nostats -f lavfi -i testsrc2=size=64x64:rate=1:duration=1 -pix_fmt yuv420p -f yuv4mpegpipe - " +
+		`| ${RABBIT_DENOISE_BIN} denoise --device gpu --progress json -o /dev/null`;
+	try {
+		const res = await run(["bash", "-c", script]);
+		if (res.code === 0) return null;
+		// The last JSON line is the error event with its message.
+		for (const line of res.stdout.trim().split("\n").reverse()) {
+			try {
+				const event = JSON.parse(line);
+				if (event?.event === "error" && typeof event.message === "string") return event.message;
+			} catch {}
+		}
+		return res.stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${res.code}`;
+	} catch (err) {
+		return err instanceof Error ? err.message : String(err);
+	}
+}
+
+/**
+ * Fail with a clear message before any work starts when the engine cannot run. rabbit-denoise
+ * set to auto falls back to the CPU instead, and the returned note says so.
+ */
+export async function assertAvdDeviceUsable(engine: AvdEngine, device: string, params?: AvdParams): Promise<string | null> {
+	if (engine === "rabbit-denoise") {
+		const rabbitDevice = params?.rabbit?.device ?? DEFAULT_RABBIT_PARAMS.device;
+		if (rabbitDevice === "cpu") return "Rabbit Denoise runs on the CPU, as set, about 20 times slower than on a GPU.";
+		const problem = await probeRabbitDenoise();
+		if (!problem) return null;
+		if (rabbitDevice === "gpu") {
+			throw new Error(`Rabbit Denoise cannot run on a GPU: ${problem}. Pass a GPU through to the container, or set its device to auto to use the CPU.`);
+		}
+		return `Rabbit Denoise found no usable GPU (${problem}) and runs on the CPU, about 20 times slower.`;
+	}
 	const devices = await listAvdDevices();
-	if (devices.some((d) => d.id === device)) return;
+	if (devices.some((d) => d.id === device)) return null;
 	const found =
 		devices.length > 0 ? `Available devices: ${devices.map((d) => d.id).join(", ")}.` : "av-denoise found no GPU (only a software device, or none at all).";
 	throw new Error(
@@ -173,6 +321,11 @@ export async function assertAvdDeviceUsable(engine: AvdEngine, device: string): 
  */
 export function buildAvdArgs(engine: AvdEngine, level: DenoiseRange["level"], params: AvdParams, device: string, input: string): string[] {
 	const strength = String(avdStrengthFor(engine, level, params));
+	if (engine === "rabbit-denoise") {
+		// y4m in and out. It picks the GPU itself. Only options that differ from its defaults are passed.
+		const rabbit = params.rabbit ?? DEFAULT_RABBIT_PARAMS;
+		return ["denoise", "-q", "--device", rabbit.device, "--sigma-scale", strength, ...rabbitOptionArgs(rabbit), input];
+	}
 	const common = ["--accelerators", AVD_ACCELERATORS, "--device", isValidAvdDeviceSpec(device) ? device : DEFAULT_AVD_DEVICE];
 	if (avdEngineUsesPreset(engine)) common.push("--preset", params.preset);
 
@@ -275,9 +428,10 @@ export async function runAvdPass(opts: RunAvdPassOptions): Promise<void> {
 
 	const fmt = opts.format ?? (await probeStreamFormat(inputPath));
 	const pixFmt = toAvdPixFmt(fmt.pixFmt);
-	const piped = !!range || pixFmt !== fmt.pixFmt;
+	// rabbit-denoise always reads the y4m FFmpeg decodes, which keeps the stream as this pass sees it.
+	const piped = !!range || pixFmt !== fmt.pixFmt || engine === "rabbit-denoise";
 
-	const avdArgs = [AVD_BIN, ...buildAvdArgs(engine, level, params, device, piped ? "-" : inputPath)];
+	const avdArgs = [engineBinary(engine), ...buildAvdArgs(engine, level, params, device, piped ? "-" : inputPath)];
 	const encodeArgs = ["ffmpeg", "-y", "-f", "yuv4mpegpipe", "-i", "-", ...buildRetagArgs(fmt), ...FFV1_ENCODE_ARGS, "-an", "-sn", outputPath];
 
 	const stages: string[][] = [];
@@ -423,7 +577,9 @@ export async function benchmarkAvd(
 	source: AvdBenchmarkSource,
 	signal?: AbortSignal,
 ): Promise<{ seconds: number | null; error: string | null }> {
-	const avdArgs = [AVD_BIN, ...buildAvdArgs(engine, level, DEFAULT_AVD_PARAMS, device, "-")];
+	// rabbit-denoise is timed on the GPU only: on the CPU this would take many minutes.
+	const params = engine === "rabbit-denoise" ? { ...DEFAULT_AVD_PARAMS, rabbit: { ...DEFAULT_RABBIT_PARAMS, device: "gpu" as const } } : DEFAULT_AVD_PARAMS;
+	const avdArgs = [engineBinary(engine), ...buildAvdArgs(engine, level, params, device, "-")];
 	const stagesFor = (duration: number): string[][] => [
 		[
 			"ffmpeg",
@@ -445,13 +601,13 @@ export async function benchmarkAvd(
 
 	const warmUp = await runPipeline(stagesFor(1), signal);
 	if (signal?.aborted) return { seconds: null, error: "cancelled" };
-	if (warmUp.code !== 0) return { seconds: null, error: errorTail(warmUp.errLines).slice(-500) || `av-denoise exited with code ${warmUp.code}` };
+	if (warmUp.code !== 0) return { seconds: null, error: errorTail(warmUp.errLines).slice(-500) || `${engineBinary(engine)} exited with code ${warmUp.code}` };
 
 	const startedAt = performance.now();
 	const res = await runPipeline(stagesFor(source.duration), signal);
 	const seconds = (performance.now() - startedAt) / 1000;
 	if (signal?.aborted) return { seconds: null, error: "cancelled" };
-	if (res.code !== 0) return { seconds: null, error: errorTail(res.errLines).slice(-500) || `av-denoise exited with code ${res.code}` };
+	if (res.code !== 0) return { seconds: null, error: errorTail(res.errLines).slice(-500) || `${engineBinary(engine)} exited with code ${res.code}` };
 
 	return { seconds, error: null };
 }

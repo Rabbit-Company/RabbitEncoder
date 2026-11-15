@@ -107,8 +107,11 @@ export type GpuBackend = "auto" | "vulkan" | "opencl";
  *   - "avd-nlmeans"    : av-denoise fast NLMeans. GPU only.
  *   - "avd-nlmeans-hq" : av-denoise NLMeans-HQ, measures the noise level itself. GPU only.
  *   - "avd-nl4d"       : av-denoise NL4D spatio-temporal denoiser. GPU only.
+ *   - "rabbit-denoise" : rabbit-denoise film grain denoiser, measures the grain itself. GPU, or CPU when none works.
+ *
+ * Every engine but nlmeans is a separate program that runs as its own pass.
  */
-export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d" | "rabbit-denoise";
 export type AvdEngine = Exclude<DenoiseEngine, "nlmeans">;
 export type AvdPreset = "veryfast" | "fast" | "base" | "slow" | "veryslow";
 
@@ -119,10 +122,44 @@ export interface AvdLevelStrengths {
 	heavy: number;
 }
 
-/** The av-denoise engines that measure the source's noise and set their own strength. */
-export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d";
+/** The engines that measure the source's noise and set their own strength. */
+export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d" | "rabbit-denoise";
 
-/** Parameters for the av-denoise engines. */
+/** Where rabbit-denoise runs: the GPU when one works and the CPU otherwise, or only one of them. */
+export type RabbitDevice = "auto" | "gpu" | "cpu";
+
+/**
+ * rabbit-denoise options besides its strength scale, which is AvdParams.scales["rabbit-denoise"].
+ * Each matches the rabbit-denoise option of the same name. Values equal to the defaults are not passed.
+ */
+export interface RabbitDenoiseParams {
+	device: RabbitDevice;
+	chromaScale: number;
+	lambda: number;
+	/** Return the first stage's result and skip the second. */
+	basic: boolean;
+	step: number;
+	temporalRadius: number;
+	searchRadius: number;
+	matchesPerFrame: number;
+	minShift: number;
+	groupSize: number;
+	matchLimit: number;
+	wienerMatchLimit: number;
+	/** null lets rabbit-denoise choose: 1 with motion fields, 3 without. */
+	followRadius: number | null;
+	/** null uses followRadius. */
+	wienerFollowRadius: number | null;
+	motionRange: number;
+	/** Follow patches with motion fields. */
+	motion: boolean;
+	/** Cap the grain measured between frames by the grain measured in single frames. */
+	singleFrameCap: boolean;
+	/** Match chroma blocks on luma when measuring chroma grain. */
+	lumaGuidedChroma: boolean;
+}
+
+/** Parameters for the denoisers that run as programs of their own: av-denoise and rabbit-denoise. */
 export interface AvdParams {
 	/** av-denoise --preset, the speed/quality ladder (mainly the temporal window). Not used by avd-nl4d. */
 	preset: AvdPreset;
@@ -130,10 +167,12 @@ export interface AvdParams {
 	nlmeansStrength: AvdLevelStrengths;
 	/**
 	 * Multiplier on what the self-tuning engines measure: --hq-sigma-scale for avd-nlmeans-hq,
-	 * --lambda-ht-scale for avd-nl4d. One value for every denoise level, because the engine already
+	 * --lambda-ht-scale for avd-nl4d, --sigma-scale for rabbit-denoise. One value for every denoise level, because the engine already
 	 * adapts its strength to each scene. 1.0 trusts the measurement.
 	 */
 	scales: Record<AvdSelfTuningEngine, number>;
+	/** rabbit-denoise's other options. Missing on settings saved before they existed. */
+	rabbit: RabbitDenoiseParams;
 }
 
 export type JobStatus =

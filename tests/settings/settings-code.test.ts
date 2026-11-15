@@ -160,6 +160,57 @@ describe("settings code — av-denoise engine", () => {
 		expect(decoded.avdParams?.scales["avd-nl4d"]).toBe(0.9);
 	});
 
+	it("round-trips Rabbit Denoise and its scale, without a speed preset", () => {
+		const settings = getDefaultJobSettings();
+		settings.denoise = "medium";
+		settings.denoiseEngine = "rabbit-denoise";
+		settings.avdParams = structuredClone(settings.avdParams);
+		settings.avdParams.preset = "veryslow";
+		settings.avdParams.scales["rabbit-denoise"] = 1.2;
+
+		const code = encodeSettingsCode(settings);
+		expect(code).toContain("e=rd");
+		expect(code).not.toContain("ap=");
+
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.denoiseEngine).toBe("rabbit-denoise");
+		expect(decoded.avdParams?.scales["rabbit-denoise"]).toBe(1.2);
+		expect(decoded.avdParams?.scales["avd-nl4d"]).toBe(1);
+	});
+
+	it("round-trips Rabbit Denoise's options, storing only the changed ones", () => {
+		const settings = getDefaultJobSettings();
+		settings.denoise = "auto";
+		settings.denoiseEngine = "rabbit-denoise";
+		settings.avdParams = structuredClone(settings.avdParams);
+		settings.avdParams.rabbit = {
+			...settings.avdParams.rabbit,
+			device: "cpu",
+			step: 4,
+			matchLimit: 1.5,
+			followRadius: 2,
+			wienerFollowRadius: null,
+			motion: false,
+			lumaGuidedChroma: false,
+		};
+
+		const code = encodeSettingsCode(settings);
+		expect(code).toContain("qd=cpu");
+		expect(code).toContain("qs=4");
+		expect(code).not.toContain("qt=");
+		expect(code).not.toContain("qfw=");
+
+		const rabbit = decodeSettingsCode(code).avdParams?.rabbit;
+		expect(rabbit?.device).toBe("cpu");
+		expect(rabbit?.step).toBe(4);
+		expect(rabbit?.matchLimit).toBe(1.5);
+		expect(rabbit?.followRadius).toBe(2);
+		expect(rabbit?.wienerFollowRadius).toBeNull();
+		expect(rabbit?.motion).toBe(false);
+		expect(rabbit?.lumaGuidedChroma).toBe(false);
+		expect(rabbit?.temporalRadius).toBe(3);
+	});
+
 	it("does not store the speed preset for NL4D, which ignores it", () => {
 		const settings = getDefaultJobSettings();
 		settings.denoise = "medium";

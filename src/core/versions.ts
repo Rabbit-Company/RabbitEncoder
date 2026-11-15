@@ -82,6 +82,13 @@ export const TOOLS: ToolSpec[] = [
 		parse: secondWord,
 	},
 	{
+		name: "rabbit-denoise",
+		command: ["rabbit-denoise", "--version"],
+		purpose: "Film grain denoiser",
+		url: "https://github.com/Rabbit-Company/rabbit-denoise",
+		parse: secondWord,
+	},
+	{
 		name: "VapourSynth",
 		command: ["vspipe", "--version"],
 		purpose: "Filter chains",

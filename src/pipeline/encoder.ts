@@ -722,7 +722,10 @@ export async function encodeJob(
 			try {
 				const metric = job.settings.autoDenoiseMetric;
 				const thresholds = metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds;
-				autoPlan = await runAnalysisPass(preparedVideo, tempDir, probe.duration, metric, thresholds, signal);
+				// The analysis fills the step from 32 to 35 per cent, and says what it is doing.
+				autoPlan = await runAnalysisPass(preparedVideo, tempDir, probe.duration, metric, thresholds, signal, (fraction, detail) => {
+					setStep(S_PREPARE, { progress: 32 + 3 * fraction, detail: `Analyzing noise: ${detail}` });
+				});
 			} catch (err) {
 				if (err instanceof CancelledError) throw err;
 				Logger.warn(`[auto-denoise] Analysis failed, proceeding without denoise: ${err instanceof Error ? err.message : err}`);
@@ -760,10 +763,13 @@ export async function encodeJob(
 		if (sink && prepareFilter?.cropRect) sink.crop = { ...prepareFilter.cropRect };
 		if (!previewMode) updateJob({ cropRect: prepareFilter?.cropRect ? { ...prepareFilter.cropRect } : undefined });
 
-		// av-denoise has no CPU fallback, so stop here rather than after the filter pass.
+		// av-denoise has no CPU fallback, so stop here rather than after the filter pass. rabbit-denoise
+		// falls back to the CPU unless it is set to the GPU only, and the note says so.
 		if (prepareFilter?.deferredAvd) {
 			setStep(S_PREPARE, { progress: 38, detail: "Checking denoiser device" });
-			await assertAvdDeviceUsable(prepareFilter.deferredAvd.engine, prepareFilter.deferredAvd.device);
+			const { engine, device, params } = prepareFilter.deferredAvd;
+			const deviceNote = await assertAvdDeviceUsable(engine, device, params);
+			if (deviceNote) Logger.warn(`[prepare] ${deviceNote}`);
 		}
 		setStep(S_PREPARE, { progress: PREPARE_WORK_START, detail: "Preparing video passes" });
 
@@ -847,7 +853,9 @@ export async function encodeJob(
 			checkCancelled();
 
 			const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
-			workProgress(0, `${prepareFilter.label}: ${fmtFrames(0, totalFrames)}`);
+			// Without crop, downscale or deband this pass only writes the lossless copy that auto denoise cuts its scenes from.
+			const filterLabel = prepareFilter.label || "Making a lossless copy to denoise scene by scene";
+			workProgress(0, `${filterLabel}: ${fmtFrames(0, totalFrames)}`);
 			Logger.debug(`[prepare] Applying filters: ${prepareFilter.filter} (${totalFrames} frames)`);
 
 			const filteredVideo = join(tempDir, "source_video_filtered.mkv");
@@ -903,7 +911,7 @@ export async function encodeJob(
 										lastUpdate = now;
 										const fps = computeFps(current, filterStartedAt);
 										const fpsStr = fps ? ` (${fps} fps)` : "";
-										workProgress(current / totalFrames, `${prepareFilter.label}: ${fmtFrames(current, totalFrames)}${fpsStr}`);
+										workProgress(current / totalFrames, `${filterLabel}: ${fmtFrames(current, totalFrames)}${fpsStr}`);
 									}
 								} else if (part.trim()) {
 									errLines.push(part);
@@ -933,7 +941,7 @@ export async function encodeJob(
 
 			unlinkSync(preparedVideo);
 			renameSync(filteredVideo, preparedVideo);
-			completeWorkPass("Video filters complete");
+			completeWorkPass(prepareFilter.label ? "Video filters complete" : "Lossless copy complete");
 
 			Logger.info(`[prepare] Filter pass complete`);
 		}

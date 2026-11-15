@@ -114,6 +114,7 @@ export function stopSystemPolling() {
 }
 
 const BENCHMARK_MODE_LABELS: Record<BenchmarkMode, string> = {
+	"rabbit-denoise": "Rabbit Denoise",
 	cpu: "CPU nlmeans",
 	opencl: "OpenCL nlmeans",
 	vulkan: "Vulkan nlmeans",
@@ -144,10 +145,11 @@ export function renderBenchmarkModes(state: BenchmarkState): void {
 	container.innerHTML = "";
 
 	for (const mode of BENCHMARK_MODES) {
-		const unavailable = mode.startsWith("avd-") && state.avdAvailable === false;
+		const unavailable = mode === "rabbit-denoise" ? state.rabbitAvailable === false : mode.startsWith("avd-") && state.avdAvailable === false;
 		const label = document.createElement("label");
 		label.className = "radio-pill";
-		if (unavailable) label.title = "av-denoise found no usable GPU on this machine";
+		if (unavailable)
+			label.title = mode === "rabbit-denoise" ? "rabbit-denoise found no usable GPU on this machine" : "av-denoise found no usable GPU on this machine";
 
 		const input = document.createElement("input");
 		input.type = "checkbox";

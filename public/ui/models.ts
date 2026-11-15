@@ -70,7 +70,7 @@ export interface AvdDevice {
 	backends: string[];
 }
 
-export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d" | "rabbit-denoise";
 
 export interface BenchmarkResult {
 	mode: BenchmarkMode;
@@ -87,6 +87,8 @@ export interface BenchmarkState {
 	vulkanAvailable?: boolean;
 	avdAvailable?: boolean | null;
 	avdDevice?: string | null;
+	/** Whether rabbit-denoise runs on a GPU. */
+	rabbitAvailable?: boolean | null;
 	/** Engines included in the current / last run. */
 	modes?: BenchmarkMode[];
 	cpuName?: string;

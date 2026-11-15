@@ -24,11 +24,21 @@ import type {
 	AvdEngine,
 	AvdPreset,
 	FilmGrainSize,
+	RabbitDenoiseParams,
 } from "../core/types";
 import { FILM_GRAIN_SIZES } from "../core/types";
 import { grainIso, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
 import { vsRegistry } from "../video/vs-filters";
-import { avdEngineUsesPreset, isAvdEngine, isAvdSelfTuningEngine } from "../video/avd";
+import {
+	DEFAULT_RABBIT_PARAMS,
+	RABBIT_DEVICES,
+	RABBIT_NUMBER_OPTIONS,
+	RABBIT_SWITCH_OPTIONS,
+	avdEngineUsesPreset,
+	isAvdEngine,
+	isAvdSelfTuningEngine,
+	normalizeRabbitParams,
+} from "../video/avd";
 
 export const SETTINGS_CODE_FORMAT = 1;
 export const SETTINGS_CODE_PREFIX = `RE${SETTINGS_CODE_FORMAT}`;
@@ -69,7 +79,8 @@ const BASELINE: JobSettings = {
 	avdParams: {
 		preset: "base",
 		nlmeansStrength: { light: 1.0, medium: 1.5, heavy: 2.0 },
-		scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0 },
+		scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0, "rabbit-denoise": 1.0 },
+		rabbit: DEFAULT_RABBIT_PARAMS,
 	},
 	avdDevice: "default",
 	denoiseBackend: "auto",
@@ -189,7 +200,7 @@ const CODE_TO_QUALITY = reverse(QUALITY_TO_CODE);
 const CODE_TO_SPEED = reverse(SPEED_TO_CODE);
 const CODE_TO_CROP = reverse(CROP_TO_CODE);
 const CODE_TO_DENOISE = reverse(DENOISE_TO_CODE);
-const AVD_ENGINE_TO_CODE: Record<AvdEngine, string> = { "avd-nlmeans": "an", "avd-nlmeans-hq": "ah", "avd-nl4d": "a4" };
+const AVD_ENGINE_TO_CODE: Record<AvdEngine, string> = { "avd-nlmeans": "an", "avd-nlmeans-hq": "ah", "avd-nl4d": "a4", "rabbit-denoise": "rd" };
 const CODE_TO_AVD_ENGINE = reverse(AVD_ENGINE_TO_CODE);
 const AVD_PRESET_VALUES: AvdPreset[] = ["veryfast", "fast", "base", "slow", "veryslow"];
 const CODE_TO_DEBAND = reverse(DEBAND_TO_CODE);
@@ -352,6 +363,7 @@ export function encodeSettingsCode(s: JobSettings): string {
 			dn.put("e", AVD_ENGINE_TO_CODE[avd]);
 			if (avdEngineUsesPreset(avd) && s.avdParams.preset !== BASELINE.avdParams.preset) dn.put("ap", s.avdParams.preset);
 			if (isAvdSelfTuningEngine(avd) && s.avdParams.scales[avd] !== BASELINE.avdParams.scales[avd]) dn.put("x", s.avdParams.scales[avd]);
+			if (avd === "rabbit-denoise") putRabbitDiff(dn, s.avdParams.rabbit ?? DEFAULT_RABBIT_PARAMS);
 		}
 		if (s.denoise === "auto") {
 			if (s.autoDenoiseMetric !== BASELINE.autoDenoiseMetric) {
@@ -513,6 +525,34 @@ export function encodeSettingsCode(s: JobSettings): string {
 	}
 
 	return [SETTINGS_CODE_PREFIX, ...sections].join("|");
+}
+
+/** rabbit-denoise's options that differ from its defaults: "a" lets it choose a follow radius. */
+function putRabbitDiff(sec: Section, r: RabbitDenoiseParams): void {
+	if (r.device !== DEFAULT_RABBIT_PARAMS.device) sec.put("qd", r.device);
+	for (const option of RABBIT_NUMBER_OPTIONS) {
+		const value = r[option.key];
+		if (value !== DEFAULT_RABBIT_PARAMS[option.key]) sec.put(option.code, value === null ? "a" : value);
+	}
+	for (const option of RABBIT_SWITCH_OPTIONS) {
+		if (r[option.key] !== DEFAULT_RABBIT_PARAMS[option.key]) sec.put(option.code, r[option.key]);
+	}
+}
+
+/** rabbit-denoise's options from a settings code, over `base`. */
+function readRabbit(kv: Record<string, string>, base: RabbitDenoiseParams): RabbitDenoiseParams {
+	const p: Partial<RabbitDenoiseParams> = {};
+	if (kv.qd && (RABBIT_DEVICES as readonly string[]).includes(kv.qd)) p.device = kv.qd as RabbitDenoiseParams["device"];
+	for (const option of RABBIT_NUMBER_OPTIONS) {
+		const v = kv[option.code];
+		if (v === undefined) continue;
+		(p as any)[option.key] = v === "a" ? null : Number(v);
+	}
+	for (const option of RABBIT_SWITCH_OPTIONS) {
+		const v = kv[option.code];
+		if (v === "1" || v === "0") p[option.key] = v === "1";
+	}
+	return normalizeRabbitParams(p, base);
 }
 
 function putNlmeansDiff(sec: Section, prefix: string, p: NlmeansParams, base: NlmeansParams): void {
@@ -777,7 +817,8 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 		} else {
 			nlmeansStrength = { ...nlmeansStrength, [mode]: numOr(kv.x, nlmeansStrength[mode]) };
 		}
-		out.avdParams = { preset, nlmeansStrength, scales };
+		const rabbit = avd === "rabbit-denoise" ? readRabbit(kv, out.avdParams.rabbit ?? DEFAULT_RABBIT_PARAMS) : (out.avdParams.rabbit ?? DEFAULT_RABBIT_PARAMS);
+		out.avdParams = { preset, nlmeansStrength, scales, rabbit };
 	}
 
 	if (mode === "auto") {

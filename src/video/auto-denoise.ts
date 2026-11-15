@@ -208,12 +208,70 @@ export function parseAutoThresholds(light: string | undefined, medium: string | 
 	return parsed;
 }
 
+/** How far an analysis has come: the share done from 0 to 1, and a line that says what it is doing. */
+export type AnalysisProgress = (fraction: number, detail: string) => void;
+
+/** m:ss, or h:mm:ss from an hour. */
+function clock(seconds: number): string {
+	const s = Math.max(0, Math.floor(seconds));
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	const rest = String(s % 60).padStart(2, "0");
+	return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
+}
+
+/**
+ * Reads FFmpeg's `-progress pipe:1` lines, which come in blocks ending with `progress=`, and reports
+ * the position in the video as a share of `totalDuration`, mapped onto `from` to `to` of the whole analysis.
+ */
+function progressReader(totalDuration: number, from: number, to: number, what: string, onProgress?: AnalysisProgress): (line: string) => void {
+	let seconds = 0;
+	let fps = "";
+	return (line) => {
+		const [key, value] = line.trim().split("=", 2);
+		if (key === "out_time_us" || key === "out_time_ms") {
+			// Both keys hold microseconds.
+			const us = Number(value);
+			if (Number.isFinite(us) && us >= 0) seconds = us / 1e6;
+		} else if (key === "fps") {
+			fps = value && value !== "0.00" ? value : "";
+		} else if (key === "progress" && onProgress && totalDuration > 0) {
+			const share = Math.min(1, seconds / totalDuration);
+			const fraction = from + (to - from) * share;
+			const speed = fps ? `, ${Math.round(Number(fps))} fps` : "";
+			onProgress(fraction, `${what}, ${Math.round(fraction * 100)}% (${clock(seconds)} of ${clock(totalDuration)}${speed})`);
+		}
+	};
+}
+
+/** Reads a stream line by line. */
+async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	while (true) {
+		const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split("\n");
+		buffer = lines.pop() ?? "";
+		for (const line of lines) onLine(line);
+	}
+	if (buffer) onLine(buffer);
+}
+
 /**
  * Run the scene-detection + noise-sampling ffmpeg pass and return the raw
  * samples/cuts, without classifying them into a denoise plan. Shared by
  * `runAnalysisPass` (auto-denoise) and the on-demand bitrate/noise chart.
  */
-export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, totalDuration: number, signal?: AbortSignal): Promise<RawNoiseAnalysis | null> {
+export async function runNoiseSceneAnalysis(
+	inputPath: string,
+	tempDir: string,
+	totalDuration: number,
+	signal?: AbortSignal,
+	onProgress?: AnalysisProgress,
+): Promise<RawNoiseAnalysis | null> {
 	const scenesLog = join(tempDir, "denoise_scenes.log");
 	const noiseLog = join(tempDir, "denoise_noise.log");
 
@@ -232,8 +290,11 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 
 	const stderrChunks: string[] = [];
 
-	const spawnFfmpeg = async (args: string[], label: string): Promise<number> => {
-		const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+	// FFmpeg reports its position on standard output with -progress, which the reader turns into progress.
+	const spawnFfmpeg = async (args: string[], label: string, onLine?: (line: string) => void): Promise<number> => {
+		const withProgress = onLine ? [args[0]!, "-progress", "pipe:1", "-nostats", ...args.slice(1)] : args;
+		const proc = Bun.spawn(withProgress, { stdout: "pipe", stderr: "pipe" });
+		const stdoutTask = onLine ? readLines(proc.stdout, onLine) : new Response(proc.stdout).text().then(() => {});
 
 		let onAbort: (() => void) | undefined;
 		if (signal) {
@@ -253,6 +314,7 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 
 		const stderrText = await new Response(proc.stderr).text().catch(() => "");
 		const code = await proc.exited;
+		await stdoutTask.catch(() => {});
 
 		if (signal && onAbort) signal.removeEventListener("abort", onAbort);
 		if (signal?.aborted) throw new CancelledError();
@@ -267,14 +329,22 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 		// Pass 1 - scene detection
 		const sceneFilter = `scale=-2:${SCENE_DETECT_HEIGHT},scdet=s=1:t=${SCDET_THRESHOLD},` + `metadata=mode=print:file='${escapeFilterPath(scenesLog)}'`;
 
-		code = await spawnFfmpeg(["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", sceneFilter, "-an", "-sn", "-f", "null", "-"], "scenes");
+		code = await spawnFfmpeg(
+			["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", sceneFilter, "-an", "-sn", "-f", "null", "-"],
+			"scenes",
+			progressReader(totalDuration, 0, 0.5, "scene cuts", onProgress),
+		);
 
 		// Pass 2 - noise sampling
 		if (code === 0) {
 			const noiseFilter =
 				`select='not(mod(n\\,${SAMPLE_EVERY_N_FRAMES}))',` + `${BITPLANE_NOISE_FILTER},` + `metadata=mode=print:file='${escapeFilterPath(noiseLog)}'`;
 
-			code = await spawnFfmpeg(["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", noiseFilter, "-an", "-sn", "-f", "null", "-"], "noise");
+			code = await spawnFfmpeg(
+				["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", noiseFilter, "-an", "-sn", "-f", "null", "-"],
+				"noise",
+				progressReader(totalDuration, 0.5, 1, "noise levels", onProgress),
+			);
 		}
 	} else {
 		// Fused dual-output pass for long inputs.
@@ -320,6 +390,7 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
 				"-",
 			],
 			"fused",
+			progressReader(totalDuration, 0, 1, "scene cuts and noise", onProgress),
 		);
 	}
 
@@ -350,7 +421,13 @@ export async function runNoiseSceneAnalysis(inputPath: string, tempDir: string, 
  * metric, which needs cut boundaries but gets its per-scene value from
  * `sampleBitrateOverTime` instead of `bitplanenoise`.
  */
-export async function detectSceneCuts(inputPath: string, tempDir: string, signal?: AbortSignal): Promise<number[] | null> {
+export async function detectSceneCuts(
+	inputPath: string,
+	tempDir: string,
+	signal?: AbortSignal,
+	totalDuration = 0,
+	onProgress?: AnalysisProgress,
+): Promise<number[] | null> {
 	const scenesLog = join(tempDir, "denoise_scenes_br.log");
 	try {
 		if (existsSync(scenesLog)) unlinkSync(scenesLog);
@@ -358,7 +435,10 @@ export async function detectSceneCuts(inputPath: string, tempDir: string, signal
 
 	const sceneFilter = `scale=-2:${SCENE_DETECT_HEIGHT},scdet=s=1:t=${SCDET_THRESHOLD},` + `metadata=mode=print:file='${escapeFilterPath(scenesLog)}'`;
 
-	const res = await run(["ffmpeg", "-hide_banner", "-v", "error", "-i", inputPath, "-vf", sceneFilter, "-an", "-sn", "-f", "null", "-"], { signal });
+	const res = await run(
+		["ffmpeg", "-hide_banner", "-progress", "pipe:1", "-nostats", "-v", "error", "-i", inputPath, "-vf", sceneFilter, "-an", "-sn", "-f", "null", "-"],
+		{ signal, onStdoutLine: progressReader(totalDuration, 0, 0.95, "scene cuts", onProgress) },
+	);
 	if (signal?.aborted) throw new CancelledError();
 	if (res.code !== 0) {
 		Logger.warn(`[auto-denoise] Scene-cut detection failed (exit ${res.code}): ${res.stderr.slice(-500)}`);
@@ -383,12 +463,14 @@ export async function runAnalysisPass(
 	metric: AutoDenoiseMetric,
 	thresholds: AutoDenoiseThresholds,
 	signal?: AbortSignal,
+	onProgress?: AnalysisProgress,
 ): Promise<DenoisePlan | null> {
 	let plan: DenoisePlan;
 
 	if (metric === "bitrate") {
-		const cuts = await detectSceneCuts(inputPath, tempDir, signal);
+		const cuts = await detectSceneCuts(inputPath, tempDir, signal, totalDuration, onProgress);
 		if (!cuts) return null;
+		onProgress?.(0.95, "bitrate of every scene, 95%");
 		const bitrate = await sampleBitrateOverTime(inputPath);
 		if (bitrate.length === 0) {
 			Logger.warn(`[auto-denoise] No packets found for bitrate metric, skipping auto denoise`);
@@ -396,7 +478,7 @@ export async function runAnalysisPass(
 		}
 		plan = buildPlanFromBitrate(bitrate, cuts, totalDuration, thresholds);
 	} else {
-		const raw = await runNoiseSceneAnalysis(inputPath, tempDir, totalDuration, signal);
+		const raw = await runNoiseSceneAnalysis(inputPath, tempDir, totalDuration, signal, onProgress);
 		if (!raw) return null;
 		plan = buildPlan(raw.samples, raw.cuts, totalDuration, thresholds);
 	}

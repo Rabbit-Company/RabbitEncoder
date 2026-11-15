@@ -5,6 +5,8 @@ import type {
 	AutoDenoiseMetric,
 	AvdEngine,
 	AvdParams,
+	RabbitDenoiseParams,
+	RabbitDevice,
 	AvdPreset,
 	Booster,
 	CropMode,
@@ -100,8 +102,148 @@ export const DENOISE_BACKENDS: readonly DenoiseBackend[] = ["cpu", "auto", "vulk
 
 export const DEFAULT_DENOISE_ENGINE: DenoiseEngine = "avd-nl4d";
 /** Ordered from best to worst quality. */
-export const DENOISE_ENGINES: readonly DenoiseEngine[] = ["avd-nl4d", "avd-nlmeans-hq", "avd-nlmeans", "nlmeans"];
-export const AVD_ENGINES: readonly AvdEngine[] = ["avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
+export const DENOISE_ENGINES: readonly DenoiseEngine[] = ["rabbit-denoise", "avd-nl4d", "avd-nlmeans-hq", "avd-nlmeans", "nlmeans"];
+export const AVD_ENGINES: readonly AvdEngine[] = ["rabbit-denoise", "avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"];
+/** rabbit-denoise refuses a strength scale outside this range. */
+export const RABBIT_SCALE_RANGE = { min: 0.25, max: 4 } as const;
+
+/** rabbit-denoise's own defaults, the best quality measured. */
+export const DEFAULT_RABBIT_PARAMS: RabbitDenoiseParams = {
+	device: "auto",
+	chromaScale: 1.0,
+	lambda: 2.7,
+	basic: false,
+	step: 3,
+	temporalRadius: 3,
+	searchRadius: 5,
+	matchesPerFrame: 2,
+	minShift: 4,
+	groupSize: 16,
+	matchLimit: 2.0,
+	wienerMatchLimit: 0.5,
+	followRadius: null,
+	wienerFollowRadius: null,
+	motionRange: 16,
+	motion: true,
+	singleFrameCap: true,
+	lumaGuidedChroma: true,
+};
+export const RABBIT_DEVICES: readonly RabbitDevice[] = ["auto", "gpu", "cpu"];
+export const RABBIT_DEVICE_HELP =
+	"auto uses the GPU when one works and the CPU otherwise, about 20 times slower. gpu fails the job without a GPU instead. cpu is for testing.";
+
+/** A rabbit-denoise number setting, with the range rabbit-denoise accepts. */
+export interface RabbitNumberField {
+	key:
+		| "chromaScale"
+		| "lambda"
+		| "step"
+		| "temporalRadius"
+		| "searchRadius"
+		| "matchesPerFrame"
+		| "minShift"
+		| "groupSize"
+		| "matchLimit"
+		| "wienerMatchLimit"
+		| "motionRange";
+	label: string;
+	min: number;
+	max: number;
+	step: number;
+	help: string;
+}
+export const RABBIT_STRENGTH_FIELDS: readonly RabbitNumberField[] = [
+	{
+		key: "chromaScale",
+		label: "Chroma scale",
+		min: 0.25,
+		max: 4,
+		step: 0.05,
+		help: "Multiplies the colour grain on top of the strength scale. Above 1 removes more colour grain.",
+	},
+	{
+		key: "lambda",
+		label: "Threshold",
+		min: 1,
+		max: 6,
+		step: 0.1,
+		help: "Grain deviations a coefficient must clear to survive the first stage. Higher removes more.",
+	},
+];
+export const RABBIT_MATCHING_HELP =
+	"Every patch on a grid is filtered together with the patches most like it, from its own frame and the frames around it. These trade speed against quality.";
+export const RABBIT_MATCHING_FIELDS: readonly RabbitNumberField[] = [
+	{
+		key: "step",
+		label: "Step",
+		min: 1,
+		max: 6,
+		step: 1,
+		help: "Distance between reference patches. 3 is the best quality. 4 is about 30 per cent faster for about 0.3 dB less.",
+	},
+	{
+		key: "temporalRadius",
+		label: "Temporal radius",
+		min: 0,
+		max: 16,
+		step: 1,
+		help: "Frames on each side that matches come from. 2 is about 20 per cent faster for about 0.4 dB less, 5 gains about 0.1 dB over 3. 0 matches within the frame only.",
+	},
+	{
+		key: "searchRadius",
+		label: "Search radius",
+		min: 0,
+		max: 7,
+		step: 1,
+		help: "How far matches are searched for in a patch's own frame. 5 scores within 0.1 dB of 7 and is faster.",
+	},
+	{ key: "matchesPerFrame", label: "Matches per frame", min: 1, max: 8, step: 1, help: "Matches taken into a group from each frame, besides the reference." },
+	{
+		key: "minShift",
+		label: "Minimum shift",
+		min: 1,
+		max: 8,
+		step: 1,
+		help: "How far apart two matches from one frame must be. Closer patches share most of their grain.",
+	},
+	{ key: "groupSize", label: "Group size", min: 2, max: 16, step: 1, help: "Most patches in a group, the reference included." },
+	{
+		key: "matchLimit",
+		label: "Match limit",
+		min: 0.5,
+		max: 8,
+		step: 0.1,
+		help: "How much a first stage match may differ from its reference, in multiples of what grain alone makes. Higher blurs, lower removes less grain.",
+	},
+	{
+		key: "wienerMatchLimit",
+		label: "Second stage match limit",
+		min: 0.1,
+		max: 4,
+		step: 0.05,
+		help: "The same for the second stage, which matches on the first stage's result.",
+	},
+];
+export const RABBIT_MOTION_FIELDS: readonly RabbitNumberField[] = [
+	{
+		key: "motionRange",
+		label: "Motion range",
+		min: 0,
+		max: 32,
+		step: 2,
+		help: "How far the motion fields look for a block's move between two frames. Raise it for very fast motion.",
+	},
+];
+export const RABBIT_FOLLOW_RADII = ["auto", "0", "1", "2", "3", "4", "5", "6", "7"] as const;
+export const RABBIT_HELP = {
+	basic: "Return the first stage's result and skip the second: about twice as fast and about 2 dB worse.",
+	motion: "Follow patches into neighbouring frames with motion fields. Without them it is 0.15 to 0.25 dB worse and 16 to 20 per cent slower.",
+	followRadius: "Search radius in neighbouring frames, around a patch's track and where the motion field moves it. auto is 1 with motion fields and 3 without.",
+	wienerFollowRadius: "The follow radius for the second stage alone. auto uses the one above.",
+	singleFrameCap:
+		"Cap the grain measured between frames by the grain measured in single frames. Motion reads high between frames and texture in single frames, so the smaller is used.",
+	lumaGuidedChroma: "Match chroma blocks on luma when measuring chroma grain. Matching on chroma reads its grain 10 to 20 per cent low.",
+} as const;
 export const FILM_GRAIN_SAMPLINGS = ["all", "half", "quarter", "eighth"] as const;
 export const FILM_GRAIN_RANGES = ["representative", "full"] as const;
 export const FILM_GRAIN_SIZES = ["fine", "medium", "coarse"] as const;
@@ -109,7 +251,8 @@ export const AVD_PRESETS: readonly AvdPreset[] = ["veryfast", "fast", "base", "s
 export const DEFAULT_AVD_PARAMS: AvdParams = {
 	preset: "base",
 	nlmeansStrength: { light: 1.0, medium: 1.5, heavy: 2.0 },
-	scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0 },
+	scales: { "avd-nlmeans-hq": 1.0, "avd-nl4d": 1.0, "rabbit-denoise": 1.0 },
+	rabbit: DEFAULT_RABBIT_PARAMS,
 };
 export const DENOISE_ENGINE_HELP: Record<DenoiseEngine, string> = {
 	nlmeans: "FFmpeg nlmeans. Runs on CPU, OpenCL or Vulkan.",
@@ -117,6 +260,8 @@ export const DENOISE_ENGINE_HELP: Record<DenoiseEngine, string> = {
 	"avd-nlmeans-hq": "av-denoise NLMeans-HQ. GPU only. Measures the noise in each scene and sets its own strength, so light, medium and heavy denoise the same.",
 	"avd-nl4d":
 		"av-denoise NL4D. GPU only. Best noise removal and detail retention, and the slowest. Models the noise in each scene and sets its own strength, so light, medium and heavy denoise the same.",
+	"rabbit-denoise":
+		"rabbit-denoise. Runs on the GPU, or on the CPU about 20 times slower when no GPU works. Film grain denoiser: measures the grain of each scene at every frequency and brightness and removes it while keeping detail, made to pair with film grain restore. Sets its own strength, so light, medium and heavy denoise the same.",
 };
 /** What the strength number means for each av-denoise engine. */
 export const AVD_STRENGTH_HELP: Record<AvdEngine, string> = {
@@ -126,6 +271,8 @@ export const AVD_STRENGTH_HELP: Record<AvdEngine, string> = {
 		"Sigma scale: one multiplier on the noise level the engine measures itself, used at every denoise level. 1.0 trusts the measurement, which is almost always right. Change it only in steps of 0.1 and judge by eye.",
 	"avd-nl4d":
 		"Threshold scale: one multiplier on the engine's own noise model, used at every denoise level. 1.0 trusts it, which is almost always right. Higher removes more noise and more fine detail. Change it only in steps of 0.05 to 0.1.",
+	"rabbit-denoise":
+		"Sigma scale: one multiplier on the grain the denoiser measures, used at every denoise level. 1.0 removes the grain as measured, which is almost always right. Higher removes more grain and more fine detail, lower leaves some grain in. 0.25 to 4.",
 };
 
 export const DEFAULT_NLMEANS_PARAMS = {

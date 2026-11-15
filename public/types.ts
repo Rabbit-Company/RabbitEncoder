@@ -37,8 +37,8 @@ export type DenoiseBackend = "cpu" | "auto" | "vulkan" | "opencl";
 
 export type GpuBackend = "auto" | "vulkan" | "opencl";
 
-/** Which denoiser runs when denoise is enabled. The avd-* engines are av-denoise and are GPU only. */
-export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d";
+/** Which denoiser runs when denoise is enabled. The avd-* engines are av-denoise and GPU only. rabbit-denoise falls back to the CPU. */
+export type DenoiseEngine = "nlmeans" | "avd-nlmeans" | "avd-nlmeans-hq" | "avd-nl4d" | "rabbit-denoise";
 export type AvdEngine = Exclude<DenoiseEngine, "nlmeans">;
 export type AvdPreset = "veryfast" | "fast" | "base" | "slow" | "veryslow";
 
@@ -48,10 +48,36 @@ export interface AvdLevelStrengths {
 	heavy: number;
 }
 
-/** The av-denoise engines that measure the source's noise and set their own strength. */
-export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d";
+/** The engines that measure the source's noise and set their own strength. */
+export type AvdSelfTuningEngine = "avd-nlmeans-hq" | "avd-nl4d" | "rabbit-denoise";
 
-/** av-denoise settings. */
+export type RabbitDevice = "auto" | "gpu" | "cpu";
+
+/** rabbit-denoise options besides its strength scale, which is AvdParams.scales["rabbit-denoise"]. */
+export interface RabbitDenoiseParams {
+	device: RabbitDevice;
+	chromaScale: number;
+	lambda: number;
+	basic: boolean;
+	step: number;
+	temporalRadius: number;
+	searchRadius: number;
+	matchesPerFrame: number;
+	minShift: number;
+	groupSize: number;
+	matchLimit: number;
+	wienerMatchLimit: number;
+	/** null lets rabbit-denoise choose. */
+	followRadius: number | null;
+	/** null uses followRadius. */
+	wienerFollowRadius: number | null;
+	motionRange: number;
+	motion: boolean;
+	singleFrameCap: boolean;
+	lumaGuidedChroma: boolean;
+}
+
+/** Settings of the denoisers that run as programs of their own: av-denoise and rabbit-denoise. */
 export interface AvdParams {
 	/** Speed/quality ladder. Not used by avd-nl4d. */
 	preset: AvdPreset;
@@ -59,6 +85,8 @@ export interface AvdParams {
 	nlmeansStrength: AvdLevelStrengths;
 	/** One multiplier per self-tuning engine, applied at every denoise level. 1.0 trusts the engine's measurement. */
 	scales: Record<AvdSelfTuningEngine, number>;
+	/** rabbit-denoise's other options. Missing on settings saved before they existed. */
+	rabbit?: RabbitDenoiseParams;
 }
 
 export type JobStatus =

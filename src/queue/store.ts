@@ -268,7 +268,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	cropLimit: numIn(0, 1),
 	denoise: enumOf(["off", "auto", "light", "medium", "heavy"]),
 	deband: enumOf(["off", "light", "medium", "heavy"]),
-	denoiseEngine: enumOf(["nlmeans", "avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d"]),
+	denoiseEngine: enumOf(["nlmeans", "avd-nlmeans", "avd-nlmeans-hq", "avd-nl4d", "rabbit-denoise"]),
 	avdParams: (v, cur) => (v && typeof v === "object" ? normalizeAvdParams(v as any, cur) : undefined),
 	avdDevice: (v) => (typeof v === "string" && isValidAvdDeviceSpec(v) ? v : undefined),
 	denoiseBackend: enumOf(["cpu", "auto", "vulkan", "opencl"]),

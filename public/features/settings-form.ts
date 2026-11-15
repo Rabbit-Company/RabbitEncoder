@@ -183,17 +183,17 @@ async function renderTranslateSourceControl(prefix: SettingsFormPrefix, settings
 }
 
 /**
- * Note under the Denoise level pills for the self-tuning av-denoise engines.
- * NLMeans-HQ and NL4D set their own strength, so the level does not change how hard they denoise.
+ * Note under the Denoise level pills for the self-tuning engines.
+ * NLMeans-HQ, NL4D and Rabbit Denoise set their own strength, so the level does not change how hard they denoise.
  */
 export function updateDenoiseLevelHint(prefix: SettingsFormPrefix, settings: JobSettings): void {
 	const hint = byId(`${prefix}-denoise-hint`);
 	const engine = settings.denoiseEngine || DEFAULT_DENOISE_ENGINE;
-	const selfTuning = engine === "avd-nlmeans-hq" || engine === "avd-nl4d";
+	const selfTuning = engine === "avd-nlmeans-hq" || engine === "avd-nl4d" || engine === "rabbit-denoise";
 
 	hint.style.display = selfTuning ? "" : "none";
 	if (!selfTuning) return;
-	const name = engine === "avd-nl4d" ? "AVD NL4D" : "AVD NLMeans-HQ";
+	const name = engine === "avd-nl4d" ? "AVD NL4D" : engine === "rabbit-denoise" ? "Rabbit Denoise" : "AVD NLMeans-HQ";
 	hint.textContent = `${name} sets its own strength, so light, medium and heavy denoise identically. With auto, every scene at or above the light threshold is denoised.`;
 }
 

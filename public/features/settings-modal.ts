@@ -1,4 +1,4 @@
-import type { AutoDenoiseMetric, DenoiseBackend } from "../types";
+import type { AutoDenoiseMetric, DenoiseBackend, JobSettings, RabbitDenoiseParams } from "../types";
 import type { AdvancedTarget, SettingsCodePanelElement } from "../ui/models";
 import {
 	decodeSettingsCodeRequest,
@@ -19,6 +19,17 @@ import {
 	DEFAULT_AVD_PARAMS,
 	AVD_PRESETS,
 	AVD_STRENGTH_HELP,
+	RABBIT_SCALE_RANGE,
+	DEFAULT_RABBIT_PARAMS,
+	RABBIT_DEVICES,
+	RABBIT_DEVICE_HELP,
+	RABBIT_FOLLOW_RADII,
+	RABBIT_HELP,
+	RABBIT_MATCHING_FIELDS,
+	RABBIT_MATCHING_HELP,
+	RABBIT_MOTION_FIELDS,
+	RABBIT_STRENGTH_FIELDS,
+	type RabbitNumberField,
 	DENOISE_BACKENDS,
 	DEFAULT_DENOISE_ENGINE,
 } from "../config/options";
@@ -29,6 +40,8 @@ import {
 	renderGradfunParamsEditor,
 	renderNlmeansParamsEditor,
 	renderRadioPills,
+	renderLabeledToggle,
+	renderNumberControl,
 } from "./settings-controls";
 import { cloneSettingsForEditing, renderSettingsForm, updateDenoiseLevelHint } from "./settings-form";
 import { renderVsChainEditor } from "./vapoursynth";
@@ -86,8 +99,78 @@ export function closeSettingsIfOutside(e: MouseEvent): void {
 	if (e.target === e.currentTarget) closeSettings();
 }
 
+/** Number settings of rabbit-denoise, each with its help under it. */
+function renderRabbitFields(container: HTMLElement, fields: readonly RabbitNumberField[], rabbit: RabbitDenoiseParams): void {
+	container.innerHTML = "";
+	container.classList.add("settings-field-list");
+	for (const field of fields) {
+		const row = document.createElement("div");
+		row.className = "setting-group";
+		const control = document.createElement("div");
+		renderNumberControl(control, field.label, rabbit[field.key], { min: field.min, max: field.max, step: field.step }, (v) => {
+			rabbit[field.key] = field.step >= 1 ? Math.round(v) : v;
+		});
+		const hint = document.createElement("div");
+		hint.className = "lang-filter-hint";
+		hint.textContent = `${field.help} Default ${DEFAULT_RABBIT_PARAMS[field.key]}, ${field.min} to ${field.max}.`;
+		row.appendChild(control);
+		row.appendChild(hint);
+		container.appendChild(row);
+	}
+}
+
+/** The follow radius as pills: auto lets rabbit-denoise choose. */
+function renderFollowRadius(container: HTMLElement, value: number | null, onChange: (v: number | null) => void): void {
+	renderRadioPills(container, RABBIT_FOLLOW_RADII, value === null ? "auto" : (String(value) as (typeof RABBIT_FOLLOW_RADII)[number]), (v) =>
+		onChange(v === "auto" ? null : Number(v)),
+	);
+}
+
+/** rabbit-denoise's card: device, strength, matching, motion and grain measurement, all of its options. */
+function renderRabbitSettings(settings: JobSettings): void {
+	if (!settings.avdParams.rabbit) settings.avdParams.rabbit = structuredClone(DEFAULT_RABBIT_PARAMS);
+	const rabbit = settings.avdParams.rabbit;
+
+	renderRadioPills(byId("advanced-rabbit-device"), RABBIT_DEVICES, rabbit.device, (v) => (rabbit.device = v));
+	byId("advanced-rabbit-device-help").textContent = RABBIT_DEVICE_HELP;
+
+	byId("advanced-rabbit-strength-help").textContent = AVD_STRENGTH_HELP["rabbit-denoise"];
+	renderScaleInput(
+		byId("advanced-rabbit-strength"),
+		settings.avdParams.scales["rabbit-denoise"] ?? 1,
+		(v) => (settings.avdParams.scales["rabbit-denoise"] = v),
+		RABBIT_SCALE_RANGE.min,
+		RABBIT_SCALE_RANGE.max,
+	);
+	renderRabbitFields(byId("advanced-rabbit-strength-fields"), RABBIT_STRENGTH_FIELDS, rabbit);
+	renderLabeledToggle(byId("advanced-rabbit-basic"), rabbit.basic, "First stage only", (v) => (rabbit.basic = v));
+	byId("advanced-rabbit-basic-help").textContent = RABBIT_HELP.basic;
+
+	byId("advanced-rabbit-matching-help").textContent = RABBIT_MATCHING_HELP;
+	renderRabbitFields(byId("advanced-rabbit-matching-fields"), RABBIT_MATCHING_FIELDS, rabbit);
+
+	renderLabeledToggle(byId("advanced-rabbit-motion"), rabbit.motion, "Motion fields", (v) => (rabbit.motion = v));
+	byId("advanced-rabbit-motion-help").textContent = RABBIT_HELP.motion;
+	renderRabbitFields(byId("advanced-rabbit-motion-fields"), RABBIT_MOTION_FIELDS, rabbit);
+	renderFollowRadius(byId("advanced-rabbit-follow-radius"), rabbit.followRadius, (v) => (rabbit.followRadius = v));
+	byId("advanced-rabbit-follow-radius-help").textContent = RABBIT_HELP.followRadius;
+	renderFollowRadius(byId("advanced-rabbit-wiener-follow-radius"), rabbit.wienerFollowRadius, (v) => (rabbit.wienerFollowRadius = v));
+	byId("advanced-rabbit-wiener-follow-radius-help").textContent = RABBIT_HELP.wienerFollowRadius;
+
+	renderLabeledToggle(byId("advanced-rabbit-single-frame-cap"), rabbit.singleFrameCap, "Single frame cap", (v) => (rabbit.singleFrameCap = v));
+	byId("advanced-rabbit-single-frame-cap-help").textContent = RABBIT_HELP.singleFrameCap;
+	renderLabeledToggle(byId("advanced-rabbit-luma-guided-chroma"), rabbit.lumaGuidedChroma, "Luma guided chroma", (v) => (rabbit.lumaGuidedChroma = v));
+	byId("advanced-rabbit-luma-guided-chroma-help").textContent = RABBIT_HELP.lumaGuidedChroma;
+
+	byId("advanced-rabbit-reset").onclick = () => {
+		settings.avdParams.rabbit = structuredClone(DEFAULT_RABBIT_PARAMS);
+		settings.avdParams.scales["rabbit-denoise"] = 1;
+		renderRabbitSettings(settings);
+	};
+}
+
 /** Single number input for a self-tuning engine's scale, styled like one row of the per-level editors. */
-function renderScaleInput(container: HTMLElement, value: number, onChange: (value: number) => void): void {
+function renderScaleInput(container: HTMLElement, value: number, onChange: (value: number) => void, min = 0.1, max = 10): void {
 	container.innerHTML = "";
 	const wrap = document.createElement("div");
 	wrap.className = "auto-threshold-grid";
@@ -98,12 +181,12 @@ function renderScaleInput(container: HTMLElement, value: number, onChange: (valu
 	const input = document.createElement("input");
 	input.type = "number";
 	input.step = "0.05";
-	input.min = "0.1";
-	input.max = "10";
+	input.min = String(min);
+	input.max = String(max);
 	input.value = String(value);
 	input.onchange = () => {
 		const n = parseFloat(input.value);
-		const v = Number.isFinite(n) ? Math.min(10, Math.max(0.1, n)) : 1;
+		const v = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : 1;
 		input.value = String(v);
 		onChange(v);
 	};
@@ -171,9 +254,12 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 
 	// The denoiser itself is picked in the main settings. Here every denoiser's settings are editable,
 	// with the selected one's card marked.
-	const isAvd = settings.denoiseEngine !== "nlmeans";
-	byId("advanced-nlmeans-in-use").style.display = isAvd ? "none" : "";
-	byId("advanced-avd-in-use").style.display = isAvd ? "" : "none";
+	const engine = settings.denoiseEngine;
+	byId("advanced-nlmeans-in-use").style.display = engine === "nlmeans" ? "" : "none";
+	byId("advanced-avd-in-use").style.display = engine.startsWith("avd-") ? "" : "none";
+	byId("advanced-rabbit-in-use").style.display = engine === "rabbit-denoise" ? "" : "none";
+
+	renderRabbitSettings(settings);
 
 	renderRadioPills(byId("advanced-avd-preset"), AVD_PRESETS, settings.avdParams.preset, (v) => (activeSettings.avdParams.preset = v));
 
