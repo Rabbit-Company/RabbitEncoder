@@ -114,13 +114,13 @@ export function stopSystemPolling() {
 }
 
 const BENCHMARK_MODE_LABELS: Record<BenchmarkMode, string> = {
-	"rabbit-denoise": "Rabbit Denoise",
 	cpu: "CPU nlmeans",
 	opencl: "OpenCL nlmeans",
 	vulkan: "Vulkan nlmeans",
 	"avd-nlmeans": "AVD NLMeans",
 	"avd-nlmeans-hq": "AVD NLMeans-HQ",
 	"avd-nl4d": "AVD NL4D",
+	"rabbit-denoise": "Rabbit Denoise",
 };
 const BENCHMARK_MODES = Object.keys(BENCHMARK_MODE_LABELS) as BenchmarkMode[];
 const BENCHMARK_MODES_STORAGE_KEY = "benchmarkModes";

@@ -15,8 +15,8 @@ const VULKAN_T = "8";
 
 export type BenchmarkLevel = "light" | "medium" | "heavy";
 export type BenchmarkMode = "cpu" | "opencl" | "vulkan" | AvdEngine;
-// Rabbit Denoise first, as the recommended engine.
-export const BENCHMARK_MODES: readonly BenchmarkMode[] = ["rabbit-denoise", "cpu", "opencl", "vulkan", ...AVD_ENGINES.filter((e) => e !== "rabbit-denoise")];
+// Slowest and simplest first, Rabbit Denoise last as the recommended engine.
+export const BENCHMARK_MODES: readonly BenchmarkMode[] = ["cpu", "opencl", "vulkan", ...AVD_ENGINES.filter((e) => e !== "rabbit-denoise"), "rabbit-denoise"];
 export type BenchmarkStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 
 export interface StartBenchmarkOptions {
