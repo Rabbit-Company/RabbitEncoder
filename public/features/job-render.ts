@@ -73,7 +73,12 @@ export function computeStepElapsed(step: JobStep): number | null {
 }
 
 export function computeStepETA(step: JobStep): number | null {
-	if (!step.startedAt || step.status !== "active" || step.progress <= 0) return null;
+	if (!step.startedAt || step.status !== "active") return null;
+	if (step.etaMs !== undefined && step.etaAt !== undefined) {
+		const remaining = step.etaMs - (Date.now() - step.etaAt);
+		return remaining > 0 ? remaining : null;
+	}
+	if (step.progress <= 0) return null;
 	const elapsed = Date.now() - step.startedAt;
 	if (elapsed < 3000) return null;
 	const totalEstimated = (elapsed / step.progress) * 100;

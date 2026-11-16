@@ -52,7 +52,7 @@ import { detectSourceTag, detectReleaseGroup, getResolutionTag, extractBaseTitle
 import pkg from "../../package.json";
 import { buildPrepareFilterConfig, detectPictureGeometry } from "../video/filters";
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
-import { ffmpegProgress, mkvtoolnixProgress, preparePhaseProgress } from "./prepare-progress";
+import { ffmpegProgress, mkvtoolnixProgress, passEtaTimer, preparePhaseProgress } from "./prepare-progress";
 import { shouldStageSource } from "./source-staging";
 import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
 import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
@@ -415,6 +415,10 @@ export async function encodeJob(
 			}
 		}
 
+		if (!("etaMs" in partial) && ("progress" in partial || partial.status)) {
+			step.etaMs = undefined;
+			step.etaAt = undefined;
+		}
 		Object.assign(step, partial);
 		const shown = shownSteps();
 		const overall = shown.reduce((sum, s) => sum + s.progress, 0) / shown.length;
@@ -660,6 +664,7 @@ export async function encodeJob(
 		if (activeVsEntries.length > 0) {
 			const totalFrames = Math.round(probe.duration * probe.videoStreamFps);
 			let currentInput = preparedVideo;
+			const vsPassTimer = passEtaTimer();
 
 			for (let i = 0; i < activeVsEntries.length; i++) {
 				checkCancelled();
@@ -690,6 +695,7 @@ export async function encodeJob(
 						setStep(S_PREPARE, {
 							progress: passBaseProgress + passShare * passFrac,
 							detail: formatVsProgressDetail(manifest.name, entry.level, current, totalFrames, fps),
+							...vsPassTimer(i, passFrac, activeVsEntries.length - i - 1),
 						});
 					},
 				});
@@ -786,10 +792,12 @@ export async function encodeJob(
 		const hasAvdPass = !!(prepareFilter?.deferredAvd?.plan || prepareFilter?.deferredAvd?.level);
 		const workPassCount = Number(needsGrainReferenceScale) + Number(needsFilterPass) + Number(!!prepareFilter?.deferredAutoDenoise) + Number(hasAvdPass);
 		let workPassIndex = 0;
+		const workPassTimer = passEtaTimer();
 		const workProgress = (fraction: number, detail: string) => {
 			const start = preparePhaseProgress(PREPARE_WORK_START, 99, workPassIndex / Math.max(1, workPassCount));
 			const end = preparePhaseProgress(PREPARE_WORK_START, 99, (workPassIndex + 1) / Math.max(1, workPassCount));
-			setStep(S_PREPARE, { progress: preparePhaseProgress(start, end, fraction), detail });
+			const eta = workPassTimer(workPassIndex, fraction, Math.max(0, workPassCount - workPassIndex - 1));
+			setStep(S_PREPARE, { progress: preparePhaseProgress(start, end, fraction), detail, ...eta });
 		};
 		const completeWorkPass = (detail: string) => {
 			workProgress(1, detail);
@@ -826,12 +834,7 @@ export async function encodeJob(
 						signal,
 						onStdoutLine: (line) => {
 							const fraction = ffmpegProgress(line, probe.duration);
-							if (fraction !== null)
-								reportStep(
-									S_PREPARE,
-									preparePhaseProgress(PREPARE_WORK_START, 99, (workPassIndex + fraction) / workPassCount),
-									`Scaling film grain reference: ${Math.round(fraction * 100)}%`,
-								);
+							if (fraction !== null) workProgress(fraction, `Scaling film grain reference: ${Math.round(fraction * 100)}%`);
 						},
 					},
 				);

@@ -566,6 +566,9 @@ export interface JobStep {
 	detail?: string;
 	startedAt?: number;
 	finishedAt?: number;
+	/** Time left in ms as measured by the pipeline at etaAt, for steps whose progress jumps between phases. */
+	etaMs?: number;
+	etaAt?: number;
 }
 
 export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio";
