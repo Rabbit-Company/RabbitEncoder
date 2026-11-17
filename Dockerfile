@@ -271,8 +271,8 @@ RUN set -eux; \
 
 # regrain measures film grain and writes it into the AV1 encode. It is a static binary
 # and calls the ffmpeg and ffprobe that the entrypoint links into /usr/local/bin.
-ARG REGRAIN_VERSION=0.4.0
-ARG REGRAIN_SHA256=1e922c20f417dec1e367b12d64195d60a709788a68fc735b7e5686659d81dd53
+ARG REGRAIN_VERSION=0.5.0
+ARG REGRAIN_SHA256=687d33138f59cc549d15fe4944769c15181dca5c85d173b096b577387a180392
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/regrain/releases/download/v${REGRAIN_VERSION}/regrain-v${REGRAIN_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/regrain.tar.gz \
@@ -297,8 +297,8 @@ RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 
 # rabbit-denoise removes film grain on the GPU, through Vulkan, behind the rabbit-denoise denoise engine.
 # It links glibc and loads the Vulkan driver at run time.
-ARG RABBIT_DENOISE_VERSION=0.1.6
-ARG RABBIT_DENOISE_SHA256=d8312965e2d691585adb6d61aecc758a34504ff8e59863df73d7b86d40b4ca84
+ARG RABBIT_DENOISE_VERSION=0.1.7
+ARG RABBIT_DENOISE_SHA256=d1569e36dc4871ac322a28d35d9669daaa905a42a41ed7ce73f879e5ca66bfe0
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/rabbit-denoise/releases/download/v${RABBIT_DENOISE_VERSION}/rabbit-denoise-v${RABBIT_DENOISE_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/rabbit-denoise.tar.gz \
