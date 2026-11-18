@@ -9,6 +9,7 @@ import { fontRegistry } from "./fonts/fonts";
 import { loadConfig } from "./core/config";
 import { initStore } from "./queue/store";
 import { startWatcher } from "./queue/watcher";
+import { initDiscWatch } from "./bdmv/watch";
 import { Logger } from "./core/logger";
 
 export const config = await loadConfig();
@@ -32,6 +33,7 @@ mkdirSync(config.tempDir, { recursive: true });
 mkdirSync(config.fontsUserDir, { recursive: true });
 
 initStore(config);
+initDiscWatch(config.tempDir);
 
 startWatcher(config.inputDir);
 

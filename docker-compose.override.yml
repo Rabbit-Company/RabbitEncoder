@@ -39,6 +39,22 @@ services:
       # Files already ending with -{ORGANIZATION}.mkv are recognized as already encoded and skipped.
       # - LIBRARY_DIRS=/Animes,/Shows,/Movies
 
+      # Blu-ray disc naming (Tools > Blu-ray discs). Placeholders are written like Sonarr's and Radarr's.
+      # Series: {Series Title} {Series TitleYear} {Series Year} {Year} {ImdbId} {TvdbId} {TmdbId}
+      #         {season} {episode} {Episode Title}, padded as {season:00} or {episode:000}
+      # Movies: {Movie Title} {Movie TitleYear} {Release Year} {Year} {ImdbId} {TmdbId} {Edition Tags}
+      # An empty placeholder takes the brackets around it, or the dash before it, along.
+      # Encodes add [Bluray-1080p][Opus 2.0][AV1]-{ORGANIZATION} after the name.
+      # - SERIES_FOLDER_FORMAT={Series TitleYear}
+      # - SEASON_FOLDER_FORMAT=Season {season:00}
+      # - SPECIALS_FOLDER_FORMAT=Specials
+      # - EPISODE_FORMAT={Series TitleYear} - S{season:00}E{episode:00} - {Episode Title}
+      # - MOVIE_FOLDER_FORMAT={Movie Title} ({Release Year})
+      # - MOVIE_FORMAT={Movie Title} ({Release Year}) - {Edition Tags}
+      # With IMDb IDs, as the TRaSH guides name them:
+      # - MOVIE_FOLDER_FORMAT={Movie Title} ({Release Year}) [imdbid-{ImdbId}]
+      # - MOVIE_FORMAT={Movie Title} ({Release Year}) [imdbid-{ImdbId}] - {Edition Tags}
+
       # Recycle bin (path inside the container, mount it as a volume)
       # Originals of in-place library encodes are moved here instead of being replaced,
       # keeping their folder structure: /Animes/Show/Ep.mkv -> /recycle-bin/Animes/Show/Ep.mkv

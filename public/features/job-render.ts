@@ -7,7 +7,7 @@ import { sortNodeChildren } from "./queue-order";
 import { byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
-import { compareQueuedJobs } from "../../src/queue/priority";
+import { compareQueuedJobs, queuePriority } from "../../src/queue/priority";
 import { syntheticGrainActive, syntheticGrainMode } from "../../src/core/film-grain-iso";
 
 export function statusLabel(status: JobStatus): string {
@@ -392,6 +392,7 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
 	if (job.kind === "subtitles") meta += `<span>Subtitles added, video and audio copied</span>`;
+	if (job.kind === "disc") meta += `<span>Blu-ray remux, its encode follows</span>`;
 	if (job.kind === "audio")
 		meta += job.audioTracksPlan ? `<span>Audio tracks redone, video copied</span>` : `<span>Audio added from another release, video copied</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
@@ -520,7 +521,7 @@ export function renderJobCard(job: Job): string {
       </button>`;
 	} else if (active && isToolJob(job)) {
 		actions = `
-			${infoBtn}
+			${job.kind === "disc" ? "" : infoBtn}
 			<button class="btn-icon btn-cancel" title="Cancel" data-id="${job.id}" data-action="cancel">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
 			</button>`;
@@ -557,7 +558,7 @@ export function renderJobCard(job: Job): string {
 	} else if (done) {
 		actions = `
 			${isToolJob(job) ? "" : bitrateBtn}
-			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio" ? "" : repairBtn}
+			${job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio" || job.kind === "disc" ? "" : repairBtn}
       <button class="btn-icon" title="Dismiss" data-id="${job.id}" data-action="dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
       </button>`;
@@ -861,15 +862,17 @@ export function renderFolderNode(node: FolderTreeNode, depth: number): string {
 	return html;
 }
 
-/** Repairs, HDR metadata and film grain changes, and added subtitles and audio copy the video instead of encoding it, so they have no encode settings or previews. */
+/** Repairs, HDR metadata and film grain changes, added subtitles and audio, and disc remuxes copy the video instead of encoding it, so they have no encode settings or previews. */
 function isToolJob(job: Job): boolean {
-	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio";
+	return job.kind === "repair" || job.kind === "hdr" || job.kind === "grain" || job.kind === "subtitles" || job.kind === "audio" || job.kind === "disc";
 }
 
 export function renderJobsList(jobs: Job[]): string {
 	const tree = buildFolderTree(jobs);
 	let html = "";
-	const priorityRepairs = tree.jobs.filter((job) => isToolJob(job) && (job.status === "queued" || isActive(job.status))).sort(compareQueuedJobs);
+	const priorityRepairs = tree.jobs
+		.filter((job) => isToolJob(job) && queuePriority(job) === 0 && (job.status === "queued" || isActive(job.status)))
+		.sort(compareQueuedJobs);
 	const priorityRepairIds = new Set(priorityRepairs.map((job) => job.id));
 
 	for (const job of priorityRepairs) {

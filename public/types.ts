@@ -466,7 +466,7 @@ export interface JobStep {
 	etaAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio" | "disc";
 
 /** What an HDR job does with HDR10+ metadata: keep it, remove it, measure it from the video, measure it with
  * the scenes of a Dolby Vision original, or take it from a file. */

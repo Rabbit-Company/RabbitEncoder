@@ -3,8 +3,9 @@ import { join, extname, relative, dirname, basename } from "path";
 import { addJob } from "./store";
 import { Logger } from "../core/logger";
 import { MEDIA_EXTENSIONS } from "../core/types";
+import { scanInputDiscs } from "../bdmv/watch";
 
-const COOLDOWN_SEC = parseInt(process.env.FILE_COOLDOWN || "300");
+export const COOLDOWN_SEC = parseInt(process.env.FILE_COOLDOWN || "300");
 const POLL_INTERVAL = 10;
 
 const knownFiles = new Set<string>();
@@ -23,9 +24,11 @@ export function isRabbitToolFile(path: string): boolean {
 }
 
 export function startWatcher(inputDir: string) {
-	if (existsSync(inputDir)) {
+	const scanAll = () => {
 		scanDirectory(inputDir, inputDir);
-	}
+		scanInputDiscs(inputDir);
+	};
+	if (existsSync(inputDir)) scanAll();
 
 	try {
 		const watcher = watch(inputDir, { recursive: true }, (event, filename) => {
@@ -40,12 +43,12 @@ export function startWatcher(inputDir: string) {
 			waitForFile(fullPath, filename, relativePath === "." ? "" : relativePath);
 		});
 
-		setInterval(() => scanDirectory(inputDir, inputDir), 10_000);
+		setInterval(scanAll, 10_000);
 
 		Logger.info(`[watcher] Watching ${inputDir} recursively for media files (cooldown: ${COOLDOWN_SEC}s)`);
 	} catch (err: any) {
 		Logger.error(`[watcher] Error starting watcher:`, { "error.message": err?.message });
-		setInterval(() => scanDirectory(inputDir, inputDir), 10_000);
+		setInterval(scanAll, 10_000);
 		Logger.info(`[watcher] Polling ${inputDir} recursively for media files (cooldown: ${COOLDOWN_SEC}s, fallback mode)`);
 	}
 }

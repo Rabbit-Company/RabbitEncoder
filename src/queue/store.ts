@@ -25,6 +25,7 @@ import {
 	type EncoderId,
 	type RepairPlan,
 	type SubtitleAddPlan,
+	type DiscPlan,
 	SUBTITLE_HEARING_IMPAIRED_PREFERENCES,
 } from "../core/types";
 import { encodeJob, CancelledError } from "../pipeline/encoder";
@@ -54,6 +55,7 @@ import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/g
 import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
 import { describeReleaseAudioPlan, runReleaseAudioJob, sanitizeReleaseAudioPlan } from "../pipeline/release-audio";
 import { describeAudioTracksPlan, runAudioTracksJob, sanitizeAudioTracksPlan } from "../pipeline/audio-tracks";
+import { discStagingDir, playlistPath, runDiscJob } from "../pipeline/disc-extract";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { cleanPreferredSources } from "../subsearch/naming";
 import { compareQueuedJobs, queuePriority } from "./priority";
@@ -697,6 +699,49 @@ export function addGrainJob(rawPlan: GrainPlan): Job {
 	return job;
 }
 
+/** Queues an episode or extra of a Blu-ray disc. Its encode is queued right after it once it is remuxed. Paths must already be checked. */
+export function addDiscJob(plan: DiscPlan): Job {
+	const inputPath = playlistPath(plan);
+	for (const existing of jobs.values()) {
+		const other = existing.discPlan;
+		if (
+			other &&
+			!["done", "error", "cancelled"].includes(existing.status) &&
+			playlistPath(other) === inputPath &&
+			Math.abs(other.start - plan.start) < 1 &&
+			Math.abs(other.end - plan.end) < 1
+		)
+			return existing;
+	}
+
+	const id = crypto.randomUUID().slice(0, 8);
+	const job: Job = {
+		id,
+		kind: "disc",
+		filename: `Disc: ${plan.filename}`,
+		inputPath,
+		relativePath: plan.relativePath,
+		status: "queued",
+		progress: 0,
+		queueOrder: ++orderCounter,
+		currentStage: "Waiting in queue",
+		steps: [],
+		settings: structuredClone(appConfig.defaults),
+		replaceSource: false,
+		discPlan: plan,
+	};
+	jobs.set(id, job);
+	saveQueue();
+	processQueue();
+	return job;
+}
+
+/** A remux of a disc waits in the temp folder for its encode, which removes it when done. */
+function isDiscRemux(path: string): boolean {
+	const rel = relative(discStagingDir(appConfig), path);
+	return !!rel && !rel.startsWith("..") && !rel.includes("/");
+}
+
 export function scanLibraryFolder(
 	folderPath: string,
 	sourceMap: Record<string, string> = {},
@@ -820,6 +865,11 @@ export function removeJob(id: string): boolean {
 	if (!job) return false;
 	if (job.status !== "queued" && job.status !== "done" && job.status !== "error" && job.status !== "cancelled") return false;
 	jobs.delete(id);
+	if ((job.kind ?? "encode") === "encode" && job.status !== "done" && isDiscRemux(job.inputPath)) {
+		try {
+			unlinkSync(job.inputPath);
+		} catch {}
+	}
 	deleteTelemetry(id);
 	deleteEncodeMeasurement(id);
 	clearPreviewFor(id);
@@ -949,6 +999,15 @@ async function processQueue() {
 		} else if (next.kind === "audio") {
 			if (next.audioTracksPlan) await runAudioTracksJob(next, appConfig, updateFn, controller.signal);
 			else await runReleaseAudioJob(next, appConfig, updateFn, controller.signal);
+		} else if (next.kind === "disc") {
+			const remux = await runDiscJob(next, appConfig, updateFn, controller.signal);
+			const plan = next.discPlan!;
+			const encode = addJob(plan.filename, remux, plan.relativePath);
+			if (plan.outputTitle) encode.outputTitle = plan.outputTitle;
+			if (plan.outputRoot) encode.outputRoot = plan.outputRoot;
+			// Straight after its remux, ahead of the next one.
+			encode.queueOrder = next.queueOrder + 0.5;
+			Logger.info(`[disc] Remuxed ${plan.filename}, queued its encode`);
 		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {

@@ -32,6 +32,7 @@ import { mapPool } from "../core/concurrency";
 import { clearOriginals, originalPath, originalsUsage } from "../fonts/font-cut";
 import { estimateFontSavings } from "../fonts/rabbit-faces";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
+import { jobOutputRoot } from "../pipeline/output";
 import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
 import { addRepairJob, getAllJobs, getAppConfig, getJob } from "../queue/store";
 import type { SubtitleSortOptions } from "../tracks/tracks";
@@ -135,7 +136,7 @@ function outputPathForJob(jobId: string, config: AppConfig): { targetPath: strin
 	if (job.kind === "repair" && job.outputFilename) {
 		targetPath = job.outputFilename;
 	} else if (job.status === "done" && job.outputFilename) {
-		targetPath = job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
+		targetPath = job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(jobOutputRoot(job, config), job.outputFilename);
 	} else {
 		targetPath = job.inputPath;
 	}

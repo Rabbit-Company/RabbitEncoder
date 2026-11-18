@@ -21,6 +21,7 @@ import { registerReleaseAudioRoutes } from "./release-audio";
 import { registerAudioTracksRoutes } from "./audio-tracks";
 import { registerSubtitleFileRoutes } from "./subtitle-files";
 import { registerFontCheckRoutes } from "./font-check";
+import { registerBdmvRoutes } from "./bdmv";
 import type { AppConfig } from "../core/types";
 
 export function registerApiRoutes(app: Web, config: AppConfig): void {
@@ -46,4 +47,5 @@ export function registerApiRoutes(app: Web, config: AppConfig): void {
 	registerAudioTracksRoutes(app, config);
 	registerSubtitleFileRoutes(app, config);
 	registerFontCheckRoutes(app, config);
+	registerBdmvRoutes(app, config);
 }

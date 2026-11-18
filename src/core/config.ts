@@ -4,6 +4,7 @@ import { DEFAULT_AVD_DEVICE, DEFAULT_AVD_PARAMS } from "../video/avd";
 import { Logger } from "./logger";
 import { run } from "./process";
 import type { AppConfig, AudioChannelBitrates, JobSettings } from "./types";
+import { DEFAULT_NAMING_FORMATS, MOVIE_TOKENS, SERIES_TOKENS, unknownTokens, type NamingFormats } from "../bdmv/naming";
 
 const DEFAULT_BITRATES: AudioChannelBitrates = {
 	mono: 64,
@@ -182,6 +183,25 @@ export async function getRetoneVersion(): Promise<string | null> {
 	return res.stdout.trim().split(/\s+/)[1] ?? null;
 }
 
+/** Naming formats for disc imports, from the environment. Placeholders that do not exist are logged and left empty. */
+export function loadNamingFormats(env: Record<string, string | undefined> = process.env): NamingFormats {
+	const pick = (name: string, fallback: string, tokens: string[]) => {
+		const value = env[name]?.trim() || fallback;
+		const unknown = unknownTokens(value, tokens);
+		if (unknown.length) Logger.warn(`[naming] ${name} has placeholders that do not exist and stay empty: ${unknown.map((t) => `{${t}}`).join(", ")}`);
+		return value;
+	};
+	const d = DEFAULT_NAMING_FORMATS;
+	return {
+		seriesFolder: pick("SERIES_FOLDER_FORMAT", d.seriesFolder, SERIES_TOKENS),
+		seasonFolder: pick("SEASON_FOLDER_FORMAT", d.seasonFolder, SERIES_TOKENS),
+		specialsFolder: pick("SPECIALS_FOLDER_FORMAT", d.specialsFolder, SERIES_TOKENS),
+		episode: pick("EPISODE_FORMAT", d.episode, SERIES_TOKENS),
+		movieFolder: pick("MOVIE_FOLDER_FORMAT", d.movieFolder, MOVIE_TOKENS),
+		movie: pick("MOVIE_FORMAT", d.movie, MOVIE_TOKENS),
+	};
+}
+
 export async function loadConfig(): Promise<AppConfig> {
 	const libraryDirs = (process.env.LIBRARY_DIRS || "")
 		.split(",")
@@ -208,5 +228,6 @@ export async function loadConfig(): Promise<AppConfig> {
 		regrain: { version: await getRegrainVersion() },
 		retone: { version: await getRetoneVersion() },
 		defaults: getDefaultJobSettings(),
+		naming: loadNamingFormats(),
 	};
 }

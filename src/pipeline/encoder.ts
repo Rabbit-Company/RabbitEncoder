@@ -383,7 +383,7 @@ export async function encodeJob(
 
 	const stem = parsePath(job.filename).name;
 	const releaseGroup = detectReleaseGroup(stem);
-	const baseTitle = extractBaseTitle(stem);
+	const baseTitle = job.outputTitle?.trim() || extractBaseTitle(stem);
 
 	const steps = makeSteps();
 	// Shown only on jobs that measure their own table: after Analyze for an original, after Prepare for Rabbit's own denoise,

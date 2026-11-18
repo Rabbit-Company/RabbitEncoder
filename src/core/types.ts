@@ -1,3 +1,4 @@
+import type { NamingFormats } from "../bdmv/naming";
 import type { StillStyle } from "./still-style";
 
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
@@ -571,7 +572,27 @@ export interface JobStep {
 	etaAt?: number;
 }
 
-export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio";
+export type JobKind = "encode" | "repair" | "hdr" | "grain" | "subtitles" | "audio" | "disc";
+
+/** One episode or extra of a Blu-ray disc, remuxed from its playlist and then queued to encode. */
+export interface DiscPlan {
+	/** The folder that holds BDMV. */
+	discPath: string;
+	/** Playlist number, "00002". */
+	playlist: string;
+	/** Range on the playlist's timeline in seconds. The whole playlist when it spans all of it. */
+	start: number;
+	end: number;
+	/** Length of the whole playlist in seconds. */
+	duration: number;
+	/** The encode's file name and folder under the output folder. */
+	filename: string;
+	relativePath: string;
+	/** The output folder or a library folder the encode goes into, when not the output folder. */
+	outputRoot?: string;
+	/** The name the encode keeps before its tags, as the naming format made it. */
+	outputTitle?: string;
+}
 
 /** An audio track of another release to add to a video, synced to it by the audio both share. */
 export interface ReleaseAudioAddition {
@@ -1167,6 +1188,11 @@ export interface Job {
 	subtitleAddPlan?: SubtitleAddPlan;
 	audioPlan?: ReleaseAudioPlan;
 	audioTracksPlan?: AudioTracksPlan;
+	discPlan?: DiscPlan;
+	/** The name the output keeps before its tags, instead of one read from the input's file name. */
+	outputTitle?: string;
+	/** A library folder the result goes into in place of the output folder. */
+	outputRoot?: string;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 	/** The crop the encode applied, in pixels of the source, so the source can be measured against the encode. */
 	cropRect?: PreviewCrop;
@@ -1191,6 +1217,8 @@ export interface AppConfig {
 	languageDetector: LanguageDetector;
 	regrain: { version: string | null };
 	retone: { version: string | null };
+	/** Naming formats for disc imports. */
+	naming: NamingFormats;
 }
 
 export interface SubtitlePreviewTrack {

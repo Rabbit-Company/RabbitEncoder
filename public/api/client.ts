@@ -50,6 +50,10 @@ import { API } from "../config/api-base";
 import { startPolling, stopPolling } from "../features/polling";
 import { buttonById, byId, inputById } from "../shared/dom";
 import type { StillStyle } from "../../src/core/still-style";
+import type { DiscRow, DiscSetScan } from "../../src/bdmv/plan";
+import type { TmdbMovie, TvdbSeries } from "../../src/bdmv/metadata";
+import type { DiscIdentity, DiscMode } from "../../src/bdmv/naming";
+import type { DetectedDiscSet } from "../../src/bdmv/watch";
 import { appState } from "../state";
 
 export function hashPassword(password: string): string {
@@ -1411,5 +1415,72 @@ export async function createFontCheckJobs(
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue the font fixes");
+	return data;
+}
+
+export async function fetchDetectedDiscSets(): Promise<DetectedDiscSet[]> {
+	const response = await authFetch(`${API}/api/bdmv/detected`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not list the discs in the input folder");
+	return data.sets ?? [];
+}
+
+export async function dismissDiscSet(path: string): Promise<void> {
+	const response = await authFetch(`${API}/api/bdmv/dismiss`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path }),
+	});
+	if (!response.ok) throw new Error((await response.json())?.error || "Could not dismiss the disc set");
+}
+
+export async function searchDiscMetadata(mode: "series", term: string): Promise<TvdbSeries[]>;
+export async function searchDiscMetadata(mode: "movie", term: string, year?: number): Promise<TmdbMovie[]>;
+export async function searchDiscMetadata(mode: DiscMode, term: string, year?: number): Promise<TvdbSeries[] | TmdbMovie[]> {
+	const response = await authFetch(`${API}/api/bdmv/search?mode=${mode}&q=${encodeURIComponent(term)}${year ? `&year=${year}` : ""}`);
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Search failed");
+	return (mode === "movie" ? data.movies : data.series) ?? [];
+}
+
+/** A folder a disc set can be saved into. */
+export interface DiscDestination {
+	path: string;
+	label: string;
+}
+
+export async function scanDiscSetRequest(options: {
+	path: string;
+	mode?: DiscMode;
+	tvdbId?: number;
+	tmdbId?: number;
+	season: number;
+	firstEpisode: number;
+	episodeCounts: Record<number, number>;
+}): Promise<DiscSetScan & { destinations: DiscDestination[] }> {
+	const response = await authFetch(`${API}/api/bdmv/scan`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the discs");
+	return data;
+}
+
+export async function createDiscJobs(options: {
+	path: string;
+	mode: DiscMode;
+	identity: DiscIdentity;
+	rows: Pick<DiscRow, "discPath" | "playlist" | "start" | "end" | "kind" | "season" | "episode" | "title" | "edition">[];
+	outputRoot?: string;
+}): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/bdmv/jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(options),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the discs");
 	return data;
 }

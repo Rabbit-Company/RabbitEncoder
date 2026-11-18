@@ -255,6 +255,24 @@ import {
 	scanAudioTracks,
 } from "../features/audio-tracks";
 import {
+	closeBdmv,
+	closeBdmvIfOutside,
+	handleBdmvDiscs,
+	handleBdmvIdentityInput,
+	handleBdmvModeChange,
+	handleBdmvNumbering,
+	handleBdmvRows,
+	handleBdmvRowsInput,
+	handleBdmvSaveTo,
+	handleBdmvSeriesChange,
+	handleDiscBanner,
+	openBdmv,
+	pickBdmvFolder,
+	queueBdmv,
+	scanBdmv,
+	searchBdmvSeries,
+} from "../features/bdmv";
+import {
 	closeRepairAudit,
 	closeRepairAuditIfOutside,
 	handleRepairAuditClick,
@@ -363,6 +381,29 @@ export function initEventListeners() {
 	byId("audio-tracks-scan-btn").addEventListener("click", scanAudioTracks);
 	byId("audio-tracks-types").addEventListener("change", handleAudioTracksChoice);
 	byId("audio-tracks-queue-btn").addEventListener("click", queueAudioTracks);
+
+	byId("open-bdmv-btn").addEventListener("click", () => openBdmv());
+	byId("close-bdmv-btn").addEventListener("click", closeBdmv);
+	byId("bdmv-cancel-btn").addEventListener("click", closeBdmv);
+	byId("bdmv-modal").addEventListener("click", closeBdmvIfOutside);
+	byId("bdmv-pick-btn").addEventListener("click", pickBdmvFolder);
+	byId("bdmv-scan-btn").addEventListener("click", scanBdmv);
+	byId("bdmv-search-btn").addEventListener("click", searchBdmvSeries);
+	byId("bdmv-search").addEventListener("keydown", (event) => {
+		if (event.key === "Enter") void searchBdmvSeries();
+	});
+	byId("bdmv-series-results").addEventListener("change", handleBdmvSeriesChange);
+	byId("bdmv-season").addEventListener("change", handleBdmvNumbering);
+	byId("bdmv-first-episode").addEventListener("change", handleBdmvNumbering);
+	byId("bdmv-mode").addEventListener("change", handleBdmvModeChange);
+	byId("bdmv-title").addEventListener("input", handleBdmvIdentityInput);
+	byId("bdmv-year").addEventListener("input", handleBdmvIdentityInput);
+	byId("bdmv-discs").addEventListener("change", handleBdmvDiscs);
+	byId("bdmv-rows").addEventListener("change", handleBdmvRows);
+	byId("bdmv-rows").addEventListener("input", handleBdmvRowsInput);
+	byId("bdmv-queue-btn").addEventListener("click", queueBdmv);
+	byId("bdmv-save-to").addEventListener("change", handleBdmvSaveTo);
+	byId("disc-banner").addEventListener("click", handleDiscBanner);
 	byId("open-fontcheck-btn").addEventListener("click", openFontCheck);
 	byId("close-fontcheck-btn").addEventListener("click", closeFontCheck);
 	byId("fontcheck-cancel-btn").addEventListener("click", closeFontCheck);

@@ -193,6 +193,16 @@ export async function recycleSource(sourcePath: string, recycleBinDir: string, s
 	return binPath;
 }
 
+/** Folders a result can be written into: the output folder and every library folder. */
+export function outputRoots(config: AppConfig): string[] {
+	return [...new Set([config.outputDir, ...config.libraryDirs].map((dir) => resolve(dir)))];
+}
+
+/** Where a job's result goes, which is the output folder unless it chose a library folder that is still configured. */
+export function jobOutputRoot(job: Pick<Job, "outputRoot">, config: AppConfig): string {
+	return job.outputRoot && outputRoots(config).includes(resolve(job.outputRoot)) ? resolve(job.outputRoot) : config.outputDir;
+}
+
 /**
  * Move a finished temp file to its final destination and return that path.
  *
@@ -200,8 +210,8 @@ export async function recycleSource(sourcePath: string, recycleBinDir: string, s
  * it does not overwrite the source directly, associated Jellyfin/Sonarr
  * metadata is cleaned up and the source removed. With `config.recycleBinDir`
  * set, the source is moved to the recycle bin instead of being overwritten or
- * removed. Watched-input jobs: the result lands in `config.outputDir`
- * (respecting `job.relativePath`).
+ * removed. Other jobs: the result lands in `config.outputDir`, or the
+ * library folder the job chose (respecting `job.relativePath`).
  *
  * Note: deleting the *input* file for non-replaceSource jobs stays the
  * caller's responsibility (matching encodeJob's existing behavior), because
@@ -248,7 +258,8 @@ export async function finalizeOutput(
 
 		Logger.info(`[library] Replaced with: ${basename(outputPath)}`);
 	} else {
-		const outputSubDir = job.relativePath ? join(config.outputDir, job.relativePath) : config.outputDir;
+		const root = jobOutputRoot(job, config);
+		const outputSubDir = job.relativePath ? join(root, job.relativePath) : root;
 		mkdirSync(outputSubDir, { recursive: true });
 		outputPath = resolveUniqueOutputPath(outputSubDir, outputFilename);
 

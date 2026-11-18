@@ -4,6 +4,7 @@ import { initEventListeners } from "./app/events";
 import { API } from "./config/api-base";
 import { fetchLibraryDirs } from "./features/library";
 import { startPolling } from "./features/polling";
+import { startDiscPolling } from "./features/bdmv";
 import { byId } from "./shared/dom";
 import { initLanguagePickers } from "./shared/language-picker";
 import { appState } from "./state";
@@ -33,6 +34,7 @@ export async function init() {
 
 		appState.defaults = await res.json();
 		startPolling();
+		startDiscPolling();
 
 		try {
 			const libData = await fetchLibraryDirs();

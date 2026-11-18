@@ -28,6 +28,7 @@ Drop media files into the `input` folder and get optimally encoded MKV files in 
 - **Audio from releases** copy the audio languages your videos lack from other releases of them, synced by the audio they share. Offsets, PAL speedups and cut scenes are handled. Added tracks can be encoded to Opus and every audio track ordered, named and flagged as an encode would do it
 - **Audio tracks** give a folder of existing videos the audio an encode with your settings would have, without touching the video. Tracks are encoded to Opus, removed, reordered and renamed, with a choice per track type
 - **Folder metadata audit** group MKVs by their ordered audio/subtitle metadata, edit and reorder audio and subtitle tracks across an entire group, highlight missing or inconsistent tracks, and open outliers against the majority layout in the Rabbit repair editor
+- **Blu-ray discs** split a set of ripped Blu-ray discs (folders with BDMV inside) into episodes, specials and extras numbered as Sonarr does with TVDB, or into a movie and its extras as Radarr does with TMDB, and encode them into the output folder or straight into one of your library folders, such as `/Animes` or `/Movies`, with names from your own naming formats (see Disc Naming). The folder is chosen under **Save to** and remembered separately for series and movies. Whether a set holds a series or a movie is guessed from its playlists and the runtimes TVDB and TMDB give, and can be switched. For a movie, the feature is the playlist closest to its runtime. Where a studio added shuffled copies of the feature, the one that plays the clips in order is taken, and other cuts are offered to keep as editions. Episodes are found from the disc's playlists: one playlist per episode, one play item per episode, or the chapters of one long clip. Menu loops and duplicate playlists are left out, and extras under a minute, mostly copyright warnings and logos, start unticked. Short clips between episodes, such as dub credits, stay with the episode they follow. Series, episode titles and runtimes come from SkyHook, the TVDB service Sonarr uses, and movies from Radarr's TMDB service, so only the title is sent and no API key is needed. Every episode can be checked, renumbered, renamed or left out before queueing, and an episode found at chapters can be moved to start at another chapter. Each item is remuxed from the disc with mkvmerge right before its encode, so the temp folder only ever holds one episode, and the discs are never changed. Disc sets copied into the input folder are offered for review once their files stop growing. Others can be opened from **Tools**, **Blu-ray discs**
 - **Jellyfin / Sonarr integration** automatically cleans up `.nfo` and thumbnail files when replacing sources so metadata is regenerated
 - **Smart skip** already-encoded files (detected by `-{ORGANIZATION}` suffix) are recognized and skipped
 
@@ -49,24 +50,30 @@ cp movie.mkv input/
 
 Settings are configurable via environment variables in `docker-compose.yml`:
 
-| Variable                | Default                       | Description                                                      |
-| ----------------------- | ----------------------------- | ---------------------------------------------------------------- |
-| `PORT`                  | `3000`                        | Web dashboard port                                               |
-| `PASSWORD`              | `rabbitencoder`               | Password to access web dashboard                                 |
-| `FILE_COOLDOWN`         | `30`                          | Seconds the file size must stay unchanged before encoding starts |
-| `ORGANIZATION`          | `RabbitCompany`               | Tag appended to encoded filenames (e.g. `-RabbitCompany`)        |
-| `INPUT_DIR`             | `/data/input`                 | Watched input directory                                          |
-| `OUTPUT_DIR`            | `/data/output`                | Encoded output directory                                         |
-| `TEMP_DIR`              | `/data/temp`                  | Temporary encode and preview files                               |
-| `LIBRARY_DIRS`          | empty                         | Comma-separated mounted library roots                            |
-| `RECYCLE_BIN_DIR`       | empty                         | Keep originals of in-place library encodes here (see below)      |
-| `FONTS_STOCK_DIR`       | `/app/fonts`                  | Seed font groups copied into the user dir on first start         |
-| `FONTS_USER_DIR`        | `/config/fonts`               | User font groups (read/write, the only directory scanned)        |
-| `SYSTEM_FONTS_DIRS`     | `/system-fonts`               | Read-only host font dirs, browsable to import fonts into groups  |
-| `VS_PRESETS_STOCK_DIR`  | `/app/vapoursynth/presets`    | Built-in VapourSynth preset directory                            |
-| `VS_PRESETS_USER_DIR`   | `/config/vapoursynth/presets` | User VapourSynth preset directory                                |
-| `VS_RABBIT_MODULE_DIR`  | `/app/vapoursynth`            | Rabbit Encoder VapourSynth helper-module directory               |
-| `OPENSUBTITLES_API_KEY` | built in                      | Your own OpenSubtitles.com consumer key instead of Rabbit's      |
+| Variable                 | Default                          | Description                                                      |
+| ------------------------ | -------------------------------- | ---------------------------------------------------------------- |
+| `PORT`                   | `3000`                           | Web dashboard port                                               |
+| `PASSWORD`               | `rabbitencoder`                  | Password to access web dashboard                                 |
+| `FILE_COOLDOWN`          | `30`                             | Seconds the file size must stay unchanged before encoding starts |
+| `ORGANIZATION`           | `RabbitCompany`                  | Tag appended to encoded filenames (e.g. `-RabbitCompany`)        |
+| `INPUT_DIR`              | `/data/input`                    | Watched input directory                                          |
+| `OUTPUT_DIR`             | `/data/output`                   | Encoded output directory                                         |
+| `TEMP_DIR`               | `/data/temp`                     | Temporary encode and preview files                               |
+| `LIBRARY_DIRS`           | empty                            | Comma-separated mounted library roots                            |
+| `RECYCLE_BIN_DIR`        | empty                            | Keep originals of in-place library encodes here (see below)      |
+| `FONTS_STOCK_DIR`        | `/app/fonts`                     | Seed font groups copied into the user dir on first start         |
+| `FONTS_USER_DIR`         | `/config/fonts`                  | User font groups (read/write, the only directory scanned)        |
+| `SYSTEM_FONTS_DIRS`      | `/system-fonts`                  | Read-only host font dirs, browsable to import fonts into groups  |
+| `VS_PRESETS_STOCK_DIR`   | `/app/vapoursynth/presets`       | Built-in VapourSynth preset directory                            |
+| `VS_PRESETS_USER_DIR`    | `/config/vapoursynth/presets`    | User VapourSynth preset directory                                |
+| `VS_RABBIT_MODULE_DIR`   | `/app/vapoursynth`               | Rabbit Encoder VapourSynth helper-module directory               |
+| `OPENSUBTITLES_API_KEY`  | built in                         | Your own OpenSubtitles.com consumer key instead of Rabbit's      |
+| `SERIES_FOLDER_FORMAT`   | `{Series TitleYear}`             | Series folder of Blu-ray disc imports (see Disc Naming)          |
+| `SEASON_FOLDER_FORMAT`   | `Season {season:00}`             | Season folder of Blu-ray disc imports                            |
+| `SPECIALS_FOLDER_FORMAT` | `Specials`                       | Folder of season 0 episodes from Blu-ray discs                   |
+| `EPISODE_FORMAT`         | see Disc Naming                  | Episode file name of Blu-ray disc imports                        |
+| `MOVIE_FOLDER_FORMAT`    | `{Movie Title} ({Release Year})` | Movie folder of Blu-ray disc imports                             |
+| `MOVIE_FORMAT`           | see Disc Naming                  | Movie file name of Blu-ray disc imports                          |
 
 If `ORGANIZATION` is set to `RabbitCompany` (the default), then any file ending with `-RabbitCompany.mkv` is treated as already encoded and will be:
 
@@ -425,6 +432,37 @@ Blue Exorcist (2011) - S01E01 - The Devil Resides in Human Souls [Bluray-1080p][
 ```
 
 Source tags are detected from the input filename: `Bluray`, `WEBDL`, `WEBRip`, `HDTV`, `DVD`, `SDTV`, `CAM`. Files with `REMUX` in the name are tagged as `Bluray`.
+
+### Disc Naming
+
+Episodes, movies and extras from **Blu-ray discs** are named by formats you set in `docker-compose.yml`, with placeholders written like Sonarr's and Radarr's. The encode adds its tags after the name as above.
+
+| Variable                 | Default                                                            |
+| ------------------------ | ------------------------------------------------------------------ |
+| `SERIES_FOLDER_FORMAT`   | `{Series TitleYear}`                                               |
+| `SEASON_FOLDER_FORMAT`   | `Season {season:00}`                                               |
+| `SPECIALS_FOLDER_FORMAT` | `Specials`                                                         |
+| `EPISODE_FORMAT`         | `{Series TitleYear} - S{season:00}E{episode:00} - {Episode Title}` |
+| `MOVIE_FOLDER_FORMAT`    | `{Movie Title} ({Release Year})`                                   |
+| `MOVIE_FORMAT`           | `{Movie Title} ({Release Year}) - {Edition Tags}`                  |
+
+Series placeholders are `{Series Title}`, `{Series TitleYear}`, `{Series Year}`, `{Year}`, `{ImdbId}`, `{TvdbId}`, `{TmdbId}`, `{season}`, `{episode}` and `{Episode Title}`. Numbers are padded with `{season:00}` or `{episode:000}`. Movie placeholders are `{Movie Title}`, `{Movie TitleYear}`, `{Release Year}`, `{Year}`, `{ImdbId}`, `{TmdbId}` and `{Edition Tags}`. Placeholders are not case sensitive, and ones that do not exist are logged at startup and left empty.
+
+A placeholder without a value takes the brackets around it along, and the dash before it, so `[imdbid-{ImdbId}]` and ` - {Edition Tags}` disappear when there is no ID or edition. Characters that cannot be in file names are replaced as Sonarr replaces them. Extras always go to an `extras` folder inside the series or movie folder, where Jellyfin and Plex look for them.
+
+For the names of the TRaSH guides:
+
+```yaml
+- MOVIE_FOLDER_FORMAT={Movie Title} ({Release Year}) [imdbid-{ImdbId}]
+- MOVIE_FORMAT={Movie Title} ({Release Year}) [imdbid-{ImdbId}] - {Edition Tags}
+- SERIES_FOLDER_FORMAT={Series TitleYear} [tvdbid-{TvdbId}]
+```
+
+which gives
+
+```
+Your Name. (2016) [imdbid-tt5311514]/Your Name. (2016) [imdbid-tt5311514] [Bluray-1080p][Opus 5.1][AV1]-RabbitCompany.mkv
+```
 
 ## Settings Codes
 

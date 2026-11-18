@@ -27,6 +27,7 @@ import {
 	updateJobSettings,
 } from "../queue/store";
 import { probeFile } from "../pipeline/probe";
+import { jobOutputRoot } from "../pipeline/output";
 import { previewAudio } from "../audio/audio-step";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
@@ -49,7 +50,7 @@ const ENCODE_METRICS: EncodeMetric[] = ["ssimulacra2", "xpsnr", "vmaf"];
 
 function encodedOutputPath(job: Job, config: AppConfig): string | null {
 	if (!job.outputFilename) return null;
-	return job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(config.outputDir, job.outputFilename);
+	return job.replaceSource ? join(dirname(job.inputPath), basename(job.outputFilename)) : join(jobOutputRoot(job, config), job.outputFilename);
 }
 
 /** The source is still there and is not the encode itself, which a job that replaces its source can leave. */

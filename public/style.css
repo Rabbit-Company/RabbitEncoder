@@ -6214,3 +6214,238 @@ a.btn {
 	font-size: 0.72rem;
 	color: var(--text-1);
 }
+
+/* Blu-ray discs: banner for sets found in the input folder */
+.disc-banner {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+
+.disc-banner-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	background: var(--accent-glow);
+	color: var(--text-0);
+	border: 1px solid var(--accent-dim);
+	border-radius: var(--radius-sm);
+	padding: 8px 10px 8px 14px;
+	font-size: 0.82rem;
+}
+
+.disc-banner-row > svg {
+	flex-shrink: 0;
+	color: var(--accent);
+}
+
+.disc-banner-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.disc-banner-row .btn {
+	flex-shrink: 0;
+}
+
+/* Blu-ray discs: review modal, whose footer stays in view while the body scrolls */
+.bdmv-modal {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.bdmv-modal .modal-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.bdmv-rows {
+	max-height: none;
+	overflow: visible;
+}
+
+/* The body's top padding, so rows do not show above the header as they scroll under it. */
+.bdmv-rows .release-grid thead th {
+	top: -20px;
+}
+
+.bdmv-discs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.bdmv-discs:empty {
+	display: none;
+}
+
+.bdmv-disc {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 6px 10px;
+	background: var(--bg-1);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-sm);
+}
+
+.bdmv-disc-count {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 0.72rem;
+	color: var(--text-1);
+	white-space: nowrap;
+}
+
+.bdmv-disc-count .num-input {
+	width: 64px;
+	padding: 4px 8px;
+}
+
+.bdmv-series {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 12px 16px;
+}
+
+.bdmv-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.bdmv-field .num-input {
+	width: 96px;
+}
+
+.bdmv-field-wide {
+	flex: 1 1 300px;
+	min-width: 0;
+}
+
+.bdmv-field-match {
+	flex: 2 1 380px;
+}
+
+.bdmv-field-match .select-input {
+	width: 100%;
+}
+
+.bdmv-field-save {
+	flex: 0 1 200px;
+	min-width: 0;
+}
+
+.bdmv-field-save .select-input {
+	width: 100%;
+}
+
+.bdmv-search {
+	display: flex;
+	gap: 6px;
+}
+
+.bdmv-search .repair-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.bdmv-warnings {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.bdmv-warnings:empty {
+	display: none;
+}
+
+.bdmv-warning {
+	background: var(--amber-dim);
+	color: var(--amber);
+	border: 1px solid var(--amber);
+	border-radius: var(--radius-sm);
+	padding: 8px 12px;
+	font-size: 0.78rem;
+}
+
+.bdmv-grid {
+	width: 100%;
+}
+
+.bdmv-grid td {
+	vertical-align: middle;
+}
+
+.bdmv-grid .release-row-head {
+	min-width: 180px;
+	max-width: 240px;
+}
+
+.bdmv-grid tr.is-skipped td:not(:first-child),
+.bdmv-grid tr.is-skipped th {
+	opacity: 0.45;
+}
+
+.bdmv-range {
+	white-space: nowrap;
+	font-family: var(--font-mono);
+}
+
+.bdmv-start {
+	margin-top: 4px;
+	padding: 3px 6px;
+	font-size: 0.72rem;
+}
+
+.bdmv-number {
+	white-space: nowrap;
+	color: var(--text-2);
+	font-family: var(--font-mono);
+}
+
+.bdmv-number .num-input {
+	width: 62px;
+	padding: 4px 6px;
+	margin: 0 6px 0 3px;
+}
+
+.bdmv-title {
+	min-width: 320px;
+}
+
+.bdmv-title .repair-input {
+	padding: 6px 8px;
+}
+
+.bdmv-note {
+	margin-top: 4px;
+	color: var(--amber);
+	font-size: 0.7rem;
+}
+
+.bdmv-output {
+	min-width: 280px;
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	overflow-wrap: anywhere;
+}
+
+.bdmv-output .release-row-source {
+	white-space: normal;
+}
+
+.bdmv-footer-hint {
+	margin-right: auto;
+	font-size: 0.7rem;
+	color: var(--text-2);
+}
