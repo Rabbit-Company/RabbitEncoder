@@ -10,7 +10,13 @@ export interface MplsStream {
 	codingType: number;
 	/** ISO 639-2 code, empty for video. */
 	language: string;
+	/** Video only: 1 480i, 2 576i, 3 480p, 4 1080i, 5 720p, 6 1080p, 7 576p, 8 2160p. */
+	videoFormat?: number;
+	/** Video only: 1 23.976, 2 24, 3 25, 4 29.97, 6 50, 7 59.94. */
+	frameRate?: number;
 }
+
+const VIDEO_CODINGS = [0x01, 0x02, 0x1b, 0x20, 0x24, 0xea];
 
 export interface MplsPlayItem {
 	/** Clip number as written, "00003". */
@@ -48,7 +54,13 @@ function readStream(buf: Buffer, at: number): { stream: MplsStream; next: number
 	if ([0x03, 0x04, 0xa1, 0xa2].includes(codingType) || (codingType >= 0x80 && codingType <= 0x86)) language = text(buf, attrAt + 3, 3);
 	else if (codingType === 0x90 || codingType === 0x91) language = text(buf, attrAt + 2, 3);
 	else if (codingType === 0x92) language = text(buf, attrAt + 3, 3);
-	return { stream: { codingType, language: /^[a-z]{3}$/.test(language) ? language : "" }, next: attrAt + 1 + attrLength };
+	const stream: MplsStream = { codingType, language: /^[a-z]{3}$/.test(language) ? language : "" };
+	if (VIDEO_CODINGS.includes(codingType)) {
+		const packed = buf.readUInt8(attrAt + 2);
+		stream.videoFormat = packed >> 4;
+		stream.frameRate = packed & 0x0f;
+	}
+	return { stream, next: attrAt + 1 + attrLength };
 }
 
 function readPlayItem(buf: Buffer, at: number): { item: MplsPlayItem; next: number } {

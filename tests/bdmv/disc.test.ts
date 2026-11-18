@@ -5,7 +5,8 @@ import { join } from "path";
 import { findDiscFolders, groupDiscSets, guessDiscTitle, guessDiscYear, readDisc } from "../../src/bdmv/disc";
 import { scanDiscSet } from "../../src/bdmv/plan";
 import { DEFAULT_NAMING_FORMATS } from "../../src/bdmv/naming";
-import { buildDiscExtractArgs, splitTimestamp } from "../../src/pipeline/disc-extract";
+import { buildDiscExtractArgs, constantFrameRate, onlyJoinJitter, splitTimestamp } from "../../src/pipeline/disc-extract";
+import { parseMpls } from "../../src/bdmv/mpls";
 import { buildMpls, type BuildItem } from "./mpls-builder";
 
 const root = mkdtempSync(join(tmpdir(), "rabbit-bdmv-"));
@@ -108,5 +109,42 @@ describe("disc extraction", () => {
 			"/d/Disc/BDMV/PLAYLIST/00002.mpls",
 		]);
 		expect(buildDiscExtractArgs({ ...base, start: 0, end: 8532 }, "/t/x.mkv")).not.toContain("--split");
+	});
+});
+
+describe("disc remux timing", () => {
+	const mpls = (items: BuildItem[]) => parseMpls(buildMpls(items));
+	const episode = { clip: "00000", in: 0, out: 1440, video: 0x61 };
+	const credits = { clip: "00001", in: 0, out: 19, video: 0x61 };
+
+	test("retimes a range whose clips share one progressive rate", () => {
+		expect(constantFrameRate(mpls([episode, credits]), 0, 1459)).toBe("24000/1001p");
+		const plan = { discPath: "/d", playlist: "00003", start: 0, end: 1459, duration: 2918, filename: "e.mkv", relativePath: "x" };
+		expect(buildDiscExtractArgs(plan, "/t/e.mkv", { track: 0, rate: "24000/1001p" })).toContain("0:24000/1001p");
+	});
+
+	test("keeps the disc's timing when rates differ or the video is interlaced", () => {
+		const promo = { clip: "00002", in: 0, out: 60, video: 0x44 };
+		expect(constantFrameRate(mpls([episode, credits, promo]), 0, 1519)).toBeNull();
+		expect(constantFrameRate(mpls([episode, credits, promo]), 0, 1459)).toBe("24000/1001p");
+		expect(constantFrameRate(mpls([{ ...episode, video: 0x41 }]), 0, 1440)).toBeNull();
+	});
+
+	test("retimes jumps of a few milliseconds but not dropped frames", () => {
+		const frame = 1001 / 24;
+		const grid = Array.from({ length: 100 }, (_, i) => Math.round(i * frame));
+		expect(onlyJoinJitter(grid, frame)).toBe(false);
+		expect(
+			onlyJoinJitter(
+				grid.map((t, i) => (i >= 60 ? t + 10 : t)),
+				frame,
+			),
+		).toBe(true);
+		expect(
+			onlyJoinJitter(
+				grid.filter((_, i) => i !== 50),
+				frame,
+			),
+		).toBe(false);
 	});
 });

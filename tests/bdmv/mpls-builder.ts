@@ -10,6 +10,8 @@ export interface BuildItem {
 	audio?: string[];
 	subtitles?: string[];
 	angles?: number;
+	/** Video format in the high 4 bits and frame rate in the low 4, 0x61 for 1080p at 23.976. */
+	video?: number;
 }
 
 export interface BuildMark {
@@ -32,10 +34,10 @@ const u32 = (n: number) => {
 };
 const ascii = (s: string) => Buffer.from(s, "latin1");
 
-function stream(codingType: number, language?: string): Buffer {
+function stream(codingType: number, language?: string, video = 0x63): Buffer {
 	const entry = Buffer.concat([u8(0x01), u16(0x1011), Buffer.alloc(6)]);
 	let attr: Buffer;
-	if (codingType === 0x1b) attr = Buffer.concat([u8(codingType), u8(0x63), Buffer.alloc(3)]);
+	if (codingType === 0x1b) attr = Buffer.concat([u8(codingType), u8(video), Buffer.alloc(3)]);
 	else if (codingType === 0x90) attr = Buffer.concat([u8(codingType), ascii(language ?? "und"), Buffer.alloc(1)]);
 	else attr = Buffer.concat([u8(codingType), u8(0x31), ascii(language ?? "und")]);
 	return Buffer.concat([u8(entry.length), entry, u8(attr.length), attr]);
@@ -45,7 +47,7 @@ function playItem(item: BuildItem): Buffer {
 	const angles = item.angles ?? 1;
 	const audio = item.audio ?? ["jpn"];
 	const subs = item.subtitles ?? [];
-	const streams = Buffer.concat([stream(0x1b), ...audio.map((l) => stream(0x80, l)), ...subs.map((l) => stream(0x90, l))]);
+	const streams = Buffer.concat([stream(0x1b, undefined, item.video), ...audio.map((l) => stream(0x80, l)), ...subs.map((l) => stream(0x90, l))]);
 	const stnBody = Buffer.concat([u16(0), u8(1), u8(audio.length), u8(subs.length), Buffer.alloc(9), streams]);
 	const stn = Buffer.concat([u16(stnBody.length), stnBody]);
 	const body = Buffer.concat([
