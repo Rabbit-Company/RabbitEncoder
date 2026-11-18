@@ -1030,6 +1030,8 @@ export interface RepairAuditTrack {
 	isOriginal: boolean;
 	isCommentary: boolean;
 	compression: "none" | "zlib";
+	/** Seconds the track lasts longer than the video, when that is more than a moment. */
+	overrunSeconds?: number;
 }
 
 export interface RepairAuditFile {

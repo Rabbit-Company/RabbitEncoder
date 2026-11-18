@@ -22,6 +22,7 @@ import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker, openRepairPaths } from "./repair";
 import { update } from "./polling";
+import { formatDurationShort } from "./job-render";
 
 let audit: RepairFolderAudit | null = null;
 let selectedPath = "";
@@ -132,6 +133,18 @@ function activeFlags(track: RepairAuditTrack): string[] {
 	].filter(Boolean);
 }
 
+function trackKind(track: RepairAuditTrack): string {
+	return track.type === "audio" ? "Audio" : "Subtitle";
+}
+
+function overrunText(track: RepairAuditTrack): string {
+	return `${formatDurationShort((track.overrunSeconds || 0) * 1000)} longer than the video`;
+}
+
+function overrunTracks(file: RepairAuditFile): RepairAuditTrack[] {
+	return file.tracks.filter((track) => track.overrunSeconds);
+}
+
 function selectedFile(): RepairAuditFile | undefined {
 	return audit?.files.find((file) => file.path === selectedPath);
 }
@@ -144,13 +157,17 @@ function renderFileList(): void {
 					const selected = file.path === selectedPath ? " is-selected" : "";
 					const more = file.differences.length > 1 ? ` (+${file.differences.length - 1} more)` : "";
 					const summary = file.group === 0 ? "Matches majority layout" : file.differences[0] ? file.differences[0] + more : "Different track layout";
+					const overruns = overrunTracks(file);
+					const overrunBadge = overruns.length
+						? `<span class="repair-audit-overrun-badge" title="${escapeHtml(overruns.map((track) => `${trackKind(track)} #${track.id} is ${overrunText(track)}`).join("\n"))}">Too long</span>`
+						: "";
 					return `<button class="repair-audit-file${selected}" type="button" data-audit-select="${escapeHtml(file.path)}">
 						<span class="repair-audit-group-badge ${groupClass(file.group)}">${escapeHtml(file.groupLabel)}</span>
 						<span class="repair-audit-file-text">
 							<strong title="${escapeHtml(file.path)}">${escapeHtml(file.filename)}</strong>
 							<small>${escapeHtml(summary)}</small>
 						</span>
-						<span class="repair-audit-track-total">${file.tracks.length}</span>
+						${overrunBadge}<span class="repair-audit-track-total">${file.tracks.length}</span>
 					</button>`;
 				})
 				.join("")
@@ -161,7 +178,7 @@ function renderTrack(track: RepairAuditTrack): string {
 	const flags = activeFlags(track);
 	return `<div class="repair-audit-track">
 		<div class="repair-audit-track-main">
-			<span class="sub-track-id">${track.type === "audio" ? "Audio" : "Subtitle"} #${track.id}</span>
+			<span class="sub-track-id">${trackKind(track)} #${track.id}</span>
 			<strong>${escapeHtml(track.title || "Untitled")}</strong>
 			<button class="btn btn-ghost btn-sm repair-audit-track-download" type="button" data-audit-download="${track.id}" title="Save this ${track.type === "audio" ? "audio" : "subtitle"} track as a file">Download</button>
 		</div>
@@ -170,6 +187,7 @@ function renderTrack(track: RepairAuditTrack): string {
 			<span>${escapeHtml(track.codec)}</span>
 			${track.type === "subtitles" ? `<span>${track.compression}</span>` : ""}
 			${flags.map((flag) => `<span>${escapeHtml(flag)}</span>`).join("")}
+			${track.overrunSeconds ? `<span class="repair-audit-overrun">${escapeHtml(overrunText(track))}</span>` : ""}
 		</div>
 	</div>`;
 }
@@ -189,10 +207,16 @@ function renderDetails(): void {
 		file.group === 0
 			? '<div class="repair-audit-match">This file matches the majority audio/subtitle layout.</div>'
 			: `<div class="repair-audit-differences"><strong>Different from group A</strong><ul>${file.differences.map((difference) => `<li>${escapeHtml(difference)}</li>`).join("")}</ul></div>`;
+	const overruns = overrunTracks(file);
+	const overrunWarning = overruns.length
+		? `<div class="repair-audit-differences"><strong>Longer than the video</strong><ul>${overruns
+				.map((track) => `<li>${trackKind(track)} #${track.id} ${escapeHtml(track.title || track.language)} is ${escapeHtml(overrunText(track))}</li>`)
+				.join("")}</ul></div>`
+		: "";
 	byId("repair-audit-details").innerHTML = `<div class="repair-audit-detail-head">
 		<div><span class="repair-audit-group-badge ${groupClass(file.group)}">${escapeHtml(file.groupLabel)}</span><strong>${escapeHtml(file.filename)}</strong></div>
 		<small>${file.tracks.filter((track) => track.type === "audio").length} audio, ${file.tracks.filter((track) => track.type === "subtitles").length} subtitles</small>
-	</div>${differences}<div class="repair-audit-tracks">${file.tracks.map(renderTrack).join("") || '<div class="repair-empty">No audio or subtitle tracks.</div>'}</div>`;
+	</div>${differences}${overrunWarning}<div class="repair-audit-tracks">${file.tracks.map(renderTrack).join("") || '<div class="repair-empty">No audio or subtitle tracks.</div>'}</div>`;
 	buttonById("repair-audit-open-btn").disabled = false;
 	buttonById("repair-audit-open-btn").textContent = file.sourcePath ? "Repair with original source" : "Open repair editor";
 }
@@ -256,9 +280,11 @@ function renderGroupEditor(): void {
 function renderAudit(): void {
 	if (!audit) return;
 	const outliers = audit.files.filter((file) => file.group > 0).length;
+	const tooLong = audit.files.filter((file) => overrunTracks(file).length).length;
 	byId("repair-audit-summary").innerHTML = `<span>${audit.files.length} MKV file${audit.files.length === 1 ? "" : "s"}</span>
 		<span>${audit.groups.length} layout group${audit.groups.length === 1 ? "" : "s"}</span>
-		<span class="${outliers ? "has-outliers" : "all-matching"}">${outliers ? `${outliers} outlier${outliers === 1 ? "" : "s"}` : "All files match"}</span>`;
+		<span class="${outliers ? "has-outliers" : "all-matching"}">${outliers ? `${outliers} outlier${outliers === 1 ? "" : "s"}` : "All files match"}</span>
+		${tooLong ? `<span class="has-outliers">${tooLong} file${tooLong === 1 ? " has a track" : "s have tracks"} longer than the video</span>` : ""}`;
 	byId("repair-audit-groups").innerHTML = audit.groups
 		.map((group) => {
 			const files = audit!.files.filter((file) => file.group === group.group);

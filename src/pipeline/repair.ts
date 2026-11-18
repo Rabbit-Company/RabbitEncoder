@@ -234,12 +234,39 @@ export function auditTrack(track: MkvTrack): RepairAuditTrack {
 	};
 }
 
+/** Audio usually ends a few milliseconds after the last frame, and a last subtitle may linger briefly. */
+const AUDIT_OVERRUN_TOLERANCE_SECONDS = 2;
+
+/**
+ * Audio and subtitle tracks that last longer than the video, by track ID.
+ * The lengths are mkvmerge's statistics tags, which span a track's first block to its last.
+ */
+export function trackOverruns(identified: MkvIdentification): Map<number, number> {
+	const overruns = new Map<number, number>();
+	const tracks = identified.tracks || [];
+	const video = Math.max(0, ...tracks.filter((track) => track.type === "video").map((track) => tagSeconds(track.properties.tag_duration)));
+	if (video <= 0) return overruns;
+	for (const track of tracks) {
+		if (track.type !== "audio" && track.type !== "subtitles") continue;
+		const overrun = tagSeconds(track.properties.tag_duration) - video;
+		if (overrun > AUDIT_OVERRUN_TOLERANCE_SECONDS) overruns.set(track.id, Math.round(overrun * 1000) / 1000);
+	}
+	return overruns;
+}
+
 export async function inspectRepairAuditFile(path: string, signal?: AbortSignal): Promise<Omit<RepairAuditFile, "group" | "groupLabel" | "differences">> {
 	const identified = await identifyMatroska(path, signal);
+	const overruns = trackOverruns(identified);
 	return {
 		path,
 		filename: basename(path),
-		tracks: (identified.tracks || []).filter((track) => track.type === "audio" || track.type === "subtitles").map(auditTrack),
+		tracks: (identified.tracks || [])
+			.filter((track) => track.type === "audio" || track.type === "subtitles")
+			.map((track) => {
+				const audited = auditTrack(track);
+				const overrun = overruns.get(track.id);
+				return overrun ? { ...audited, overrunSeconds: overrun } : audited;
+			}),
 	};
 }
 
