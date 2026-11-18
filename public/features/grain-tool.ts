@@ -12,6 +12,8 @@ import {
 } from "../api/client";
 import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
+import { chooseDiscOriginal, discOriginalNote, discOriginalOptions, type DiscOriginalChoice } from "./disc-original";
+import { originalName } from "../../src/bdmv/disc-source";
 import { openHdrSourcePicker, openHdrTargetPicker, openRepairFolderPicker } from "./repair";
 import { renderRadioPills } from "./settings-controls";
 import { update } from "./polling";
@@ -36,6 +38,8 @@ let sourceChoices: { path: string; name: string }[] = [];
 let pairing = false;
 /** Bumped on every pairing, so a late answer for another folder is dropped. */
 let pairRun = 0;
+/** Measuring one video against a range of Blu-ray discs: what was found on them. */
+let discChoice: DiscOriginalChoice | null = null;
 
 const STAGES: Record<GrainInspectRun["progress"]["stage"], string> = {
 	video: "Reading the video",
@@ -103,6 +107,7 @@ function resetForm(): void {
 	pairs = [];
 	sourceChoices = [];
 	pairing = false;
+	discChoice = null;
 }
 
 const mappedPairs = (): GrainSourcePair[] => pairs.filter((pair) => pair.sourcePath);
@@ -118,6 +123,7 @@ function duplicateSources(): Set<string> {
 }
 
 const METHODS: Record<GrainSourcePair["method"], string> = {
+	disc: "Matched by the disc range in its tags",
 	episode: "Matched by episode number",
 	filename: "Matched by name",
 	single: "The only original",
@@ -311,10 +317,17 @@ function renderActions(): void {
 							file
 								? `<div class="hdr-action-row grain-option"><span>${
 										form.sourcePath
-											? `<span title="${escapeHtml(form.sourcePath)}">${escapeHtml(fileName(form.sourcePath))}</span>`
+											? `<span title="${escapeHtml(form.sourcePath)}">${escapeHtml(originalName(form.sourcePath))}</span>`
 											: '<span class="hdr-note">No original chosen</span>'
 									}</span>
-									<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-source">Choose original...</button></div>`
+									<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-source">Choose original...</button>
+									<button class="btn btn-ghost btn-sm" type="button" data-grain-action="choose-disc">Blu-ray discs...</button></div>
+									${
+										discChoice
+											? `${discChoice.sources.length ? `<select class="select-input film-grain-disc-items" data-grain-disc aria-label="Item of the discs">${discOriginalOptions(discChoice, form.sourcePath)}</select>` : ""}
+									<div class="lang-filter-hint">${escapeHtml(discOriginalNote(discChoice))}</div>`
+											: ""
+									}`
 								: `<div class="hdr-action-row grain-option"><span>${
 										sourceFolder
 											? `<span title="${escapeHtml(sourceFolder)}">${escapeHtml(fileName(sourceFolder))}</span>`
@@ -490,6 +503,12 @@ export function handleGrainRecursiveChange(): void {
 }
 
 export function handleGrainActionsChange(event: Event): void {
+	if (event.target instanceof HTMLSelectElement && event.target.dataset.grainDisc !== undefined) {
+		if (event.type !== "change") return;
+		form.sourcePath = event.target.value;
+		renderActions();
+		return;
+	}
 	const pairSelect = event.target instanceof HTMLSelectElement ? event.target.dataset.grainPair : undefined;
 	if (pairSelect !== undefined) {
 		const pair = pairs[Number(pairSelect)];
@@ -517,9 +536,24 @@ export function handleGrainClick(event: MouseEvent): void {
 	if (button.dataset.grainAction === "choose-source") {
 		openHdrSourcePicker((path) => {
 			form.sourcePath = path;
+			discChoice = null;
 			setError("");
 			renderActions();
 		});
+	}
+	if (button.dataset.grainAction === "choose-disc") {
+		const target = targetPath;
+		chooseDiscOriginal(
+			target,
+			(choice) => {
+				if (targetPath !== target) return;
+				discChoice = choice;
+				form.sourcePath = choice.sourcePath;
+				setError("");
+				renderActions();
+			},
+			(message) => setError(message),
+		);
 	}
 	if (button.dataset.grainAction === "choose-source-folder") {
 		openRepairFolderPicker((path) => {

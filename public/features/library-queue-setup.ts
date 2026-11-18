@@ -11,7 +11,7 @@ interface SourcePair {
 	targetPath: string;
 	sourcePath: string;
 	targetName: string;
-	method: "episode" | "filename" | "single" | "none";
+	method: "disc" | "episode" | "filename" | "single" | "none";
 }
 
 let selectedPaths: string[] = [];
@@ -51,7 +51,7 @@ function render(): void {
 			];
 			return `<div class="repair-pair-row">
 			<div class="repair-pair-target"><span class="repair-file-name" title="${escapeHtml(pair.targetPath)}">${escapeHtml(pair.targetName)}</span>
-				<span class="repair-pair-method">${pair.method === "none" ? "Check this match" : `Matched by ${escapeHtml(pair.method)}`}</span></div>
+				<span class="repair-pair-method">${pair.method === "none" ? "Check this match" : `Matched by ${pair.method === "disc" ? "disc tags" : escapeHtml(pair.method)}`}</span></div>
 			<div class="repair-pair-arrow" aria-hidden="true">←</div>
 			<div class="repair-pair-source"><select class="select-input" data-library-pair-index="${index}" aria-label="Original for ${escapeHtml(pair.targetName)}">${choices.join("")}</select>
 				${duplicatePaths.has(pair.sourcePath) && pair.sourcePath ? '<span class="repair-pair-warning">Original used twice</span>' : ""}</div>

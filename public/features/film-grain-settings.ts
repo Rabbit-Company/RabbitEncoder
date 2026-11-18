@@ -7,6 +7,7 @@ import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { formatDuration } from "./job-render";
 import { openPreviewReferencePicker } from "./repair";
+import { chooseDiscOriginal, discOriginalNote, discOriginalOptions } from "./disc-original";
 import { renderLabeledToggle, renderRadioPills } from "./settings-controls";
 import { grainIso, MAX_GRAIN_ISO, MIN_GRAIN_ISO, syntheticGrainMode } from "../../src/core/film-grain-iso";
 
@@ -151,9 +152,11 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 			bar.setAttribute("aria-valuenow", String(progress?.percent ?? 0));
 			byId("advanced-film-grain-progress-fill").style.width = `${progress?.percent ?? 0}%`;
 			byId("advanced-film-grain-progress-detail").textContent = [
-				progress
-					? `${progress.frames.toLocaleString()}${progress.totalFrames ? ` / ${progress.totalFrames.toLocaleString()}` : ""} frames`
-					: "Preparing film grain measurement",
+				progress?.stage && !progress.frames && !progress.totalFrames
+					? progress.stage
+					: progress
+						? `${progress.frames.toLocaleString()}${progress.totalFrames ? ` / ${progress.totalFrames.toLocaleString()}` : ""} frames`
+						: "Preparing film grain measurement",
 				progress?.speed,
 				progress?.eta ? `ETA ${progress.eta}` : undefined,
 				run.startedAt ? `Elapsed ${formatDuration(Math.max(0, Date.now() - run.startedAt))}` : undefined,
@@ -211,10 +214,47 @@ export function initFilmGrainSettings(target: AdvancedTarget, settings: JobSetti
 		} catch {}
 	})();
 
+	const discItems = byId<HTMLSelectElement>("advanced-film-grain-disc-items");
+	const discNote = byId("advanced-film-grain-disc-note");
+	const hideDiscItems = () => {
+		discItems.style.display = "none";
+		discNote.style.display = "none";
+	};
+	hideDiscItems();
+	originalInput.oninput = hideDiscItems;
+
 	byId("advanced-film-grain-choose").onclick = () =>
 		openPreviewReferencePicker((path) => {
 			originalInput.value = path;
+			hideDiscItems();
 		});
+
+	byId("advanced-film-grain-disc").onclick = async () => {
+		result.textContent = "";
+		const input = (await fetchJobs().catch(() => [])).find((job) => job.id === jobId)?.inputPath;
+		if (!live()) return;
+		if (!input) {
+			result.textContent = "This job is no longer in the queue.";
+			return;
+		}
+		chooseDiscOriginal(
+			input,
+			(choice) => {
+				if (!live()) return;
+				originalInput.value = choice.sourcePath;
+				discItems.innerHTML = discOriginalOptions(choice, choice.sourcePath);
+				discItems.style.display = choice.sources.length ? "" : "none";
+				discNote.textContent = discOriginalNote(choice);
+				discNote.style.display = "";
+			},
+			(message) => {
+				if (live()) result.textContent = message;
+			},
+		);
+	};
+	discItems.onchange = () => {
+		originalInput.value = discItems.value;
+	};
 
 	generateButton.onclick = async () => {
 		const sourcePath = originalInput.value.trim();

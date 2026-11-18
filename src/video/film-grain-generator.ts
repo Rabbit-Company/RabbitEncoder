@@ -9,6 +9,8 @@ import { parseRegrainEvent, progressFromEvent, type FilmGrainProgress, type Regr
 import { Logger } from "../core/logger";
 import { decodedFrameSize, detectFilmGrainGeometry, type FilmGrainCrop } from "./film-grain-crop";
 import { representativeFilmGrainWindow } from "./film-grain-window";
+import { isDiscSource } from "../bdmv/disc-source";
+import { withOriginalFile } from "../pipeline/disc-extract";
 
 export interface GeneratedFilmGrainTable {
 	tablePath: string;
@@ -173,22 +175,30 @@ async function generate(
 ): Promise<GeneratedFilmGrainTable> {
 	if (signal?.aborted) throw new CancelledError();
 	if (!existsSync(job.inputPath)) throw new Error("Denoised job input is no longer accessible");
-	if (!existsSync(sourcePath)) throw new Error("Original source is no longer accessible");
-	if (realpathSync(sourcePath) === realpathSync(job.inputPath)) throw new Error("Original and denoised input must be different files");
+	const disc = isDiscSource(sourcePath);
+	if (!disc && !existsSync(sourcePath)) throw new Error("Original source is no longer accessible");
+	if (!disc && realpathSync(sourcePath) === realpathSync(job.inputPath)) throw new Error("Original and denoised input must be different files");
 	const tableDir = join(config.tempDir, "film-grain-tables");
 	mkdirSync(tableDir, { recursive: true });
 	const tablePath = join(tableDir, `${job.id}-${randomUUID()}.tbl`);
-	const segments = await measureFilmGrain({
+	const segments = await withOriginalFile(
 		sourcePath,
-		denoisedPath: job.inputPath,
-		denoisedProbe: job.probe,
-		tablePath,
-		sampling,
-		range,
-		justEnough,
+		config,
 		signal,
-		onProgress,
-	});
+		(stage) => onProgress?.({ stage, frames: 0 }),
+		(original) =>
+			measureFilmGrain({
+				sourcePath: original,
+				denoisedPath: job.inputPath,
+				denoisedProbe: job.probe,
+				tablePath,
+				sampling,
+				range,
+				justEnough,
+				signal,
+				onProgress,
+			}),
+	);
 	return { tablePath, segments };
 }
 

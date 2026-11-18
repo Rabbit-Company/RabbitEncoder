@@ -59,7 +59,7 @@ import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from ".
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
 import { combineCumulativeSettings, encodeSettingsCode } from "../settings/settings-code";
-import { decodePriorSettings } from "../core/mkv-tags";
+import { decodePriorSettings, discOriginTagLines } from "../core/mkv-tags";
 import { cpus } from "os";
 import { getEncoder } from "../core/encoders";
 import { createFaceMaterializer } from "../fonts/inject";
@@ -2304,6 +2304,7 @@ export async function encodeJob(
 		const finalOutput = join(tempDir, "final.mkv");
 
 		const effectiveSourceTag = probe.priorSource ?? job.sourceLabel ?? releaseGroup;
+		const discOrigin = job.discOrigin ?? probe.priorDisc ?? null;
 
 		const priorSettings = decodePriorSettings(probe.priorRabbitSettings);
 		const cumulativeSettings = combineCumulativeSettings(priorSettings, job.settings);
@@ -2348,6 +2349,9 @@ export async function encodeJob(
 				: []),
 
 			...(effectiveSourceTag ? [`<Simple><Name>SOURCE</Name><String>${escapeXml(effectiveSourceTag)}</String></Simple>`] : []),
+
+			// Where on a disc the video came from, so its original can be remuxed again for film grain.
+			...(discOrigin ? discOriginTagLines(discOrigin) : []),
 			"</Tag></Tags>",
 		].join("\n");
 

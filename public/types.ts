@@ -1078,6 +1078,7 @@ export interface Job {
 	inputPath: string;
 	/** Aligned grainy original for an externally denoised input. */
 	originalSourcePath?: string;
+	discPlan?: { remuxOnly?: boolean };
 	autoFilmGrain?: boolean;
 	relativePath: string;
 	status: JobStatus;
@@ -1352,7 +1353,7 @@ export interface FilmGrainRun {
 	range?: "representative" | "full";
 	startedAt?: number;
 	finishedAt?: number;
-	progress?: { frames: number; totalFrames?: number; percent?: number; speed?: string; eta?: string };
+	progress?: { stage?: string; frames: number; totalFrames?: number; percent?: number; speed?: string; eta?: string };
 	tablePath?: string;
 	segments?: number;
 	error?: string;

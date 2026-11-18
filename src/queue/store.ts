@@ -55,7 +55,8 @@ import { describeGrainPlan, runGrainJob, sanitizeGrainPlan } from "../pipeline/g
 import { describeSubtitleAddPlan, runSubtitleAddJob } from "../pipeline/subtitle-add";
 import { describeReleaseAudioPlan, runReleaseAudioJob, sanitizeReleaseAudioPlan } from "../pipeline/release-audio";
 import { describeAudioTracksPlan, runAudioTracksJob, sanitizeAudioTracksPlan } from "../pipeline/audio-tracks";
-import { discStagingDir, playlistPath, runDiscJob } from "../pipeline/disc-extract";
+import { isDiscSource } from "../bdmv/disc-source";
+import { discOriginOf, discStagingDir, playlistPath, runDiscJob } from "../pipeline/disc-extract";
 import { EXTRA_LANGUAGE_CHOICES } from "../subsearch/languages";
 import { cleanPreferredSources } from "../subsearch/naming";
 import { compareQueuedJobs, queuePriority } from "./priority";
@@ -708,6 +709,7 @@ export function addDiscJob(plan: DiscPlan): Job {
 			other &&
 			!["done", "error", "cancelled"].includes(existing.status) &&
 			playlistPath(other) === inputPath &&
+			!other.remuxOnly === !plan.remuxOnly &&
 			Math.abs(other.start - plan.start) < 1 &&
 			Math.abs(other.end - plan.end) < 1
 		)
@@ -718,7 +720,7 @@ export function addDiscJob(plan: DiscPlan): Job {
 	const job: Job = {
 		id,
 		kind: "disc",
-		filename: `Disc: ${plan.filename}`,
+		filename: `${plan.remuxOnly ? "Remux" : "Disc"}: ${plan.filename}`,
 		inputPath,
 		relativePath: plan.relativePath,
 		status: "queued",
@@ -1002,13 +1004,16 @@ async function processQueue() {
 		} else if (next.kind === "disc") {
 			const remux = await runDiscJob(next, appConfig, updateFn, controller.signal);
 			const plan = next.discPlan!;
-			const encode = addJob(plan.filename, remux, plan.relativePath);
-			if (plan.outputTitle) encode.outputTitle = plan.outputTitle;
-			if (plan.outputRoot) encode.outputRoot = plan.outputRoot;
-			encode.sourceLabel = "BDMV";
-			// Straight after its remux, ahead of the next one.
-			encode.queueOrder = next.queueOrder + 0.5;
-			Logger.info(`[disc] Remuxed ${plan.filename}, queued its encode`);
+			if (remux) {
+				const encode = addJob(plan.filename, remux, plan.relativePath);
+				if (plan.outputTitle) encode.outputTitle = plan.outputTitle;
+				if (plan.outputRoot) encode.outputRoot = plan.outputRoot;
+				encode.sourceLabel = "BDMV";
+				encode.discOrigin = discOriginOf(plan);
+				// Straight after its remux, ahead of the next one.
+				encode.queueOrder = next.queueOrder + 0.5;
+				Logger.info(`[disc] Remuxed ${plan.filename}, queued its encode`);
+			}
 		} else if (next.settings.subtitleProcessing === "translate") {
 			await runTranslateOnlyJob(next, appConfig, updateFn, controller.signal);
 		} else {
@@ -1132,7 +1137,9 @@ export function startPreview(jobId: string, options?: Partial<PreviewEncodeOptio
 	if (job.status === "done") return { ok: false, error: "Preview only available for unfinished jobs", status: 400 };
 
 	const opts: PreviewEncodeOptions = { ...DEFAULT_PREVIEW_OPTIONS, ...(options || {}) };
-	if (options?.references === undefined && job.originalSourcePath) opts.references = [{ path: job.originalSourcePath, label: "Original" }];
+	// An original that is a range of a disc is only remuxed for film grain, not for previews.
+	if (options?.references === undefined && job.originalSourcePath && !isDiscSource(job.originalSourcePath))
+		opts.references = [{ path: job.originalSourcePath, label: "Original" }];
 
 	const controller = new AbortController();
 	activePreviewJobId = jobId;

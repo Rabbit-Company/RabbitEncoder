@@ -11,6 +11,7 @@ import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { humanFileSize } from "./library";
 import { openPreviewReferencePicker } from "./repair";
+import { isDiscSource } from "../../src/bdmv/disc-source";
 import type { StillStyle } from "../../src/core/still-style";
 
 const MAX_PREVIEW_REFERENCES = 4;
@@ -48,16 +49,16 @@ export async function openPreviewModal(jobId: string): Promise<void> {
 	byId("preview-modal").style.display = "";
 
 	// Start from the comparison sources of this job's last run, if it had any.
-	appState.previewReferences = job.originalSourcePath ? [{ path: job.originalSourcePath, label: "Original" }] : [];
+	// An original that is a range of a disc is only remuxed for film grain, so it is no comparison source.
+	const original = job.originalSourcePath && !isDiscSource(job.originalSourcePath) ? job.originalSourcePath : "";
+	appState.previewReferences = original ? [{ path: original, label: "Original" }] : [];
 	renderPreviewReferences();
 	try {
 		const state = await fetchPreviewState(jobId);
 		if (appState.currentPreviewJobId !== jobId) return;
 		const previous = (state.references || []).map((r) => ({ path: r.path, label: r.label }));
 		appState.previewReferences =
-			job.originalSourcePath && !previous.some((r) => r.path === job.originalSourcePath)
-				? [{ path: job.originalSourcePath, label: "Original" }, ...previous].slice(0, MAX_PREVIEW_REFERENCES)
-				: previous;
+			original && !previous.some((r) => r.path === original) ? [{ path: original, label: "Original" }, ...previous].slice(0, MAX_PREVIEW_REFERENCES) : previous;
 		renderPreviewReferences();
 	} catch {
 		// The poll below reports load problems.

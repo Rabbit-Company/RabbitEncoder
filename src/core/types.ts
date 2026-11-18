@@ -1,4 +1,5 @@
 import type { NamingFormats } from "../bdmv/naming";
+import type { DiscOrigin } from "../bdmv/disc-source";
 import type { StillStyle } from "./still-style";
 
 export type EncoderId = "svt-av1-essential" | "svt-av1-hdr" | "svt-av1-5fish" | "svt-av1-tritium";
@@ -555,6 +556,8 @@ export interface ProbeResult {
 	videoOriginalFlag: boolean;
 	isFrameRateMismatch: boolean;
 	priorSource: string | null;
+	/** The disc range an earlier encode recorded. */
+	priorDisc?: DiscOrigin | null;
 	priorRabbitSettings: string | null;
 	priorRabbitVersion: string | null;
 	priorEncodedBy: string | null;
@@ -592,6 +595,8 @@ export interface DiscPlan {
 	outputRoot?: string;
 	/** The name the encode keeps before its tags, as the naming format made it. */
 	outputTitle?: string;
+	/** Write the remux itself under `filename`, tagged with where it came from, and queue no encode. */
+	remuxOnly?: boolean;
 }
 
 /** An audio track of another release to add to a video, synced to it by the audio both share. */
@@ -1197,6 +1202,8 @@ export interface Job {
 	outputRoot?: string;
 	/** Where the input came from, such as BDMV for a disc remux, written as the SOURCE tag when the input has none. */
 	sourceLabel?: string;
+	/** The disc range a disc remux came from, written into the tags so the original can be found again on another system. */
+	discOrigin?: DiscOrigin;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 	/** The crop the encode applied, in pixels of the source, so the source can be measured against the encode. */
 	cropRect?: PreviewCrop;

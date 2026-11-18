@@ -82,6 +82,8 @@ export function progressFromEvent(event: RegrainFrameProgress): FilmGrainProgres
 
 /** One line for a step detail, such as "Verifying with dav1d: 1,200 / 34,000 frames (41.2 fps, ETA 13m 5s)". */
 export function formatFilmGrainProgress(progress: FilmGrainProgress): string {
+	// Before regrain starts, as while an original is remuxed from a disc, there is only the stage.
+	if (progress.stage && !progress.frames && !progress.totalFrames) return progress.stage;
 	const frames = `${progress.stage ? `${progress.stage}: ` : ""}${progress.frames.toLocaleString()}${progress.totalFrames ? ` / ${progress.totalFrames.toLocaleString()}` : ""} frames`;
 	const extra = [progress.speed, progress.eta ? `ETA ${progress.eta}` : ""].filter(Boolean).join(", ");
 	return extra ? `${frames} (${extra})` : frames;

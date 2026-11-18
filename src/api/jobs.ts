@@ -34,6 +34,7 @@ import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
 import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
 import { resolveAllowedMediaFile } from "./repair";
+import { resolveOriginal } from "./bdmv";
 import { getTelemetry } from "../pipeline/telemetry";
 import { cancelEncodeMeasurement, getEncodeMeasurement, startEncodeMeasurement } from "../pipeline/encode-measure";
 
@@ -98,7 +99,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 		if (typeof justEnough !== "boolean") return c.json({ error: "justEnough must be a boolean" }, 400);
 		let sourcePath: string;
 		try {
-			sourcePath = resolveAllowedMediaFile(body.sourcePath, config, "Original source");
+			sourcePath = resolveOriginal(body.sourcePath, config, "Original source");
 		} catch (err) {
 			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
 		}

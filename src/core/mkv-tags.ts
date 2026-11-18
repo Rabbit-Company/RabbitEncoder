@@ -4,12 +4,14 @@ import { run } from "./process";
 import { Logger } from "./logger";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
 import type { JobSettings } from "./types";
+import type { DiscOrigin } from "../bdmv/disc-source";
 
 export interface InputMkvTags {
 	source: string | null;
 	encodedBy: string | null;
 	rabbitSettings: string | null;
 	rabbitVersion: string | null;
+	disc: DiscOrigin | null;
 }
 
 const EMPTY_TAGS: InputMkvTags = {
@@ -17,6 +19,7 @@ const EMPTY_TAGS: InputMkvTags = {
 	encodedBy: null,
 	rabbitSettings: null,
 	rabbitVersion: null,
+	disc: null,
 };
 
 function decodeXmlEntities(s: string): string {
@@ -55,7 +58,36 @@ export function parseMkvTagsXml(xml: string): InputMkvTags {
 		rabbitVersion = extractSimpleValue(rabbitBlockMatch[1] ?? "", "VERSION");
 	}
 
-	return { source, encodedBy, rabbitSettings, rabbitVersion };
+	return { source, encodedBy, rabbitSettings, rabbitVersion, disc: parseDiscOrigin(xml) };
+}
+
+const escapeXml = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** The BDMV tag, with the disc, playlist and range an encode of a disc item came from. */
+export function discOriginTagLines(origin: DiscOrigin): string[] {
+	const simple = (name: string, value: string) => `<Simple><Name>${name}</Name><String>${escapeXml(value)}</String></Simple>`;
+	return [
+		"<Simple>",
+		"<Name>BDMV</Name>",
+		simple("DISC_LABEL", origin.label),
+		simple("PLAYLIST", origin.playlist),
+		simple("PLAYLIST_START", String(origin.start)),
+		simple("PLAYLIST_END", String(origin.end)),
+		simple("PLAYLIST_LENGTH", String(origin.length)),
+		"</Simple>",
+	];
+}
+
+function parseDiscOrigin(xml: string): DiscOrigin | null {
+	const at = xml.search(/<Name>BDMV<\/Name>/i);
+	if (at < 0) return null;
+	const block = xml.slice(at);
+	const playlist = extractSimpleValue(block, "PLAYLIST");
+	const start = Number(extractSimpleValue(block, "PLAYLIST_START"));
+	const end = Number(extractSimpleValue(block, "PLAYLIST_END"));
+	const length = Number(extractSimpleValue(block, "PLAYLIST_LENGTH"));
+	if (!playlist || !/^\d{5}$/.test(playlist) || !(start >= 0) || !(end > start) || !(length >= end - 1)) return null;
+	return { label: extractSimpleValue(block, "DISC_LABEL") ?? "", playlist, start, end, length };
 }
 
 export async function readMkvTags(inputPath: string, tempDir: string, signal?: AbortSignal): Promise<InputMkvTags> {

@@ -626,7 +626,7 @@ export interface GrainSourcePair {
 	targetPath: string;
 	sourcePath: string;
 	targetName: string;
-	method: "episode" | "filename" | "single" | "none";
+	method: "disc" | "episode" | "filename" | "single" | "none";
 }
 
 /** Pairs the MKVs of a folder with their originals in another folder. */
@@ -1468,12 +1468,28 @@ export async function scanDiscSetRequest(options: {
 	return data;
 }
 
+/** The ranges of a disc set that videos were made from, matched by their tags or episode numbers, and every item of the set to choose from. */
+export async function findDiscOriginals(
+	path: string,
+	targets: string[],
+): Promise<{ pairs: { targetPath: string; sourcePath: string; method: string }[]; sources: { path: string; name: string }[] }> {
+	const response = await authFetch(`${API}/api/bdmv/originals`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, targets }),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not read the discs");
+	return data;
+}
+
 export async function createDiscJobs(options: {
 	path: string;
 	mode: DiscMode;
 	identity: DiscIdentity;
 	rows: Pick<DiscRow, "discPath" | "playlist" | "start" | "end" | "kind" | "season" | "episode" | "title" | "edition">[];
 	outputRoot?: string;
+	remuxOnly?: boolean;
 }): Promise<{ jobIds: string[] }> {
 	const response = await authFetch(`${API}/api/bdmv/jobs`, {
 		method: "POST",

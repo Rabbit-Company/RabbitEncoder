@@ -264,6 +264,7 @@ import {
 	handleBdmvRows,
 	handleBdmvRowsInput,
 	handleBdmvSaveTo,
+	handleBdmvResult,
 	handleBdmvSeriesChange,
 	handleDiscBanner,
 	openBdmv,
@@ -403,6 +404,7 @@ export function initEventListeners() {
 	byId("bdmv-rows").addEventListener("input", handleBdmvRowsInput);
 	byId("bdmv-queue-btn").addEventListener("click", queueBdmv);
 	byId("bdmv-save-to").addEventListener("change", handleBdmvSaveTo);
+	byId("bdmv-result").addEventListener("change", handleBdmvResult);
 	byId("disc-banner").addEventListener("click", handleDiscBanner);
 	byId("open-fontcheck-btn").addEventListener("click", openFontCheck);
 	byId("close-fontcheck-btn").addEventListener("click", closeFontCheck);

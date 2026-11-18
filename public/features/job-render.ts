@@ -9,6 +9,7 @@ import { errorMessage } from "../shared/errors";
 import { appState } from "../state";
 import { compareQueuedJobs, queuePriority } from "../../src/queue/priority";
 import { syntheticGrainActive, syntheticGrainMode } from "../../src/core/film-grain-iso";
+import { originalName as nameOfOriginal } from "../../src/bdmv/disc-source";
 
 export function statusLabel(status: JobStatus): string {
 	const labels = {
@@ -392,7 +393,7 @@ export function renderJobCard(job: Job): string {
 	if (job.kind === "hdr") meta += `<span>HDR metadata, video copied</span>`;
 	if (job.kind === "grain") meta += `<span>Film grain, video copied</span>`;
 	if (job.kind === "subtitles") meta += `<span>Subtitles added, video and audio copied</span>`;
-	if (job.kind === "disc") meta += `<span>Blu-ray remux, its encode follows</span>`;
+	if (job.kind === "disc") meta += job.discPlan?.remuxOnly ? `<span>Blu-ray remux only, no encode</span>` : `<span>Blu-ray remux, its encode follows</span>`;
 	if (job.kind === "audio")
 		meta += job.audioTracksPlan ? `<span>Audio tracks redone, video copied</span>` : `<span>Audio added from another release, video copied</span>`;
 	if (!isToolJob(job) && job.settings.videoEncode !== "off") {
@@ -410,7 +411,7 @@ export function renderJobCard(job: Job): string {
 	if (!isToolJob(job) && job.settings.audioEncode === "copy") meta += `<span>No Opus</span>`;
 	if (!isToolJob(job) && job.settings.subtitleProcessing === "copy") meta += `<span>Subs: copy</span>`;
 	if (!isToolJob(job) && job.originalSourcePath) {
-		const originalName = job.originalSourcePath.split("/").pop() || job.originalSourcePath;
+		const originalName = nameOfOriginal(job.originalSourcePath);
 		meta += `<span title="Original: ${escapeHtml(job.originalSourcePath)}">Original: ${escapeHtml(originalName)}</span>`;
 		if (job.settings.videoEncode !== "off" && job.settings.subtitleProcessing !== "translate") {
 			if (job.settings.filmGrainTablePath) meta += `<span>FGS ready</span>`;

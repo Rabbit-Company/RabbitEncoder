@@ -175,6 +175,7 @@ export async function probeFile(inputPath: string): Promise<ProbeResult> {
 		videoOriginalFlag,
 		isFrameRateMismatch,
 		priorSource: priorTags.source,
+		priorDisc: priorTags.disc,
 		priorRabbitSettings: priorTags.rabbitSettings,
 		priorRabbitVersion: priorTags.rabbitVersion,
 		priorEncodedBy: priorTags.encodedBy,

@@ -1217,9 +1217,13 @@
 												spellcheck="false"
 											/>
 											<button class="btn btn-ghost" type="button" id="advanced-film-grain-choose">Choose...</button>
+											<button class="btn btn-ghost" type="button" id="advanced-film-grain-disc">Blu-ray discs...</button>
 										</div>
+										<select class="select-input film-grain-disc-items" id="advanced-film-grain-disc-items" style="display: none"></select>
+										<div class="lang-filter-hint" id="advanced-film-grain-disc-note" style="display: none"></div>
 										<div class="lang-filter-hint">
-											The aligned grainy original of this denoised input. Generation uses every CPU core, so run it while no encode is active.
+											The aligned grainy original of this denoised input, or the Blu-ray discs it was remuxed from. Generation uses every CPU core, so run it
+											while no encode is active.
 										</div>
 										<div class="film-grain-actions">
 											<button class="btn btn-primary" type="button" id="advanced-film-grain-generate-btn">Generate table</button>
@@ -1461,7 +1465,7 @@
 					</div>
 					<div class="modal-body repair-audit-body">
 						<div class="repair-file-choice">
-							<span class="repair-file-label">Aligned grainy originals (optional)</span>
+							<span class="repair-file-label">Aligned grainy originals or their Blu-ray discs (optional)</span>
 							<div class="repair-file-selection" id="library-queue-source"></div>
 							<div class="repair-file-buttons">
 								<button class="btn btn-ghost" id="library-queue-file" type="button">Choose file...</button>
@@ -2624,7 +2628,7 @@
 							<div class="repair-subtitle">
 								Split a set of Blu-ray discs into episodes, specials and extras named as Sonarr does with TVDB, or into a movie and its extras named as Radarr
 								does with TMDB, and encode them into the output folder or a library folder. Names follow the naming formats in your settings. The discs are only
-								read.
+								read. Remux only writes each item as a lossless MKV instead of encoding it.
 							</div>
 						</div>
 						<button class="btn-close" id="close-bdmv-btn">&times;</button>
@@ -2677,6 +2681,13 @@
 								<span class="repair-file-label">Save to</span>
 								<select id="bdmv-save-to" class="select-input" disabled></select>
 							</label>
+							<label class="bdmv-field bdmv-field-save">
+								<span class="repair-file-label">Result</span>
+								<select id="bdmv-result" class="select-input">
+									<option value="encode">Encode</option>
+									<option value="remux">Remux only</option>
+								</select>
+							</label>
 						</div>
 						<div id="bdmv-error" class="sub-preview-error" style="display: none"></div>
 						<div id="bdmv-warnings" class="bdmv-warnings"></div>
@@ -2684,10 +2695,7 @@
 						<div id="bdmv-rows" class="release-subs-grid bdmv-rows"></div>
 					</div>
 					<div class="modal-footer">
-						<span class="bdmv-footer-hint"
-							>Each item is remuxed from the disc right before its encode, which adds the usual tags to its name. The Output column is relative to the Save to
-							folder.</span
-						>
+						<span class="bdmv-footer-hint" id="bdmv-footer-hint"></span>
 						<button class="btn btn-ghost" id="bdmv-cancel-btn">Close</button>
 						<button class="btn btn-primary" id="bdmv-queue-btn" disabled>Queue</button>
 					</div>

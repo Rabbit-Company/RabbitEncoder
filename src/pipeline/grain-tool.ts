@@ -26,6 +26,8 @@ import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { grainIso, isoResolution, MAX_GRAIN_ISO, MIN_GRAIN_ISO } from "../core/film-grain-iso";
 import { extractAv1Track, identify, replaceVideoTrack, videoTrackOf as av1TrackOf, type MkvJson } from "./av1-mkv";
 import { probeFile } from "./probe";
+import { withOriginalFile } from "./disc-extract";
+import { isDiscSource } from "../bdmv/disc-source";
 
 const ACTIONS: GrainAction[] = ["remove", "synthetic", "table", "measure"];
 /** The largest synthetic grain the encode settings allow, on the 0 to 255 scale. */
@@ -331,7 +333,7 @@ export async function runGrainJob(job: Job, config: AppConfig, updateJob: (parti
 		if (existsSync(stagePath)) throw new Error(`Staging file already exists: ${stagePath}`);
 		if (plan.tablePath && !existsSync(plan.tablePath)) throw new Error("The uploaded film grain table no longer exists, upload it again");
 		if (plan.action === "measure" && !plan.sourcePath) throw new Error("The video has no original to measure the grain from");
-		if (plan.sourcePath && !existsSync(plan.sourcePath)) throw new Error("The original no longer exists");
+		if (plan.sourcePath && !isDiscSource(plan.sourcePath) && !existsSync(plan.sourcePath)) throw new Error("The original no longer exists");
 
 		// Analyze
 		setStep("Analyze", { status: "active", progress: 10 });
@@ -367,48 +369,57 @@ export async function runGrainJob(job: Job, config: AppConfig, updateJob: (parti
 		let table = plan.tablePath ?? null;
 		if (plan.action === "measure") {
 			setStep("Measure", { status: "active", progress: 0, detail: "Finding the video in the original" });
-			const original = await probeFile(plan.sourcePath!);
-			checkCancelled();
-			// Measured against the original as it was cut and scaled for the encode.
-			const geometry = await detectFilmGrainGeometry(
+			const { geometry, segments } = await withOriginalFile(
 				plan.sourcePath!,
-				plan.targetPath,
-				decodedFrameSize(original),
-				decodedFrameSize(probe),
-				Math.min(original.duration, probe.duration),
-				tempDir,
+				config,
 				signal,
+				(detail) => setStep("Measure", { detail }),
+				async (sourcePath) => {
+					const original = await probeFile(sourcePath);
+					checkCancelled();
+					// Measured against the original as it was cut and scaled for the encode.
+					const geometry = await detectFilmGrainGeometry(
+						sourcePath,
+						plan.targetPath,
+						decodedFrameSize(original),
+						decodedFrameSize(probe),
+						Math.min(original.duration, probe.duration),
+						tempDir,
+						signal,
+					);
+					// The decoder in regrain diff adds the encode's own grain, which must not count as grain the encode lost.
+					let reference = ivf;
+					if (before.entries > 0) {
+						setStep("Measure", { detail: "Taking out the video's grain for the measurement" });
+						reference = join(tempDir, "without-grain.ivf");
+						const removed = await runRegrain(["regrain", "remove", ivf, "-o", reference, "-y", "--progress", "json"], signal);
+						checkCancelled();
+						if (removed.code !== 0) throw new Error(`regrain failed: ${regrainErrorText(removed.error, removed.stderr, removed.code)}`);
+					}
+					setStep("Measure", { detail: "Measuring the grain" });
+					const measured = join(tempDir, "measured.tbl");
+					const segments = await measureFilmGrain({
+						sourcePath,
+						denoisedPath: reference,
+						denoisedProbe: probe,
+						tablePath: measured,
+						sampling: plan.sampling ?? "all",
+						range: plan.range ?? "representative",
+						justEnough: plan.justEnough === true,
+						lumaOnly: plan.measureChroma !== true,
+						crop: geometry.crop,
+						scale: geometry.scale,
+						signal,
+						onProgress: (progress) => setStep("Measure", { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
+					});
+					checkCancelled();
+					if (reference !== ivf) rmSync(reference, { force: true });
+					table = join(tempDir, "measured-encode.tbl");
+					if (segments === 0 || writeEncoderFilmGrainTable(measured, table) === 0)
+						throw new Error("The video lost no measurable grain compared with the original, so there is no grain to add");
+					return { geometry, segments };
+				},
 			);
-			// The decoder in regrain diff adds the encode's own grain, which must not count as grain the encode lost.
-			let reference = ivf;
-			if (before.entries > 0) {
-				setStep("Measure", { detail: "Taking out the video's grain for the measurement" });
-				reference = join(tempDir, "without-grain.ivf");
-				const removed = await runRegrain(["regrain", "remove", ivf, "-o", reference, "-y", "--progress", "json"], signal);
-				checkCancelled();
-				if (removed.code !== 0) throw new Error(`regrain failed: ${regrainErrorText(removed.error, removed.stderr, removed.code)}`);
-			}
-			setStep("Measure", { detail: "Measuring the grain" });
-			const measured = join(tempDir, "measured.tbl");
-			const segments = await measureFilmGrain({
-				sourcePath: plan.sourcePath!,
-				denoisedPath: reference,
-				denoisedProbe: probe,
-				tablePath: measured,
-				sampling: plan.sampling ?? "all",
-				range: plan.range ?? "representative",
-				justEnough: plan.justEnough === true,
-				lumaOnly: plan.measureChroma !== true,
-				crop: geometry.crop,
-				scale: geometry.scale,
-				signal,
-				onProgress: (progress) => setStep("Measure", { progress: progress.percent ?? 0, detail: formatFilmGrainProgress(progress) }),
-			});
-			checkCancelled();
-			if (reference !== ivf) rmSync(reference, { force: true });
-			table = join(tempDir, "measured-encode.tbl");
-			if (segments === 0 || writeEncoderFilmGrainTable(measured, table) === 0)
-				throw new Error("The video lost no measurable grain compared with the original, so there is no grain to add");
 			const shape = [
 				geometry.crop ? `cropped to ${geometry.crop.w}x${geometry.crop.h}` : "",
 				geometry.scale ? `scaled to ${geometry.scale.w}x${geometry.scale.h}` : "",

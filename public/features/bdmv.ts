@@ -26,6 +26,8 @@ let identity: DiscIdentity = { title: "" };
 let destinations: DiscDestination[] = [];
 /** The folder chosen for each kind, kept so anime can go to one library and films to another. */
 const SAVE_TO_KEY = "bdmvSaveTo";
+/** Whether items are only remuxed, kept for the next disc set. */
+const REMUX_ONLY_KEY = "bdmvRemuxOnly";
 let loading = false;
 let detected: DetectedDiscSet[] = [];
 let detectTimer: ReturnType<typeof setInterval> | null = null;
@@ -80,6 +82,13 @@ function savedDestinations(): Record<string, string> {
 function saveTo(): string {
 	const chosen = savedDestinations()[isMovie() ? "movie" : "series"];
 	return destinations.find((d) => d.path === chosen)?.path ?? destinations[0]?.path ?? "";
+}
+
+const remuxOnly = (): boolean => localStorage.getItem(REMUX_ONLY_KEY) === "1";
+
+export function handleBdmvResult(): void {
+	localStorage.setItem(REMUX_ONLY_KEY, byId<HTMLSelectElement>("bdmv-result").value === "remux" ? "1" : "0");
+	render();
 }
 
 export function handleBdmvSaveTo(): void {
@@ -228,6 +237,12 @@ function render(): void {
 	inputById("bdmv-year").value = identity.year ? String(identity.year) : "";
 	renderMatches();
 	renderSaveTo();
+	const result = byId<HTMLSelectElement>("bdmv-result");
+	result.value = remuxOnly() ? "remux" : "encode";
+	result.disabled = loading;
+	byId("bdmv-footer-hint").textContent = remuxOnly()
+		? "Each item is remuxed from the disc into a lossless MKV with the name in the Output column, tagged with the disc range it holds. The Output column is relative to the Save to folder."
+		: "Each item is remuxed from the disc right before its encode, which adds the usual tags to its name. The Output column is relative to the Save to folder.";
 	byId("bdmv-discs").innerHTML = renderDiscs();
 	renderTable();
 }
@@ -459,6 +474,7 @@ export async function queueBdmv(): Promise<void> {
 		await createDiscJobs({
 			path: scan.path,
 			outputRoot: saveTo() || undefined,
+			remuxOnly: remuxOnly() || undefined,
 			mode: scan.mode,
 			identity: { ...identity, title: identity.title.trim() },
 			rows: chosen.map(({ discPath, playlist, start, end, kind, season, episode, title, edition }) => ({

@@ -16,6 +16,7 @@ import { Logger } from "../core/logger";
 import { getAllJobs, getAppConfig, queueTranslateJobs, scanLibraryPath } from "../queue/store";
 import { resolveTranslateLang } from "../translate/translate-languages";
 import { allowedRoots, resolveAllowedDirectory, resolveAllowedMediaFile } from "./repair";
+import { holdsDiscs, pairDiscOriginals, resolveOriginal } from "./bdmv";
 import { pairOriginalSources } from "../video/source-pairing";
 import { loadSeriesNotes, seriesKey, seriesNotesDir, seriesTitleFromFilename } from "../translate/series-notes";
 import { prepareSeriesNotesForFile } from "../translate/translate-step";
@@ -92,7 +93,7 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 				for (const [target, rawSource] of Object.entries(body.sourceMap)) {
 					if (!selected.has(target)) throw new Error(`Source mapping target was not selected: ${target}`);
 					if (!rawSource) continue;
-					const source = resolveAllowedMediaFile(rawSource, config, "Original source");
+					const source = resolveOriginal(rawSource, config, "Original source");
 					if (source === realpathSync(target)) throw new Error(`Original source and encode input are the same file: ${target}`);
 					if (usedSources.has(source)) throw new Error(`Original source is mapped more than once: ${source}`);
 					usedSources.add(source);
@@ -306,6 +307,17 @@ export function registerLibraryRoutes(app: Web, config: AppConfig): void {
 			if (typeof body.sourcePath !== "string" || !body.sourcePath.trim()) throw new Error("Choose an original file or folder");
 			const sourceSelection = resolve(body.sourcePath);
 			if (!existsSync(sourceSelection)) throw new Error("Original file or folder does not exist");
+			if (statSync(sourceSelection).isDirectory() && holdsDiscs(resolveAllowedDirectory(sourceSelection, config))) {
+				const found = await pairDiscOriginals(sourceSelection, targets, config, c.req.signal);
+				return c.json({
+					pairs: found.pairs.map((pair) => ({
+						...pair,
+						targetName: basename(pair.targetPath),
+						sourceName: found.sources.find((source) => source.path === pair.sourcePath)?.name ?? "",
+					})),
+					sources: found.sources,
+				});
+			}
 			const sources = statSync(sourceSelection).isDirectory()
 				? listMediaFiles(resolveAllowedDirectory(sourceSelection, config)).map((path) => resolveAllowedMediaFile(path, config, "Original source"))
 				: [resolveAllowedMediaFile(sourceSelection, config, "Original source")];

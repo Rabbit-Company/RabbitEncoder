@@ -9,6 +9,7 @@ import { addGrainJob } from "../queue/store";
 import { pairOriginalSources } from "../video/source-pairing";
 import { mkvFiles } from "./hdr";
 import { resolveAllowedDirectory, resolveAllowedMediaFile, resolveAllowedMkv } from "./repair";
+import { holdsDiscs, pairDiscOriginals, resolveOriginal } from "./bdmv";
 
 /** A table with an entry for every frame of a 2 hour film is around 50 MB. */
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
@@ -32,7 +33,7 @@ function resolvePlanPaths(plan: GrainPlan, config: AppConfig): GrainPlan {
 	const resolved: GrainPlan = { ...plan, targetPath: resolveAllowedMkv(plan.targetPath, config, "Video") };
 	if (plan.action === "table") resolved.tablePath = resolveUpload(plan.tablePath, config);
 	if (plan.action === "measure") {
-		resolved.sourcePath = resolveAllowedMediaFile(plan.sourcePath, config, "Original");
+		resolved.sourcePath = resolveOriginal(plan.sourcePath, config, "Original");
 		if (resolved.sourcePath === resolved.targetPath) throw new Error("Choose the original the video was encoded from, not the video itself");
 	}
 	return resolved;
@@ -155,10 +156,16 @@ export function registerGrainRoutes(app: Web, config: AppConfig): void {
 			const raw = (await c.req.json()) as { folder?: unknown; recursive?: unknown; sourceFolder?: unknown };
 			const targets = mkvFiles(resolveAllowedDirectory(raw.folder, config), raw.recursive === true);
 			if (targets.length === 0) throw new Error("The folder has no MKV files");
+			const sourceFolder = resolveAllowedDirectory(raw.sourceFolder, config);
+			if (holdsDiscs(sourceFolder)) {
+				if (targets.length > 500) throw new Error("Choose a folder with at most 500 videos");
+				const found = await pairDiscOriginals(sourceFolder, targets, config, c.req.signal);
+				return c.json({ pairs: found.pairs.map((pair) => ({ ...pair, targetName: basename(pair.targetPath) })), sources: found.sources });
+			}
 			const encodes = new Set(targets.map((path) => realpathSync(path)));
 			const sources = [
 				...new Set(
-					listMediaFiles(resolveAllowedDirectory(raw.sourceFolder, config)).flatMap((path) => {
+					listMediaFiles(sourceFolder).flatMap((path) => {
 						try {
 							return [resolveAllowedMediaFile(path, config, "Original")];
 						} catch {
@@ -199,7 +206,7 @@ export function registerGrainRoutes(app: Web, config: AppConfig): void {
 				try {
 					const plan = { ...template, targetPath: resolveAllowedMkv(file, config, "Video") };
 					if (template.action === "measure") {
-						plan.sourcePath = resolveAllowedMediaFile(source, config, "Original");
+						plan.sourcePath = resolveOriginal(source, config, "Original");
 						if (plan.sourcePath === plan.targetPath) throw new Error("The original is the video itself");
 					}
 					jobIds.push(addGrainJob(plan).id);

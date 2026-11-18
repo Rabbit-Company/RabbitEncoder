@@ -1,10 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync } from "fs";
-import { basename, join } from "path";
+import { randomUUID } from "crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "fs";
+import { basename, dirname, join, relative } from "path";
 import { Logger } from "../core/logger";
+import { discOriginTagLines } from "../core/mkv-tags";
 import { CancelledError, humanSize, readTimecodes, run } from "../core/process";
 import type { AppConfig, DiscPlan, Job, JobStep } from "../core/types";
-import { MPLS_CLOCK, parseMpls, type Mpls } from "../bdmv/mpls";
-import { resolveUniqueOutputPath } from "./output";
+import { discLabel, parseDiscSource, type DiscOrigin } from "../bdmv/disc-source";
+import { MPLS_CLOCK, parseMpls, playlistTimeline, type Mpls } from "../bdmv/mpls";
+import { formatTransferDetail, jobOutputRoot, moveFileWithProgress, resolveUniqueOutputPath } from "./output";
 import { mkvtoolnixProgress } from "./prepare-progress";
 import { durationSeconds, identifyMatroska } from "./repair";
 
@@ -73,7 +76,7 @@ export function onlyJoinJitter(timecodesMs: number[], frameMs: number): boolean 
 	return jitter;
 }
 
-export function buildDiscExtractArgs(plan: DiscPlan, outputPath: string, retime?: { track: number; rate: string }): string[] {
+export function buildDiscExtractArgs(plan: DiscExtract, outputPath: string, retime?: { track: number; rate: string }): string[] {
 	const args = ["mkvmerge", "--gui-mode", "-o", outputPath];
 	if (!wholePlaylist(plan)) args.push("--split", `parts:${splitTimestamp(plan.start)}-${splitTimestamp(plan.end)}`);
 	if (retime) args.push("--default-duration", `${retime.track}:${retime.rate}`);
@@ -82,7 +85,7 @@ export function buildDiscExtractArgs(plan: DiscPlan, outputPath: string, retime?
 }
 
 /** The video track to retime and its rate, or nothing when the range mixes rates or the playlist cannot be read. */
-async function retimeOf(plan: DiscPlan, signal?: AbortSignal): Promise<{ track: number; rate: string } | undefined> {
+async function retimeOf(plan: DiscExtract, signal?: AbortSignal): Promise<{ track: number; rate: string } | undefined> {
 	try {
 		const rate = constantFrameRate(parseMpls(readFileSync(playlistPath(plan))), plan.start, plan.end);
 		if (!rate) return undefined;
@@ -96,7 +99,7 @@ async function retimeOf(plan: DiscPlan, signal?: AbortSignal): Promise<{ track: 
 }
 
 /** Bytes the range takes on the disc, from the share of its clips it plays. */
-function estimatedBytes(plan: DiscPlan): number {
+function estimatedBytes(plan: DiscExtract): number {
 	try {
 		const mpls = parseMpls(readFileSync(playlistPath(plan)));
 		const clips = new Set(mpls.items.map((item) => item.clip));
@@ -108,17 +111,140 @@ function estimatedBytes(plan: DiscPlan): number {
 	}
 }
 
+/** What a remux needs to know about the range. */
+export type DiscExtract = Pick<DiscPlan, "discPath" | "playlist" | "start" | "end" | "duration">;
+
+export const discOriginOf = (plan: DiscExtract): DiscOrigin => ({
+	label: discLabel(plan.discPath),
+	playlist: plan.playlist,
+	start: plan.start,
+	end: plan.end,
+	length: plan.duration,
+});
+
+/** Throws when the folder lacks the room for the range, with a gigabyte to spare. Returns the bytes it needs, 0 when unknown. */
+function checkSpace(plan: DiscExtract, dir: string): number {
+	const needed = estimatedBytes(plan);
+	const stats = statfsSync(dir);
+	const free = stats.bavail * stats.bsize;
+	if (needed && free < needed + 1024 ** 3)
+		throw new Error(`The temp folder has ${humanSize(free)} free, and this ${wholePlaylist(plan) ? "playlist" : "episode"} needs about ${humanSize(needed)}`);
+	return needed;
+}
+
 /**
- * Remuxes one episode or extra of a disc into an MKV in the temp folder, with
- * its chapters and the track languages the disc gives. Returns its path for
- * the encode that follows.
+ * Remuxes a range of a playlist into an MKV with its chapters and the track
+ * languages the disc gives, retimed to a constant frame rate where clips join.
+ * Every remux of the same range holds the same frames, which film grain
+ * measurement relies on when it remuxes an original again.
  */
-export async function runDiscJob(job: Job, config: AppConfig, updateJob: (partial: Partial<Job>) => void, signal?: AbortSignal): Promise<string> {
+export async function remuxDiscRange(
+	plan: DiscExtract,
+	outputPath: string,
+	signal: AbortSignal | undefined,
+	report: (percent: number | null, detail?: string) => void,
+): Promise<void> {
+	if (!existsSync(playlistPath(plan))) throw new Error(`The disc no longer has playlist ${plan.playlist}`);
+	try {
+		// mkvmerge counts progress over the whole playlist and stops after the range.
+		const share = wholePlaylist(plan) || plan.duration <= 0 ? 1 : Math.min(1, Math.max(0.01, plan.end / plan.duration));
+		// It first counts from 0 to 100 while it scans the playlist's files.
+		let scanning = false;
+		const retime = await retimeOf(plan, signal);
+		const merged = await run(buildDiscExtractArgs(plan, outputPath, retime), {
+			signal,
+			onStdoutLine: (line) => {
+				if (line.startsWith("#GUI#begin_scanning_playlists")) scanning = true;
+				if (line.startsWith("#GUI#end_scanning_playlists")) scanning = false;
+				const percent = scanning ? null : mkvtoolnixProgress(line);
+				if (percent !== null) report(Math.min(99, Math.round(percent / share)));
+			},
+		});
+		if (signal?.aborted) throw new CancelledError();
+		if (merged.code !== 0 && merged.code !== 1) throw new Error(`mkvmerge failed (exit ${merged.code}): ${(merged.stderr || merged.stdout).slice(-800)}`);
+		if (merged.code === 1) Logger.warn(`[disc] mkvmerge completed with warnings: ${(merged.stderr || merged.stdout).slice(-500)}`);
+		if (!existsSync(outputPath)) throw new Error("mkvmerge wrote no file");
+
+		if (retime) await makeConstantFrameRate(outputPath, retime.rate, dirname(outputPath), (detail) => report(null, detail), signal);
+
+		const got = durationSeconds(await identifyMatroska(outputPath, signal));
+		const wanted = plan.end - plan.start;
+		if (got > 0 && Math.abs(got - wanted) > Math.max(5, wanted * 0.02))
+			throw new Error(`The remux is ${Math.round(got)} s long, but the range is ${Math.round(wanted)} s`);
+	} catch (error) {
+		rmSync(outputPath, { force: true });
+		throw error;
+	}
+}
+
+/**
+ * Runs `use` with an original as a file. An original that is a range of a
+ * disc is remuxed into the temp folder first and removed when `use` is done.
+ */
+export async function withOriginalFile<T>(
+	sourcePath: string,
+	config: AppConfig,
+	signal: AbortSignal | undefined,
+	report: (detail: string) => void,
+	use: (path: string) => Promise<T>,
+): Promise<T> {
+	const range = parseDiscSource(sourcePath);
+	if (!range) return use(sourcePath);
+	const mpls = playlistPath(range);
+	if (!existsSync(mpls)) throw new Error(`The disc of the original no longer has playlist ${range.playlist}`);
+	const plan: DiscExtract = { ...range, duration: playlistTimeline(parseMpls(readFileSync(mpls))).duration };
+	const dir = join(config.tempDir, "disc-originals");
+	mkdirSync(dir, { recursive: true });
+	checkSpace(plan, dir);
+	const outputPath = join(dir, `${randomUUID()}.mkv`);
+	const name = `${discLabel(range.discPath)} playlist ${range.playlist}`;
+	try {
+		report(`Remuxing the original from ${name}`);
+		await remuxDiscRange(plan, outputPath, signal, (percent, detail) =>
+			report(detail ?? `Remuxing the original from ${name}${percent === null ? "" : `: ${percent}%`}`),
+		);
+		Logger.info(`[disc] Remuxed the original from ${name} for film grain`);
+		return await use(outputPath);
+	} finally {
+		rmSync(outputPath, { force: true });
+	}
+}
+
+/** Writes the SOURCE and BDMV tags into a remux, so it names the disc range it holds. */
+async function tagRemux(path: string, plan: DiscExtract, dir: string, signal?: AbortSignal): Promise<void> {
+	const xmlPath = join(dir, `${basename(path)}.tags.xml`);
+	try {
+		writeFileSync(
+			xmlPath,
+			[
+				'<?xml version="1.0" encoding="UTF-8"?>',
+				"<Tags><Tag>",
+				"<Targets><TargetTypeValue>50</TargetTypeValue></Targets>",
+				"<Simple><Name>SOURCE</Name><String>BDMV</String></Simple>",
+				...discOriginTagLines(discOriginOf(plan)),
+				"</Tag></Tags>",
+			].join("\n"),
+		);
+		const res = await run(["mkvpropedit", path, "--tags", `global:${xmlPath}`], { signal });
+		if (signal?.aborted) throw new CancelledError();
+		if (res.code !== 0 && res.code !== 1) throw new Error(`mkvpropedit could not tag the remux (exit ${res.code}): ${(res.stderr || res.stdout).slice(-500)}`);
+	} finally {
+		rmSync(xmlPath, { force: true });
+	}
+}
+
+/**
+ * Remuxes one episode or extra of a disc into an MKV in the temp folder.
+ * Returns its path for the encode that follows, or null for a remux only
+ * job, whose remux goes straight into the output.
+ */
+export async function runDiscJob(job: Job, config: AppConfig, updateJob: (partial: Partial<Job>) => void, signal?: AbortSignal): Promise<string | null> {
 	const plan = job.discPlan;
 	if (!plan) throw new Error("Disc job has no plan");
 	const steps: JobStep[] = [
 		{ label: "Read disc", status: "pending", progress: 0 },
 		{ label: "Remux from disc", status: "pending", progress: 0 },
+		...(plan.remuxOnly ? [{ label: "Write output", status: "pending" as const, progress: 0 }] : []),
 	];
 	const setStep = (index: number, partial: Partial<JobStep>) => {
 		const step = steps[index]!;
@@ -142,44 +268,41 @@ export async function runDiscJob(job: Job, config: AppConfig, updateJob: (partia
 		setStep(0, { status: "active", progress: 10 });
 		updateJob({ status: "probing" });
 		if (!existsSync(playlistPath(plan))) throw new Error(`The disc no longer has playlist ${plan.playlist}`);
-		const needed = estimatedBytes(plan);
-		const stats = statfsSync(dir);
-		const free = stats.bavail * stats.bsize;
-		if (needed && free < needed + 1024 ** 3)
-			throw new Error(`The temp folder has ${humanSize(free)} free, and this ${wholePlaylist(plan) ? "playlist" : "episode"} needs about ${humanSize(needed)}`);
+		const needed = checkSpace(plan, dir);
 		setStep(0, { status: "done", progress: 100, detail: needed ? `About ${humanSize(needed)}` : undefined });
 
 		checkCancelled();
 		setStep(1, { status: "active", progress: 0, detail: "Copying streams" });
 		updateJob({ status: "muxing" });
-		// mkvmerge counts progress over the whole playlist and stops after the range.
-		const share = wholePlaylist(plan) || plan.duration <= 0 ? 1 : Math.min(1, Math.max(0.01, plan.end / plan.duration));
-		// It first counts from 0 to 100 while it scans the playlist's files.
-		let scanning = false;
-		const retime = await retimeOf(plan, signal);
-		const merged = await run(buildDiscExtractArgs(plan, outputPath, retime), {
-			signal,
-			onStdoutLine: (line) => {
-				if (line.startsWith("#GUI#begin_scanning_playlists")) scanning = true;
-				if (line.startsWith("#GUI#end_scanning_playlists")) scanning = false;
-				const percent = scanning ? null : mkvtoolnixProgress(line);
-				if (percent !== null) setStep(1, { progress: Math.min(99, Math.round(percent / share)) });
-			},
-		});
+		await remuxDiscRange(plan, outputPath, signal, (percent, detail) =>
+			setStep(1, { ...(percent === null ? {} : { progress: percent }), ...(detail ? { detail } : {}) }),
+		);
 		checkCancelled();
-		if (merged.code !== 0 && merged.code !== 1) throw new Error(`mkvmerge failed (exit ${merged.code}): ${(merged.stderr || merged.stdout).slice(-800)}`);
-		if (merged.code === 1) Logger.warn(`[disc] mkvmerge completed with warnings: ${(merged.stderr || merged.stdout).slice(-500)}`);
-		if (!existsSync(outputPath)) throw new Error("mkvmerge wrote no file");
+		const size = humanSize(statSync(outputPath).size);
+		setStep(1, { status: "done", progress: 100, detail: `${size} in ${basename(dir)}` });
 
-		if (retime) await makeConstantFrameRate(outputPath, retime.rate, dir, (detail) => setStep(1, { detail }), signal);
+		if (!plan.remuxOnly) {
+			updateJob({ status: "done", currentStage: "Queued for encode", progress: 100, finishedAt: Date.now(), outputFilename: plan.filename });
+			return outputPath;
+		}
 
-		const got = durationSeconds(await identifyMatroska(outputPath, signal));
-		const wanted = plan.end - plan.start;
-		if (got > 0 && Math.abs(got - wanted) > Math.max(5, wanted * 0.02))
-			throw new Error(`The remux is ${Math.round(got)} s long, but the range is ${Math.round(wanted)} s`);
-		setStep(1, { status: "done", progress: 100, detail: `${humanSize(statSync(outputPath).size)} in ${basename(dir)}` });
-		updateJob({ status: "done", currentStage: "Queued for encode", progress: 100, finishedAt: Date.now(), outputFilename: plan.filename });
-		return outputPath;
+		setStep(2, { status: "active", progress: 0, detail: "Tagging the remux" });
+		updateJob({ status: "writing_output" });
+		await tagRemux(outputPath, plan, dir, signal);
+		const root = jobOutputRoot({ outputRoot: plan.outputRoot }, config);
+		const outputDir = join(root, plan.relativePath);
+		mkdirSync(outputDir, { recursive: true });
+		const finalPath = resolveUniqueOutputPath(outputDir, plan.filename);
+		await moveFileWithProgress(outputPath, finalPath, signal, (copied, total, finished, rate) =>
+			setStep(2, {
+				progress: finished ? 100 : total > 0 ? Math.min(99, Math.round((copied / total) * 100)) : 0,
+				detail: formatTransferDetail("Writing output", copied, total, rate),
+			}),
+		);
+		setStep(2, { status: "done", progress: 100, detail: `${size} in ${relative(root, outputDir) || basename(root)}` });
+		updateJob({ status: "done", currentStage: "Done", progress: 100, finishedAt: Date.now(), outputFilename: basename(finalPath) });
+		Logger.info(`[disc] Remuxed ${basename(finalPath)} into ${outputDir}`);
+		return null;
 	} catch (error) {
 		rmSync(outputPath, { force: true });
 		const failed = steps.find((s) => s.status === "active");
