@@ -1222,8 +1222,8 @@
 										<select class="select-input film-grain-disc-items" id="advanced-film-grain-disc-items" style="display: none"></select>
 										<div class="lang-filter-hint" id="advanced-film-grain-disc-note" style="display: none"></div>
 										<div class="lang-filter-hint">
-											The aligned grainy original of this denoised input, or the Blu-ray discs it was remuxed from. Generation uses every CPU core, so run it
-											while no encode is active.
+											The aligned grainy original of this denoised input, or the Blu-ray discs it was remuxed from. An item of the discs is remuxed into the
+											temp folder while the grain is measured. Generation uses every CPU core, so run it while no encode is active.
 										</div>
 										<div class="film-grain-actions">
 											<button class="btn btn-primary" type="button" id="advanced-film-grain-generate-btn">Generate table</button>
@@ -1877,11 +1877,15 @@
 							<div class="setting-group">
 								<label>Videos</label>
 								<div id="compare-sources"></div>
-								<button class="btn btn-ghost" type="button" id="compare-add">Add video...</button>
+								<div class="compare-add-row">
+									<button class="btn btn-ghost" type="button" id="compare-add">Add video...</button>
+									<button class="btn btn-ghost" type="button" id="compare-add-disc">Add Blu-ray disc...</button>
+								</div>
 								<div class="lang-filter-hint">
 									The first video is the reference. Others are aligned to it by their audio, then checked against the picture. Type an offset in milliseconds to
 									set one by hand. Smaller videos of the same shape are upscaled to the largest size. Range and matrix stay on auto unless a file's colour tags
-									are wrong.
+									are wrong. A Blu-ray disc is matched to the first video by its disc tags or episode number, and its item is remuxed into the temp folder,
+									which only the newest comparison keeps.
 								</div>
 							</div>
 							<div class="compare-options">

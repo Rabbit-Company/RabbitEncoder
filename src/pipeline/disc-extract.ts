@@ -178,6 +178,31 @@ export async function remuxDiscRange(
 }
 
 /**
+ * Remuxes an original given as a range of a disc to `outputPath`, after
+ * checking its folder has the room. `report` gets what it is doing.
+ */
+export async function remuxDiscSource(
+	sourcePath: string,
+	outputPath: string,
+	signal: AbortSignal | undefined,
+	report: (detail: string) => void,
+): Promise<void> {
+	const range = parseDiscSource(sourcePath);
+	if (!range) throw new Error("The original is not a range of a disc");
+	const mpls = playlistPath(range);
+	if (!existsSync(mpls)) throw new Error(`The disc of the original no longer has playlist ${range.playlist}`);
+	const plan: DiscExtract = { ...range, duration: playlistTimeline(parseMpls(readFileSync(mpls))).duration };
+	mkdirSync(dirname(outputPath), { recursive: true });
+	checkSpace(plan, dirname(outputPath));
+	const name = `${discLabel(range.discPath)} playlist ${range.playlist}`;
+	report(`Remuxing ${name} from the disc`);
+	await remuxDiscRange(plan, outputPath, signal, (percent, detail) =>
+		report(detail ?? `Remuxing ${name} from the disc${percent === null ? "" : `: ${percent}%`}`),
+	);
+	Logger.info(`[disc] Remuxed ${name} from ${range.discPath}`);
+}
+
+/**
  * Runs `use` with an original as a file. An original that is a range of a
  * disc is remuxed into the temp folder first and removed when `use` is done.
  */
@@ -188,22 +213,10 @@ export async function withOriginalFile<T>(
 	report: (detail: string) => void,
 	use: (path: string) => Promise<T>,
 ): Promise<T> {
-	const range = parseDiscSource(sourcePath);
-	if (!range) return use(sourcePath);
-	const mpls = playlistPath(range);
-	if (!existsSync(mpls)) throw new Error(`The disc of the original no longer has playlist ${range.playlist}`);
-	const plan: DiscExtract = { ...range, duration: playlistTimeline(parseMpls(readFileSync(mpls))).duration };
-	const dir = join(config.tempDir, "disc-originals");
-	mkdirSync(dir, { recursive: true });
-	checkSpace(plan, dir);
-	const outputPath = join(dir, `${randomUUID()}.mkv`);
-	const name = `${discLabel(range.discPath)} playlist ${range.playlist}`;
+	if (!parseDiscSource(sourcePath)) return use(sourcePath);
+	const outputPath = join(config.tempDir, "disc-originals", `${randomUUID()}.mkv`);
 	try {
-		report(`Remuxing the original from ${name}`);
-		await remuxDiscRange(plan, outputPath, signal, (percent, detail) =>
-			report(detail ?? `Remuxing the original from ${name}${percent === null ? "" : `: ${percent}%`}`),
-		);
-		Logger.info(`[disc] Remuxed the original from ${name} for film grain`);
+		await remuxDiscSource(sourcePath, outputPath, signal, report);
 		return await use(outputPath);
 	} finally {
 		rmSync(outputPath, { force: true });

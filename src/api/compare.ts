@@ -1,6 +1,6 @@
 import type { Web } from "@rabbit-company/web";
 import type { AppConfig } from "../core/types";
-import { resolveAllowedMediaFile } from "./repair";
+import { resolveOriginal } from "./bdmv";
 import { buildZip } from "../core/zip";
 import {
 	addFrame,
@@ -56,7 +56,7 @@ export function registerCompareRoutes(app: Web, config: AppConfig): void {
 				throw new Error(`Choose 2 to ${MAX_SOURCES} videos to compare`);
 			const sources: CompareSourceInput[] = body.sources.map((raw, i) => {
 				const entry = (raw ?? {}) as { path?: unknown; label?: unknown; offsetMs?: unknown; range?: unknown; matrix?: unknown };
-				const path = resolveAllowedMediaFile(entry.path, config, `Video ${i + 1}`);
+				const path = resolveOriginal(entry.path, config, `Video ${i + 1}`);
 				const label = (typeof entry.label === "string" ? entry.label.trim().slice(0, 40) : "") || `Source ${i + 1}`;
 				let offsetMs: number | undefined;
 				if (i > 0 && entry.offsetMs !== undefined && entry.offsetMs !== null) {

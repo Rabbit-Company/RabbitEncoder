@@ -1,8 +1,9 @@
-import { authFetch, saveResponse } from "../api/client";
+import { authFetch, findDiscOriginals, saveResponse } from "../api/client";
 import { API } from "../config/api-base";
 import { byId, buttonById, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
-import { openPreviewReferencePicker } from "./repair";
+import { openPreviewReferencePicker, openRepairFolderPicker } from "./repair";
+import { discOriginalNote, discOriginalOptions, type DiscOriginalChoice } from "./disc-original";
 import {
 	chartGeometry,
 	chartSvg,
@@ -24,7 +25,10 @@ import {
 } from "./compare-measure";
 
 interface SourceRow {
+	/** A video file, or a range of a Blu-ray disc. Empty until an item of the disc is chosen. */
 	path: string;
+	/** The items of the Blu-ray disc set the row takes one of. */
+	disc?: DiscOriginalChoice;
 	label: string;
 	/** Typed offset in ms, empty for automatic. */
 	offset: string;
@@ -123,7 +127,11 @@ function renderRows(): void {
 			(row, i) => `<div class="compare-source-row" data-index="${i}">
 				<span class="compare-source-key">${i + 1}</span>
 				<input class="lang-filter-input compare-label" data-field="label" value="${escapeHtml(row.label)}" maxlength="40" aria-label="Label" />
-				<span class="compare-source-file" title="${escapeHtml(row.path)}">${escapeHtml(row.path.split("/").pop() || row.path)}</span>
+				${
+					row.disc
+						? `<select class="select-input compare-source-disc" data-field="disc" aria-label="Item of the discs" title="${escapeHtml(row.disc.matched ? discOriginalNote(row.disc) : "Choose the item of the discs to compare")}">${discOriginalOptions(row.disc, row.path)}</select>`
+						: `<span class="compare-source-file" title="${escapeHtml(row.path)}">${escapeHtml(row.path.split("/").pop() || row.path)}</span>`
+				}
 				${
 					i === 0
 						? '<span class="compare-offset-note">Reference</span>'
@@ -152,7 +160,7 @@ function renderRows(): void {
 			</div>`,
 		)
 		.join("");
-	buttonById("compare-start").disabled = rows.length < 2;
+	buttonById("compare-start").disabled = rows.length < 2 || rows.some((row) => !row.path);
 }
 
 function renderMode(): void {
@@ -257,6 +265,28 @@ export function addCompareSource(): void {
 	});
 }
 
+/** Adds an item of a Blu-ray disc set, the one the first video was made from when it can be found. */
+export function addCompareDisc(): void {
+	setError("");
+	const reference = rows.find((row) => !row.disc)?.path;
+	openRepairFolderPicker(async (folder) => {
+		try {
+			const found = await findDiscOriginals(folder, reference ? [reference] : []);
+			const pair = found.pairs[0];
+			const disc: DiscOriginalChoice = {
+				sourcePath: pair?.sourcePath ?? "",
+				matched: !pair?.sourcePath ? "" : pair.method === "disc" ? "tags" : "episode",
+				sources: found.sources,
+			};
+			if (!disc.sources.length) throw new Error("These discs have no items to compare");
+			rows.push({ path: disc.sourcePath, disc, label: "Blu-ray", offset: "", range: "", matrix: "" });
+			renderRows();
+		} catch (error) {
+			setError(errorMessage(error));
+		}
+	}, "Choose the Blu-ray discs");
+}
+
 export function handleCompareSourcesInput(event: Event): void {
 	const input = event.target as HTMLInputElement;
 	const index = Number(input.closest<HTMLElement>("[data-index]")?.dataset.index);
@@ -266,6 +296,10 @@ export function handleCompareSourcesInput(event: Event): void {
 	if (input.dataset.field === "offset") row.offset = input.value;
 	if (input.dataset.field === "range") row.range = input.value as SourceRow["range"];
 	if (input.dataset.field === "matrix") row.matrix = input.value as SourceRow["matrix"];
+	if (input.dataset.field === "disc" && event.type === "change") {
+		row.path = input.value;
+		renderRows();
+	}
 }
 
 export function handleCompareSourcesClick(event: MouseEvent): void {

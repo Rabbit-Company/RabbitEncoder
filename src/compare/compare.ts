@@ -9,6 +9,8 @@ import { createSemaphore } from "../core/concurrency";
 import { detectSourceTag } from "../core/naming";
 import { hasDoubtfulWideFlag, parseRatio as parseRational } from "../video/aspect";
 import { audioEnvelope, bestLag, ENVELOPE_RATE } from "../sync/audio-envelope";
+import { isDiscSource, originalName } from "../bdmv/disc-source";
+import { remuxDiscSource } from "../pipeline/disc-extract";
 import { measureImagePairs, measureVideoPair, summarize, METRIC_NAMES, type FrameScores, type MetricName, type MetricSummary, type VsMatrix } from "./metrics";
 
 /** Audio decoded from the start of each file for alignment. */
@@ -55,7 +57,10 @@ export interface CompareRequest {
 }
 
 export interface CompareSourceState {
+	/** A video file, or a range of a Blu-ray disc. */
 	path: string;
+	/** The remux a range of a disc is read from, in the session's folder. */
+	file?: string;
 	label: string;
 	/** How much later the same moment appears in this source than in the first one. */
 	offsetMs: number;
@@ -211,8 +216,30 @@ export function clearSessions(root: string): number {
 	return removed;
 }
 
+/** Only the newest session keeps the remuxes of its disc ranges, as each can take tens of gigabytes. Others remux again when used. */
 function pruneSessions(root: string): void {
-	for (const old of listSessions(root).slice(MAX_SESSIONS)) if (!live.has(old.id)) rmSync(sessionDir(root, old.id), { recursive: true, force: true });
+	const sessions = listSessions(root);
+	for (const old of sessions.slice(MAX_SESSIONS)) if (!live.has(old.id)) rmSync(sessionDir(root, old.id), { recursive: true, force: true });
+	for (const old of sessions.slice(1, MAX_SESSIONS)) {
+		if (live.has(old.id)) continue;
+		for (const state of old.sources) if (state.file) rmSync(state.file, { force: true });
+	}
+}
+
+/** The file a source is read from. */
+const fileOf = (state: Pick<CompareSourceState, "path" | "file">): string => state.file ?? state.path;
+
+/** Remuxes the disc ranges of a session that have no remux in its folder yet. */
+async function ensureSourceFiles(root: string, session: CompareSession, signal: AbortSignal, report: (detail: string) => void): Promise<void> {
+	const dir = sessionDir(root, session.id);
+	for (const [i, state] of session.sources.entries()) {
+		if (!isDiscSource(state.path) || (state.file && existsSync(state.file))) continue;
+		const file = join(dir, `source${i}.mkv`);
+		// An index made for an earlier remux does not fit this one.
+		rmSync(join(dir, `s${i}.ffindex`), { force: true });
+		await remuxDiscSource(state.path, file, signal, (detail) => report(`${state.label}: ${detail}`));
+		state.file = file;
+	}
 }
 
 function parseRate(rate: unknown): number {
@@ -611,10 +638,13 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 		saveSession(root, session);
 	};
 	try {
+		await ensureSourceFiles(root, session, signal, (detail) => update({ detail }));
+		saveSession(root, session);
+		const paths = session.sources.map(fileOf);
 		const infos: VideoInfo[] = [];
 		for (const [i, src] of req.sources.entries()) {
 			update({ detail: `Reading ${src.label}`, progress: Math.round((i / req.sources.length) * 10) });
-			const info = withOverrides(await probeVideo(src.path, signal), src);
+			const info = withOverrides(await probeVideo(paths[i]!, signal), src);
 			infos.push(info);
 			const overrides = [src.range && `${src.range} range`, src.matrix && `BT.${src.matrix}`].filter(Boolean);
 			if (overrides.length) session.sources[i]!.colourOverride = overrides.join(", ");
@@ -639,8 +669,8 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 				continue;
 			}
 			update({ detail: `Aligning ${src.label}`, progress: 10 + Math.round((i / req.sources.length) * 30) });
-			firstEnv ??= await audioEnvelope(req.sources[0]!.path, firstAudio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
-			const env = await audioEnvelope(src.path, audio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
+			firstEnv ??= await audioEnvelope(paths[0]!, firstAudio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
+			const env = await audioEnvelope(paths[i]!, audio.index, { windowSec: ALIGN_WINDOW_SEC, signal });
 			const { lag, score } = bestLag(firstEnv, env);
 			state.confidence = Math.round(score * 100) / 100;
 			if (score < MIN_ALIGN_CONFIDENCE) {
@@ -669,8 +699,8 @@ async function runCompare(root: string, session: CompareSession, req: CompareReq
 				if (state.offsetFrom !== "auto" || Math.abs(infos[i]!.fps - first.fps) > 0.01 || !(first.fps > 0) || end <= start) continue;
 				update({ detail: `Checking the picture of ${state.label}`, progress: 40 });
 				const shift = await pictureShift(
-					{ path: req.sources[0]!.path, info: first },
-					{ path: req.sources[i]!.path, info: infos[i]!, offsetSec: state.offsetMs / 1000 },
+					{ path: paths[0]!, info: first },
+					{ path: paths[i]!, info: infos[i]!, offsetSec: state.offsetMs / 1000 },
 					points,
 					signal,
 				);
@@ -757,7 +787,7 @@ async function captureSource(
 	let skip = 0;
 	if (s > 0 && state.offsetFrom === "auto" && first.fps > 0 && Math.abs(info.fps - first.fps) <= 0.01) {
 		const refIndex = nearestFrame(frame.timeSec, first.videoStart, first.fps).index;
-		const shift = await matchShift({ path: session.sources[0]!.path, info: first, index: refIndex }, { path: state.path, info, index }, signal);
+		const shift = await matchShift({ path: fileOf(session.sources[0]!), info: first, index: refIndex }, { path: fileOf(state), info, index }, signal);
 		if (shift !== null) {
 			// Taken from the same run of frames that was matched, as a seek elsewhere can land a frame apart.
 			at = seekForFrame(index - MATCH_RADIUS, info.videoStart, info.fps);
@@ -766,7 +796,7 @@ async function captureSource(
 		}
 	}
 	const size = state.outputWidth ? sizes[s] : undefined;
-	frame.images[s] = await captureAt(state.path, info, session.stillStyle ?? "mpv", at, imagePath(root, session.id, f, s), signal, size, skip);
+	frame.images[s] = await captureAt(fileOf(state), info, session.stillStyle ?? "mpv", at, imagePath(root, session.id, f, s), signal, size, skip);
 }
 
 /**
@@ -805,7 +835,7 @@ async function scoreFrames(root: string, session: CompareSession, sizes: OutputS
 
 async function sourceInfos(session: CompareSession, signal: AbortSignal): Promise<VideoInfo[]> {
 	const infos: VideoInfo[] = [];
-	for (const src of session.sources) infos.push(withOverrides(await probeVideo(src.path, signal), src));
+	for (const src of session.sources) infos.push(withOverrides(await probeVideo(fileOf(src), signal), src));
 	return infos;
 }
 
@@ -820,6 +850,7 @@ export async function addFrame(root: string, id: string, timeSec: number, signal
 	if (current.status !== "done") throw new Error("The comparison is not finished");
 	const session = hold(current);
 	try {
+		await ensureSourceFiles(root, session, signal, () => {});
 		const infos = await sourceInfos(session, signal);
 		const first = infos[0]!;
 		const time = Math.round(nearestFrame(timeSec, first.videoStart, first.fps).time * 1000000) / 1000000;
@@ -911,6 +942,9 @@ async function runMeasure(root: string, session: CompareSession, signal: AbortSi
 	const m = session.measure!;
 	const dir = sessionDir(root, session.id);
 	try {
+		await ensureSourceFiles(root, session, signal, (detail) => (m.detail = detail));
+		saveSession(root, session);
+		m.detail = "Reading the videos";
 		const infos = await sourceInfos(session, signal);
 		const first = infos[0]!;
 		const step = m.interval === "frame" ? 1 : Math.max(1, Math.round(m.interval * first.fps));
@@ -928,8 +962,8 @@ async function runMeasure(root: string, session: CompareSession, signal: AbortSi
 			const { refStart, distStart } = measureStarts(delta, step);
 			series.firstFrame = refStart;
 			const scores = await measureVideoPair({
-				ref: { path: session.sources[0]!.path, start: refStart, index: join(dir, "s0.ffindex"), noGrain: noGrain(first), ...vsColour(first) },
-				dist: { path: state.path, start: distStart, index: join(dir, `s${s}.ffindex`), noGrain: noGrain(info), ...vsColour(info) },
+				ref: { path: fileOf(session.sources[0]!), start: refStart, index: join(dir, "s0.ffindex"), noGrain: noGrain(first), ...vsColour(first) },
+				dist: { path: fileOf(state), start: distStart, index: join(dir, `s${s}.ffindex`), noGrain: noGrain(info), ...vsColour(info) },
 				step,
 				width: first.width,
 				height: first.height,
@@ -998,7 +1032,7 @@ export function comparisonArchiveEntries(root: string, session: CompareSession):
 		"Sources:",
 		...session.sources.map(
 			(src, i) =>
-				`${i + 1}. ${src.label}: ${basename(src.path)} (offset ${src.offsetFrom === "first" ? "reference" : `${src.offsetMs} ms, ${src.offsetFrom}`})`,
+				`${i + 1}. ${src.label}: ${originalName(src.path)} (offset ${src.offsetFrom === "first" ? "reference" : `${src.offsetMs} ms, ${src.offsetFrom}`})`,
 		),
 		"",
 		"Frames (time in the first source):",

@@ -98,6 +98,7 @@ import { openSeriesNotesModal, closeSeriesNotesModal, closeSeriesNotesModalIfOut
 import { initNavMenus } from "../features/nav-menus";
 import {
 	addCompareSource,
+	addCompareDisc,
 	cancelCompareRun,
 	closeCompare,
 	closeCompareIfOutside,
@@ -556,6 +557,7 @@ export function initEventListeners() {
 	byId("compare-close").addEventListener("click", closeCompare);
 	byId("compare-modal").addEventListener("click", closeCompareIfOutside);
 	byId("compare-add").addEventListener("click", addCompareSource);
+	byId("compare-add-disc").addEventListener("click", addCompareDisc);
 	byId("compare-sources").addEventListener("input", handleCompareSourcesInput);
 	byId("compare-sources").addEventListener("change", handleCompareSourcesInput);
 	byId("compare-sources").addEventListener("click", handleCompareSourcesClick);

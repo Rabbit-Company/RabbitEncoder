@@ -32,9 +32,8 @@ export function chooseDiscOriginal(target: string, onFound: (choice: DiscOrigina
 
 /** What was found, for the line under the choice. */
 export function discOriginalNote(choice: DiscOriginalChoice): string {
-	if (choice.matched === "tags") return "Found by the disc range in the video's tags. It is remuxed from the disc while the grain is measured.";
-	if (choice.matched === "episode")
-		return "Matched by episode number and length. Check it is the right item, then generate. It is remuxed from the disc while the grain is measured.";
+	if (choice.matched === "tags") return "Found by the disc range in the video's tags.";
+	if (choice.matched === "episode") return "Matched by episode number and length. Check it is the right item.";
 	return choice.sources.length ? "No item of these discs matches this video. Choose the one it was made from." : "These discs have no items to choose from.";
 }
 

@@ -4977,6 +4977,17 @@ a.btn {
 	width: 110px;
 }
 
+.compare-add-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.compare-source-disc {
+	flex: 1 1 200px;
+	min-width: 0;
+}
+
 .compare-source-file {
 	flex: 1 1 200px;
 	min-width: 0;

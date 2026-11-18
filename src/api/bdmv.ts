@@ -221,7 +221,8 @@ export async function pairDiscOriginals(rawPath: unknown, targets: string[], con
 	const untagged = info.filter((i) => !pairs.has(i.target));
 	const episodes = untagged.map((i) => parseEpisodeKey(i.target)).filter((key) => key !== null);
 	const seasons = [...new Set(episodes.map((key) => key.season))];
-	const found = await discMetadata(set, read, { mode: episodes.length ? "series" : "movie" }, signal);
+	// With no videos to go by, the discs tell whether they hold a series or a movie.
+	const found = await discMetadata(set, read, { mode: !untagged.length ? undefined : episodes.length ? "series" : "movie" }, signal);
 	const scanFrom = (firstEpisode: number) =>
 		scanDiscSet(set.path, set.discs, { ...found, read, formats: config.naming, season: seasons.length === 1 ? Math.max(1, seasons[0]!) : 1, firstEpisode });
 	const rangeOf = (row: DiscRow) => discSourcePath({ discPath: row.discPath, playlist: row.playlist, start: row.start, end: row.end });
@@ -326,11 +327,11 @@ export function registerBdmvRoutes(app: Web, config: AppConfig): void {
 		}
 	});
 
-	/** The ranges of a disc set that videos made from it came from, for film grain. */
+	/** The ranges of a disc set that videos made from it came from, for film grain and comparisons. Without videos, only the set's items. */
 	app.post("/api/bdmv/originals", async (c) => {
 		try {
 			const raw = (await c.req.json()) as { path?: unknown; targets?: unknown };
-			if (!Array.isArray(raw.targets) || !raw.targets.length) throw new Error("Choose the videos to find originals for");
+			if (!Array.isArray(raw.targets)) throw new Error("targets must be a list of videos");
 			if (raw.targets.length > 500) throw new Error("Choose at most 500 videos");
 			const targets = [...new Set(raw.targets.map((path) => resolveAllowedMediaFile(path, config, "Video")))];
 			return c.json(await pairDiscOriginals(raw.path, targets, config, c.req.signal));
