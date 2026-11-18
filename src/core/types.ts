@@ -1193,6 +1193,8 @@ export interface Job {
 	outputTitle?: string;
 	/** A library folder the result goes into in place of the output folder. */
 	outputRoot?: string;
+	/** Where the input came from, such as BDMV for a disc remux, written as the SOURCE tag when the input has none. */
+	sourceLabel?: string;
 	autoDenoisePlan?: AutoDenoiseAppliedRange[] | null;
 	/** The crop the encode applied, in pixels of the source, so the source can be measured against the encode. */
 	cropRect?: PreviewCrop;

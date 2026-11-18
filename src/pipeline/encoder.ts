@@ -472,7 +472,8 @@ export async function encodeJob(
 		probe.filename = job.filename;
 		updateJob({ probe });
 
-		let sourceTag = detectSourceTag(stem);
+		// A disc remux has no source in its name, so it is Bluray by what it is.
+		let sourceTag = job.sourceLabel === "BDMV" ? "Bluray" : detectSourceTag(stem);
 		if (sourceTag === "Bluray") {
 			const inferred = inferSourceFromStream(probe.videoCodec, probe.width, probe.height);
 			if (inferred) {
@@ -2302,7 +2303,7 @@ export async function encodeJob(
 		const outputFilename = `${baseTitle} [${sourceTag}-${resTag}][${audioCodecTag}][${videoCodecTag}]-${config.organization}.mkv`;
 		const finalOutput = join(tempDir, "final.mkv");
 
-		const effectiveSourceTag = probe.priorSource ?? releaseGroup;
+		const effectiveSourceTag = probe.priorSource ?? job.sourceLabel ?? releaseGroup;
 
 		const priorSettings = decodePriorSettings(probe.priorRabbitSettings);
 		const cumulativeSettings = combineCumulativeSettings(priorSettings, job.settings);

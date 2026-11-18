@@ -1005,6 +1005,7 @@ async function processQueue() {
 			const encode = addJob(plan.filename, remux, plan.relativePath);
 			if (plan.outputTitle) encode.outputTitle = plan.outputTitle;
 			if (plan.outputRoot) encode.outputRoot = plan.outputRoot;
+			encode.sourceLabel = "BDMV";
 			// Straight after its remux, ahead of the next one.
 			encode.queueOrder = next.queueOrder + 0.5;
 			Logger.info(`[disc] Remuxed ${plan.filename}, queued its encode`);
