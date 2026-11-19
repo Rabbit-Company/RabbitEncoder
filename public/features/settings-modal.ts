@@ -14,6 +14,7 @@ import {
 	AUTO_DENOISE_METRICS,
 	DEFAULT_AUTO_THRESHOLDS,
 	DEFAULT_BITRATE_THRESHOLDS,
+	DEFAULT_GRAIN_THRESHOLDS,
 	DEFAULT_GRADFUN_PARAMS,
 	DEFAULT_NLMEANS_PARAMS,
 	DEFAULT_AVD_PARAMS,
@@ -214,6 +215,9 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 	if (!settings.autoDenoiseBitrateThresholds) {
 		settings.autoDenoiseBitrateThresholds = { ...DEFAULT_BITRATE_THRESHOLDS };
 	}
+	if (!settings.autoDenoiseGrainThresholds) {
+		settings.autoDenoiseGrainThresholds = { ...DEFAULT_GRAIN_THRESHOLDS };
+	}
 	if (!settings.autoDenoiseMetric) settings.autoDenoiseMetric = "noise";
 	if (!settings.denoiseBackend) settings.denoiseBackend = "auto";
 	if (!settings.denoiseEngine) settings.denoiseEngine = DEFAULT_DENOISE_ENGINE;
@@ -303,26 +307,42 @@ export async function openAdvancedModal(target: AdvancedTarget): Promise<void> {
 		noise: "Classifies scenes by peak bit-plane noise reading (0-1). Good for classic sensor/film grain.",
 		bitrate:
 			'Classifies scenes by their own bitrate as a multiple of the file\'s median. Targets "this costs a lot of bits" directly, regardless of why. This is better for structured VFX texture that reads as only moderately noisy but is still expensive to encode.',
+		grain:
+			"Classifies scenes by the grain rabbit-denoise measures in them, as the deviation of the luma grain on a 0 to 255 scale. It tells grain from texture and motion, so clean scenes stay untouched. Clean anime reads below 1 and grainy openings 3 and more, so light at 2 denoises only the grainy scenes. Anime with film grain throughout reads 1.5 to 2.5 and is better denoised whole or with light at 1. Works with every denoiser.",
 	};
 	const METRIC_BOUNDS: Record<AutoDenoiseMetric, { min: number; max: number; step: number }> = {
 		noise: { min: 0, max: 1, step: 0.01 },
 		bitrate: { min: 0, max: 20, step: 0.1 },
+		grain: { min: 0.1, max: 50, step: 0.1 },
 	};
 
 	function renderThresholdsForMetric(): void {
 		const metric = settings!.autoDenoiseMetric;
 		byId("advanced-auto-denoise-metric-help").textContent = METRIC_HELP[metric];
-		byId("advanced-auto-thresholds-label").textContent = metric === "bitrate" ? "Auto Denoise Thresholds (x median bitrate)" : "Auto Denoise Thresholds (0-1)";
+		byId("advanced-auto-thresholds-label").textContent =
+			metric === "bitrate"
+				? "Auto Denoise Thresholds (x median bitrate)"
+				: metric === "grain"
+					? "Auto Denoise Thresholds (grain, 0 to 255 scale)"
+					: "Auto Denoise Thresholds (0-1)";
 		byId("advanced-auto-thresholds-hint").textContent =
 			metric === "bitrate"
 				? "A scene whose bitrate reaches a multiple of the file's median gets that level. Scenes below light are not denoised."
-				: "A scene whose peak noise reading reaches a value gets that level. Scenes below light are not denoised.";
-		const thresholds = metric === "bitrate" ? settings!.autoDenoiseBitrateThresholds : settings!.autoDenoiseThresholds;
+				: metric === "grain"
+					? "A scene whose grain reaches a value gets that level. Scenes below light are copied untouched. Rabbit Denoise, NL4D and NLMeans-HQ set their own strength, so for them only light matters."
+					: "A scene whose peak noise reading reaches a value gets that level. Scenes below light are not denoised.";
+		const thresholds =
+			metric === "bitrate"
+				? settings!.autoDenoiseBitrateThresholds
+				: metric === "grain"
+					? settings!.autoDenoiseGrainThresholds
+					: settings!.autoDenoiseThresholds;
 		renderAutoThresholds(
 			byId("advanced-auto-thresholds"),
 			thresholds,
 			(v) => {
 				if (metric === "bitrate") settings!.autoDenoiseBitrateThresholds = v;
+				else if (metric === "grain") settings!.autoDenoiseGrainThresholds = v;
 				else settings!.autoDenoiseThresholds = v;
 			},
 			METRIC_BOUNDS[metric],

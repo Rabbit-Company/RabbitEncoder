@@ -3,7 +3,7 @@ import { readFileSync, existsSync, unlinkSync, mkdirSync, writeFileSync, rmSync 
 import { Logger } from "../core/logger";
 import { CancelledError, run } from "../core/process";
 import { formatNlmeansParams, isOpenClAvailable, isVulkanAvailable, defaultDeviceFor } from "./filters";
-import type { AutoDenoiseMetric, AutoDenoiseThresholds, DenoiseBackend, GpuBackend, NlmeansLevelParams } from "../core/types";
+import type { AutoDenoiseMetric, AutoDenoiseThresholds, DenoiseBackend, GpuBackend, JobSettings, NlmeansLevelParams } from "../core/types";
 import { sampleBitrateOverTime, type BitrateSample } from "./bitrate-sample";
 
 export const DEFAULT_AUTO_THRESHOLDS: AutoDenoiseThresholds = {
@@ -23,6 +23,27 @@ export const DEFAULT_BITRATE_THRESHOLDS: AutoDenoiseThresholds = {
 	medium: 1.8,
 	heavy: 2.5,
 };
+
+/**
+ * Defaults for autoDenoiseMetric === "grain": the deviation of the luma grain in 8 bit
+ * code values that rabbit-denoise analyze measures. Clean anime reads below 1 and grainy
+ * openings 3 and more, so light at 2 denoises only the grainy scenes. rabbit-denoise and the
+ * other self-tuning engines set their own strength, so for them only light matters.
+ */
+export const DEFAULT_GRAIN_THRESHOLDS: AutoDenoiseThresholds = {
+	light: 2,
+	medium: 3,
+	heavy: 5,
+};
+
+/** The thresholds a job's auto denoise uses with its metric. */
+export function autoThresholdsFor(
+	settings: Pick<JobSettings, "autoDenoiseMetric" | "autoDenoiseThresholds" | "autoDenoiseBitrateThresholds" | "autoDenoiseGrainThresholds">,
+): AutoDenoiseThresholds {
+	if (settings.autoDenoiseMetric === "bitrate") return settings.autoDenoiseBitrateThresholds;
+	if (settings.autoDenoiseMetric === "grain") return settings.autoDenoiseGrainThresholds ?? DEFAULT_GRAIN_THRESHOLDS;
+	return settings.autoDenoiseThresholds;
+}
 
 export interface DenoiseRange {
 	/** Start time in seconds (inclusive). */
@@ -453,6 +474,88 @@ export async function detectSceneCuts(
 }
 
 /**
+ * The scenes of `rabbit-denoise analyze --progress json` output, with each scene's grain as its
+ * value. A scene with no measurable grain, such as a black screen, has none and reads as 0.
+ */
+export function grainScenesFromEvents(lines: string[]): SceneNoise[] {
+	const scenes: SceneNoise[] = [];
+	for (const line of lines) {
+		let event: any;
+		try {
+			event = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (event?.event !== "scene") continue;
+		const start = Number(event.start_seconds);
+		const end = Number(event.end_seconds);
+		if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+		const grain = typeof event.grain === "number" && Number.isFinite(event.grain) ? event.grain : 0;
+		scenes.push({ start, end, value: grain });
+	}
+	return scenes.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Find the scenes of a video and measure the grain of each with `rabbit-denoise analyze`.
+ * Its own scene cuts are used, so the scenes are the ones it measured. Returns null when the
+ * analysis failed.
+ */
+export async function runGrainSceneAnalysis(inputPath: string, signal?: AbortSignal, onProgress?: AnalysisProgress): Promise<SceneNoise[] | null> {
+	if (signal?.aborted) throw new CancelledError();
+	Logger.info(`[auto-denoise] Measuring the grain of every scene of ${inputPath} with rabbit-denoise analyze`);
+	const proc = Bun.spawn(["rabbit-denoise", "analyze", inputPath, "--progress", "json"], { stdout: "pipe", stderr: "pipe" });
+	const onAbort = () => {
+		try {
+			proc.kill("SIGTERM");
+		} catch {}
+		setTimeout(() => {
+			try {
+				proc.kill("SIGKILL");
+			} catch {}
+		}, 3000);
+	};
+	if (signal) {
+		if (signal.aborted) onAbort();
+		else signal.addEventListener("abort", onAbort, { once: true });
+	}
+
+	const lines: string[] = [];
+	let error: string | null = null;
+	const stdoutTask = readLines(proc.stdout, (line) => {
+		if (!line.trim()) return;
+		lines.push(line);
+		try {
+			const event = JSON.parse(line);
+			if (event?.event === "progress" && onProgress) {
+				const percent = typeof event.percent === "number" ? event.percent : null;
+				const fps = typeof event.fps === "number" ? `, ${Math.round(event.fps)} fps` : "";
+				const frames = typeof event.total === "number" ? `${event.frames} of ${event.total} frames` : `${event.frames} frames`;
+				onProgress(percent === null ? 0 : Math.min(1, percent / 100), `grain of every scene, ${frames}${fps}`);
+			} else if (event?.event === "error") {
+				error = String(event.message ?? event.code ?? "unknown error");
+			}
+		} catch {}
+	});
+	const stderrText = await new Response(proc.stderr).text().catch(() => "");
+	const code = await proc.exited;
+	await stdoutTask.catch(() => {});
+	if (signal) signal.removeEventListener("abort", onAbort);
+	if (signal?.aborted) throw new CancelledError();
+
+	if (code !== 0) {
+		Logger.warn(`[auto-denoise] rabbit-denoise analyze failed (exit ${code}): ${error ?? stderrText.trim().slice(-500)}`);
+		return null;
+	}
+	const scenes = grainScenesFromEvents(lines);
+	if (scenes.length === 0) {
+		Logger.warn(`[auto-denoise] rabbit-denoise analyze found no scenes`);
+		return null;
+	}
+	return scenes;
+}
+
+/**
  * Run the noise-scene analysis pass and classify the result into a denoise
  * plan using `thresholds`. Returns null if the analysis pass itself failed.
  */
@@ -467,7 +570,11 @@ export async function runAnalysisPass(
 ): Promise<DenoisePlan | null> {
 	let plan: DenoisePlan;
 
-	if (metric === "bitrate") {
+	if (metric === "grain") {
+		const scenes = await runGrainSceneAnalysis(inputPath, signal, onProgress);
+		if (!scenes) return null;
+		plan = buildPlanFromScenes(scenes, thresholds);
+	} else if (metric === "bitrate") {
 		const cuts = await detectSceneCuts(inputPath, tempDir, signal, totalDuration, onProgress);
 		if (!cuts) return null;
 		onProgress?.(0.95, "bitrate of every scene, 95%");
@@ -668,29 +775,55 @@ export function segmentCutArgs(seg: { start: number; end: number }): string[] {
  * that frame in both neighbouring segments. With the cut exactly on a frame
  * timestamp the two agree and each frame lands in exactly one segment.
  */
-async function snapSegmentsToFrames(inputPath: string, segments: DenoiseSegment[], signal?: AbortSignal): Promise<DenoiseSegment[]> {
+/** Every frame's timestamp in seconds, in display order, or null when ffprobe could not read them. */
+export async function readFrameTimestamps(inputPath: string, signal?: AbortSignal): Promise<number[] | null> {
 	const res = await run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", inputPath], { signal });
 	const pts = res.stdout
 		.split("\n")
 		.map((l) => parseFloat(l))
 		.filter((n) => Number.isFinite(n))
 		.sort((a, b) => a - b);
-	if (res.code !== 0 || pts.length === 0) {
+	return res.code !== 0 || pts.length === 0 ? null : pts;
+}
+
+/** The index of the frame shown at `t`: the last one starting at or before it. */
+function frameAt(pts: number[], t: number): number {
+	let lo = 0;
+	let hi = pts.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (pts[mid]! <= t + 0.0005) lo = mid;
+		else hi = mid - 1;
+	}
+	return lo;
+}
+
+/**
+ * The frames a plan covers, as first and last frame indices of each range, cut as
+ * `snapSegmentsToFrames` cuts: a range starts with the frame shown at its start and ends
+ * before the frame shown at its end, or with the last frame when it reaches past it.
+ */
+export function planFrameRanges(plan: DenoisePlan, pts: number[]): [number, number][] {
+	const out: [number, number][] = [];
+	if (pts.length === 0) return out;
+	const lastFrame = pts.length - 1;
+	for (const range of [...plan].sort((a, b) => a.start - b.start)) {
+		const first = frameAt(pts, range.start);
+		const last = range.end > pts[lastFrame]! + 0.0005 ? lastFrame : frameAt(pts, range.end) - 1;
+		if (last >= first) out.push([first, last]);
+	}
+	return out;
+}
+
+async function snapSegmentsToFrames(inputPath: string, segments: DenoiseSegment[], signal?: AbortSignal): Promise<DenoiseSegment[]> {
+	const pts = await readFrameTimestamps(inputPath, signal);
+	if (!pts) {
 		Logger.warn("[auto-denoise] Could not read frame timestamps; segment cuts are not frame-aligned");
 		return segments;
 	}
 
 	// Timestamp of the last frame starting at or before `t`.
-	const snap = (t: number): number => {
-		let lo = 0;
-		let hi = pts.length - 1;
-		while (lo < hi) {
-			const mid = (lo + hi + 1) >> 1;
-			if (pts[mid]! <= t + 0.0005) lo = mid;
-			else hi = mid - 1;
-		}
-		return pts[lo]!;
-	};
+	const snap = (t: number): number => pts[frameAt(pts, t)]!;
 
 	const last = segments.length - 1;
 	return segments
@@ -961,12 +1094,21 @@ export function buildPlanFromBitrate(bitrate: BitrateSample[], cuts: number[], t
 }
 
 /**
+ * Build the per-scene plan from the grain rabbit-denoise analyze measured. Every scene keeps
+ * its own reading, however short: rabbit-denoise measures short scenes as reliably as long
+ * ones, so the plan denoises exactly the scenes `rabbit-denoise --min-grain` would.
+ */
+export function buildPlanFromScenes(scenes: SceneNoise[], thresholds: AutoDenoiseThresholds): DenoisePlan {
+	return classifyScenesToPlan(scenes, thresholds, false);
+}
+
+/**
  * Classify each scene's value into a level and compact into a DenoisePlan.
  * Shared tail for both metrics (noise peak / bitrate ratio) — everything past
  * this point only cares about a {start,end,value} scene list, not where
  * `value` came from.
  */
-function classifyScenesToPlan(scenes: SceneNoise[], thresholds: AutoDenoiseThresholds): DenoisePlan {
+function classifyScenesToPlan(scenes: SceneNoise[], thresholds: AutoDenoiseThresholds, raiseShortScenes = true): DenoisePlan {
 	type Scene = { start: number; end: number; level: "off" | "light" | "medium" | "heavy" };
 	const classified: Scene[] = scenes.map((s) => ({
 		start: s.start,
@@ -981,7 +1123,7 @@ function classifyScenesToPlan(scenes: SceneNoise[], thresholds: AutoDenoiseThres
 	// two clean shots must not read as "off" just because the shots either
 	// side of it are clean, but a short scene that *did* catch real noise
 	// samples must not have that reading discarded either.
-	for (let i = 0; i < classified.length; i++) {
+	for (let i = 0; raiseShortScenes && i < classified.length; i++) {
 		const s = classified[i]!;
 		if (s.end - s.start >= MIN_SCENE_DURATION) continue;
 		const prev = classified[i - 1];

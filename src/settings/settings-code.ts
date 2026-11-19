@@ -65,6 +65,7 @@ const BASELINE: JobSettings = {
 	autoDenoiseMetric: "noise",
 	autoDenoiseThresholds: { light: 0.5, medium: 0.7, heavy: 0.9 },
 	autoDenoiseBitrateThresholds: { light: 1.3, medium: 1.8, heavy: 2.5 },
+	autoDenoiseGrainThresholds: { light: 2, medium: 3, heavy: 5 },
 	nlmeansParams: {
 		light: { s: 1.0, p: 3, r: 7 },
 		medium: { s: 1.5, p: 3, r: 9 },
@@ -387,6 +388,10 @@ export function encodeSettingsCode(s: JobSettings): string {
 			if (s.autoDenoiseBitrateThresholds.heavy !== BASELINE.autoDenoiseBitrateThresholds.heavy) {
 				dn.put("tbh", s.autoDenoiseBitrateThresholds.heavy);
 			}
+			const grain = s.autoDenoiseGrainThresholds ?? BASELINE.autoDenoiseGrainThresholds;
+			if (grain.light !== BASELINE.autoDenoiseGrainThresholds.light) dn.put("tgl", grain.light);
+			if (grain.medium !== BASELINE.autoDenoiseGrainThresholds.medium) dn.put("tgm", grain.medium);
+			if (grain.heavy !== BASELINE.autoDenoiseGrainThresholds.heavy) dn.put("tgh", grain.heavy);
 
 			if (avd === "avd-nlmeans") {
 				const cur = s.avdParams.nlmeansStrength;
@@ -822,7 +827,7 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 	}
 
 	if (mode === "auto") {
-		if (kv.mt === "noise" || kv.mt === "bitrate") out.autoDenoiseMetric = kv.mt;
+		if (kv.mt === "noise" || kv.mt === "bitrate" || kv.mt === "grain") out.autoDenoiseMetric = kv.mt;
 		out.autoDenoiseThresholds = {
 			light: numOr(kv.tl, out.autoDenoiseThresholds.light),
 			medium: numOr(kv.tm, out.autoDenoiseThresholds.medium),
@@ -832,6 +837,12 @@ function applyDenoise(out: JobSettings, kv: Record<string, string>): void {
 			light: numOr(kv.tbl, out.autoDenoiseBitrateThresholds.light),
 			medium: numOr(kv.tbm, out.autoDenoiseBitrateThresholds.medium),
 			heavy: numOr(kv.tbh, out.autoDenoiseBitrateThresholds.heavy),
+		};
+		const grain = out.autoDenoiseGrainThresholds ?? BASELINE.autoDenoiseGrainThresholds;
+		out.autoDenoiseGrainThresholds = {
+			light: numOr(kv.tgl, grain.light),
+			medium: numOr(kv.tgm, grain.medium),
+			heavy: numOr(kv.tgh, grain.heavy),
 		};
 		if (avd) return;
 		out.nlmeansParams = {

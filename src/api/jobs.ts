@@ -32,7 +32,14 @@ import { previewAudio } from "../audio/audio-step";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewSubtitles } from "../tracks/tracks";
 import { decodeSettingsCode, SettingsCodeError } from "../settings/settings-code";
 import { sampleBitrateOverTime } from "../video/bitrate-sample";
-import { detectSceneCuts, groupSamplesByScene, groupScenesByBitrate, runNoiseSceneAnalysis } from "../video/auto-denoise";
+import {
+	autoThresholdsFor,
+	detectSceneCuts,
+	groupSamplesByScene,
+	groupScenesByBitrate,
+	runGrainSceneAnalysis,
+	runNoiseSceneAnalysis,
+} from "../video/auto-denoise";
 import { resolveAllowedMediaFile } from "./repair";
 import { resolveOriginal } from "./bdmv";
 import { getTelemetry } from "../pipeline/telemetry";
@@ -364,7 +371,12 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 			const tempDir = mkdtempSync(join(config.tempDir, "bitrate-analysis-"));
 			let noise: BitrateAnalysisResult["noise"] = null;
 			try {
-				if (metric === "bitrate") {
+				if (metric === "grain") {
+					const scenes = await runGrainSceneAnalysis(job.inputPath, signal);
+					if (scenes) {
+						noise = { samples: [], scenes, cuts: scenes.slice(1).map((s) => s.start) };
+					}
+				} else if (metric === "bitrate") {
 					const cuts = await detectSceneCuts(job.inputPath, tempDir, signal);
 					if (cuts) {
 						noise = { samples: [], scenes: groupScenesByBitrate(bitrate, cuts, probe.duration), cuts };
@@ -391,7 +403,7 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 				bitrate,
 				noise,
 				metric,
-				thresholds: metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds,
+				thresholds: autoThresholdsFor(job.settings),
 			};
 			bitrateAnalysisCache.set(cacheKey, result);
 			return c.json(result);

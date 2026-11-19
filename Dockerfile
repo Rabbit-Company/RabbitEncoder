@@ -297,8 +297,8 @@ RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 
 # rabbit-denoise removes film grain on the GPU, through Vulkan, behind the rabbit-denoise denoise engine.
 # It links glibc and loads the Vulkan driver at run time.
-ARG RABBIT_DENOISE_VERSION=0.1.7
-ARG RABBIT_DENOISE_SHA256=d1569e36dc4871ac322a28d35d9669daaa905a42a41ed7ce73f879e5ca66bfe0
+ARG RABBIT_DENOISE_VERSION=0.1.9
+ARG RABBIT_DENOISE_SHA256=d184cd0fb8ca02635b6fad10322ce7da5e73da91672cd70f175e9a1499785e4f
 RUN curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 \
 	"https://github.com/Rabbit-Company/rabbit-denoise/releases/download/v${RABBIT_DENOISE_VERSION}/rabbit-denoise-v${RABBIT_DENOISE_VERSION}-linux-x86_64-v2.tar.gz" \
 	-o /tmp/rabbit-denoise.tar.gz \

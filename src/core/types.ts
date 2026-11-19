@@ -214,8 +214,13 @@ export interface AutoDenoiseThresholds {
  *                 median. Directly targets "this costs a lot of bits" instead
  *                 of a noise proxy, at the cost of not knowing WHY a scene is
  *                 expensive (grain vs. legitimate motion/detail).
+ *   - "grain"   : the grain rabbit-denoise analyze measures in each scene, as
+ *                 the deviation of the luma grain on a 0 to 255 scale,
+ *                 whatever the bit depth. It is measured on single frames and
+ *                 between frames, so neither texture nor motion reads as
+ *                 grain. Clean anime reads below 1, grainy openings 3 and more.
  */
-export type AutoDenoiseMetric = "noise" | "bitrate";
+export type AutoDenoiseMetric = "noise" | "bitrate" | "grain";
 
 /** One range of the denoise plan actually applied to a job's encode. */
 export interface AutoDenoiseAppliedRange {
@@ -300,6 +305,8 @@ export interface JobSettings {
 	autoDenoiseThresholds: AutoDenoiseThresholds;
 	/** Thresholds used when autoDenoiseMetric is "bitrate" (ratio vs. the file's own median bitrate, not 0-1). */
 	autoDenoiseBitrateThresholds: AutoDenoiseThresholds;
+	/** Thresholds used when autoDenoiseMetric is "grain" (grain deviation on a 0 to 255 scale, as rabbit-denoise analyze measures it). */
+	autoDenoiseGrainThresholds: AutoDenoiseThresholds;
 	/** Filter parameters used for nlmeans at each level. */
 	nlmeansParams: NlmeansLevelParams;
 	/** Filter parameters used for gradfun at each level. */
@@ -1325,7 +1332,7 @@ export interface NoiseSamplePoint {
 export interface NoiseScenePoint {
 	start: number;
 	end: number;
-	/** Classifier value for the scene: peak bitplane-noise reading, or bitrate ratio vs. file median (see AutoDenoiseMetric). */
+	/** Classifier value for the scene: peak bitplane-noise reading, bitrate ratio vs. file median, or grain deviation (see AutoDenoiseMetric). */
 	value: number;
 }
 

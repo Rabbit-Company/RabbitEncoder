@@ -15,8 +15,11 @@ import {
 	mergeEqualStrengthRanges,
 	normalizeAvdParams,
 	probeRabbitDenoise,
+	rabbitSupportsDenoiseFrames,
 	runAvdPass,
+	runSegmentedAutoDenoiseAvd,
 } from "../../src/video/avd";
+import { planFrameRanges } from "../../src/video/auto-denoise";
 import { run } from "../../src/core/process";
 
 describe("rabbit-denoise engine", () => {
@@ -102,6 +105,44 @@ describe("rabbit-denoise engine", () => {
 	});
 });
 
+describe("denoising only the plan's frames", () => {
+	const pts = Array.from({ length: 48 }, (_, i) => i / 24);
+
+	test("a range starts with the frame shown at its start and ends before the one shown at its end", () => {
+		expect(planFrameRanges([{ start: 0.5, end: 1, level: "light" }], pts)).toEqual([[12, 23]]);
+		// Times between frames belong to the frame shown then.
+		expect(planFrameRanges([{ start: 0.51, end: 1.01, level: "heavy" }], pts)).toEqual([[12, 23]]);
+		expect(
+			planFrameRanges(
+				[
+					{ start: 1.5, end: 2, level: "medium" },
+					{ start: 0, end: 0.25, level: "light" },
+				],
+				pts,
+			),
+		).toEqual([
+			[0, 5],
+			[36, 47],
+		]);
+		// Shorter than a frame: nothing to denoise.
+		expect(planFrameRanges([{ start: 0.5, end: 0.51, level: "light" }], pts)).toEqual([]);
+	});
+
+	test("passes the frames to rabbit-denoise before its input", () => {
+		expect(buildAvdArgs("rabbit-denoise", "light", DEFAULT_AVD_PARAMS, "default", "-", "0-5,36-47")).toEqual([
+			"denoise",
+			"-q",
+			"--device",
+			"auto",
+			"--sigma-scale",
+			"1",
+			"--denoise-frames",
+			"0-5,36-47",
+			"-",
+		]);
+	});
+});
+
 // Runs only where rabbit-denoise is installed and finds a GPU.
 const installed = (await run(["bash", "-c", "command -v rabbit-denoise"]).catch(() => ({ code: 1 }))).code === 0;
 const usable = installed && (await probeRabbitDenoise()) === null;
@@ -149,6 +190,56 @@ describe.skipIf(!usable)("rabbit-denoise pass", () => {
 			expect(stream.pix_fmt).toBe("yuv420p10le");
 			expect(stream.nb_read_frames).toBe("24");
 			expect(stream.color_primaries).toBe("bt709");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 120_000);
+});
+
+// Runs only where the installed rabbit-denoise has --denoise-frames, 0.1.9 and later.
+const denoisesFrames = usable && (await rabbitSupportsDenoiseFrames());
+
+describe.skipIf(!denoisesFrames)("rabbit-denoise auto denoise in one run", () => {
+	test("denoises the plan's frames and passes the others through unchanged", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rabbit-denoise-plan-"));
+		try {
+			const input = join(dir, "in.mkv");
+			const output = join(dir, "out.mkv");
+			const made = await run([
+				"ffmpeg",
+				"-v",
+				"error",
+				"-f",
+				"lavfi",
+				"-i",
+				"testsrc2=size=320x180:rate=24:duration=2",
+				"-vf",
+				"noise=alls=30:allf=t,format=yuv420p",
+				"-c:v",
+				"ffv1",
+				input,
+			]);
+			expect(made.code).toBe(0);
+
+			const progress: number[] = [];
+			await runSegmentedAutoDenoiseAvd(input, output, [{ start: 1, end: 2, level: "light" }], 2, "rabbit-denoise", DEFAULT_AVD_PARAMS, "default", dir, (i, n) =>
+				progress.push(i / n),
+			);
+			expect(existsSync(output)).toBe(true);
+
+			// One hash per frame of each: the first second is copied, the second denoised.
+			const hashes = async (path: string) =>
+				(await run(["ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-f", "framemd5", "-"])).stdout
+					.split("\n")
+					.filter((l) => l && !l.startsWith("#"))
+					.map((l) => l.split(",").pop()!.trim());
+			const [before, after] = [await hashes(input), await hashes(output)];
+			expect(after.length).toBe(48);
+			const same = before.map((h, i) => h === after[i]);
+			expect(same.slice(0, 24).every(Boolean)).toBe(true);
+			expect(same.slice(24).some(Boolean)).toBe(false);
+			// No segments are written or joined.
+			expect(existsSync(join(dir, "denoise_segments"))).toBe(false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

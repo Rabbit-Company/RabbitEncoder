@@ -160,6 +160,22 @@ describe("settings code — av-denoise engine", () => {
 		expect(decoded.avdParams?.scales["avd-nl4d"]).toBe(0.9);
 	});
 
+	it("round-trips the grain metric and its thresholds", () => {
+		const settings = getDefaultJobSettings();
+		settings.denoise = "auto";
+		settings.denoiseEngine = "rabbit-denoise";
+		settings.autoDenoiseMetric = "grain";
+		settings.autoDenoiseGrainThresholds = { light: 1.5, medium: 3, heavy: 6 };
+
+		const code = encodeSettingsCode(settings);
+		expect(code).toMatch(/tgl=1\.5/);
+		expect(code).not.toMatch(/tgm=/);
+
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.autoDenoiseMetric).toBe("grain");
+		expect(decoded.autoDenoiseGrainThresholds).toEqual({ light: 1.5, medium: 3, heavy: 6 });
+	});
+
 	it("round-trips Rabbit Denoise and its scale, without a speed preset", () => {
 		const settings = getDefaultJobSettings();
 		settings.denoise = "medium";

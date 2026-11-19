@@ -54,7 +54,7 @@ import { buildPrepareFilterConfig, detectPictureGeometry } from "../video/filter
 import { planCfrNormalization, buildCfrFilter } from "../video/cfr-normalize";
 import { ffmpegProgress, mkvtoolnixProgress, passEtaTimer, preparePhaseProgress } from "./prepare-progress";
 import { shouldStageSource } from "./source-staging";
-import { FFV1_ENCODE_ARGS, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
+import { FFV1_ENCODE_ARGS, autoThresholdsFor, runAnalysisPass, runSegmentedAutoDenoiseGpu, type DenoisePlan } from "../video/auto-denoise";
 import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
@@ -728,7 +728,7 @@ export async function encodeJob(
 			setStep(S_PREPARE, { progress: 32, detail: "Analyzing noise" });
 			try {
 				const metric = job.settings.autoDenoiseMetric;
-				const thresholds = metric === "bitrate" ? job.settings.autoDenoiseBitrateThresholds : job.settings.autoDenoiseThresholds;
+				const thresholds = autoThresholdsFor(job.settings);
 				// The analysis fills the step from 32 to 35 per cent, and says what it is doing.
 				autoPlan = await runAnalysisPass(preparedVideo, tempDir, probe.duration, metric, thresholds, signal, (fraction, detail) => {
 					setStep(S_PREPARE, { progress: 32 + 3 * fraction, detail: `Analyzing noise: ${detail}` });

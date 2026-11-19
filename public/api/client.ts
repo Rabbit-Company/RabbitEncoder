@@ -1026,7 +1026,12 @@ export async function cancelJobMeasurement(jobId: string): Promise<void> {
 }
 
 export async function patchJobAutoThresholds(id: string, metric: AutoDenoiseMetric, thresholds: AutoDenoiseThresholds): Promise<Job> {
-	const body = metric === "bitrate" ? { autoDenoiseBitrateThresholds: thresholds } : { autoDenoiseThresholds: thresholds };
+	const body =
+		metric === "bitrate"
+			? { autoDenoiseBitrateThresholds: thresholds }
+			: metric === "grain"
+				? { autoDenoiseGrainThresholds: thresholds }
+				: { autoDenoiseThresholds: thresholds };
 	const res = await authFetch(`${API}/api/jobs/${id}`, {
 		method: "PATCH",
 		headers: { "Content-Type": "application/json" },

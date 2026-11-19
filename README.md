@@ -252,7 +252,7 @@ Denoising runs in the **Prepare** step, after crop / downscale / deband. The **D
 
 The av-denoise engines use Vulkan (or CUDA when an NVIDIA GPU is passed through to the container) and have no CPU fallback: if av-denoise cannot use the selected device, the job fails instead of encoding without denoising. Vulkan works with the `/dev/dri` device mapping from the stock `docker-compose.yml` on AMD and Intel GPUs.
 
-rabbit-denoise uses Vulkan through the same `/dev/dri` mapping on AMD and Intel GPUs, and picks the GPU itself. Its **Device** setting is `auto` by default: without a usable GPU the job runs on the CPU, about 20 times slower, and the log says so. `gpu` fails the job before any work starts instead, and `cpu` always uses the CPU. Rabbit checks the GPU by denoising one small frame. The output keeps the source's bit depth and chroma layout. The container downloads the checksum-verified [rabbit-denoise v0.1.7 release](https://github.com/Rabbit-Company/rabbit-denoise/releases/tag/v0.1.7).
+rabbit-denoise uses Vulkan through the same `/dev/dri` mapping on AMD and Intel GPUs, and picks the GPU itself. Its **Device** setting is `auto` by default: without a usable GPU the job runs on the CPU, about 20 times slower, and the log says so. `gpu` fails the job before any work starts instead, and `cpu` always uses the CPU. Rabbit checks the GPU by denoising one small frame. The output keeps the source's bit depth and chroma layout. The container downloads the checksum-verified [rabbit-denoise v0.1.9 release](https://github.com/Rabbit-Company/rabbit-denoise/releases/tag/v0.1.9).
 
 **Advanced Settings -> Rabbit Denoise Settings** holds all of its options, grouped as in its own help: the device, the strength (scale, chroma scale, threshold and first stage only), matching (step, temporal radius, search radius, matches per frame, minimum shift, group size and both match limits), motion (motion fields, motion range and both follow radii) and grain measurement (single frame cap and luma guided chroma). Every value has its default and range shown and is limited to what rabbit-denoise accepts. The defaults are the best quality measured, and only changed values are passed, so a newer rabbit-denoise brings its own improved defaults. **Reset Rabbit Denoise settings to defaults** undoes every change. The benchmark always times it on the GPU.
 
@@ -263,7 +263,11 @@ The engines differ in how the level is used:
 
 The two NLMeans engines also have an **AVD Speed Preset** (`veryfast` to `veryslow`) that trades speed for quality. NL4D always runs at its default preset.
 
-**Auto denoise** works with every engine. Scenes are classified by noise or by bitrate against your thresholds exactly as before, then each classified range is denoised by the selected engine and untouched ranges are passed through. With `rabbit-denoise`, `avd-nl4d` and `avd-nlmeans-hq` every scene at or above the light threshold is denoised the same way, and neighbouring ranges are denoised as one stretch.
+**Auto denoise** works with every engine. Scenes are classified by noise, by bitrate or by grain against your thresholds, then each classified range is denoised by the selected engine and untouched ranges are passed through. With `rabbit-denoise`, `avd-nl4d` and `avd-nlmeans-hq` every scene at or above the light threshold is denoised the same way, and neighbouring ranges are denoised as one stretch. `rabbit-denoise` takes the whole plan in one run with `--denoise-frames`: it denoises the planned frames, passes the others through unchanged, and the video is neither cut into segments nor joined again. A rabbit-denoise older than 0.1.9 gets each range on its own.
+
+**Advanced Settings -> Auto Denoise Metric -> grain** classifies scenes by the grain `rabbit-denoise analyze` measures in each of its own scenes: the deviation of the luma grain on a 0 to 255 scale, whatever the bit depth. It measures the grain in single frames and between frames and takes the smaller, so texture and motion do not read as grain, and clean scenes are copied untouched. Every scene keeps its own reading, however short, so the scenes denoised are exactly those `rabbit-denoise --min-grain` would choose. Clean anime reads below 1 and grainy openings and endings 3 and more, so the default light threshold of 2 denoises only the grainy scenes, such as a grainy opening in an otherwise clean episode. Anime with film grain throughout, such as older cel animation scanned from film, reads 1.5 to 2.5 from scene to scene, and is better denoised whole or with light at 1. Medium (3) and heavy (5) only matter for plain NLMeans. The grain metric works with every denoiser, as rabbit-denoise only measures. The chart of a queued job shows every scene's grain against the thresholds. The analysis reads the whole video at 80 to 90 fps at 1080p, about 7 minutes for a 24 minute episode.
+
+With **Restore denoised grain**, regrain gives every scene of the video its own grain. A sampled **Scan** places a scene change only within some frames of where it is, so at the start and end of a denoised range a few frames can get the grain of the range next to them. **Scan -> Every frame** puts every change on its frame.
 
 The first run with a new combination of av-denoise settings compiles GPU kernels, which takes a few seconds. They are cached in `/config/vapoursynth/av-denoise-cache` (override with `AV_DENOISE_COMPILATION_CACHE`).
 
@@ -482,97 +486,97 @@ The format is versioned with an `RE<n>` prefix, so older codes continue to work 
 
 ## API Endpoints
 
-| Method   | Endpoint                                    | Description                                                                    |
-| -------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `GET`    | `/api/jobs`                                 | List all jobs                                                                  |
-| `GET`    | `/api/jobs/:id`                             | Get job details                                                                |
-| `PATCH`  | `/api/jobs/:id`                             | Update job settings (queued only)                                              |
-| `DELETE` | `/api/jobs/:id`                             | Remove a job                                                                   |
-| `POST`   | `/api/jobs/:id/retry`                       | Retry a failed job                                                             |
-| `POST`   | `/api/jobs/:id/cancel`                      | Cancel an actively encoding job                                                |
-| `POST`   | `/api/jobs/:id/move`                        | Move a queued job in the queue (`direction`: `up`, `down`, `top`, `bottom`)    |
-| `POST`   | `/api/jobs/:id/import-code`                 | Apply a settings code to a queued job, replacing its settings                  |
-| `POST`   | `/api/jobs/reorder`                         | Set the entire queue order from a JSON `{ ids: [...] }` body                   |
-| `GET`    | `/api/jobs/:id/audio-preview`               | Preview audio reorder/filter/dedup for a job                                   |
-| `GET`    | `/api/jobs/:id/subtitle-preview`            | Preview subtitle reorder/rename for a job                                      |
-| `GET`    | `/api/jobs/:id/subtitle-tracks`             | List source subtitle tracks (for the translate-only source picker)             |
-| `GET`    | `/api/jobs/:id/mediainfo`                   | Run `mediainfo` on the source file and return the report                       |
-| `GET`    | `/api/jobs/:id/bitrate-analysis`            | Bitrate + noise/bitrate-metric scene data, cached (`?refresh=1` to re-run)     |
-| `GET`    | `/api/jobs/:id/measure`                     | The finished encode's quality measurement against its source, if any           |
-| `POST`   | `/api/jobs/:id/measure`                     | Score the encode against its source. Body: `interval`, `metrics`, `withGrain`  |
-| `DELETE` | `/api/jobs/:id/measure`                     | Cancel the running measurement                                                 |
-| `GET`    | `/api/bitrate-analysis?path=`               | Bitrate over time of any video in the media folders (`?refresh=1` to re-run)   |
-| `GET`    | `/api/jobs/:id/live`                        | Steps and Rabbit Boost telemetry, telemetry only when newer than `?version=`   |
-| `GET`    | `/api/jobs/:id/preview`                     | Get preview-encode state for a job (`idle`, running, or completed samples)     |
-| `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode. The optional body configures sample count and duration |
-| `DELETE` | `/api/jobs/:id/preview`                     | Cancel a running preview, or clear completed preview artifacts                 |
-| `GET`    | `/api/jobs/:id/preview/sample/:index/:kind` | Fetch source/encode clips, comparison PNGs, VS stills, or prepare-stage stills |
-| `GET`    | `/api/repair/inspect`                       | Inspect target/source MKV subtitle tracks for the repair editor                |
-| `GET`    | `/api/repair/roots`                         | List configured media roots for the repair file picker                         |
-| `GET`    | `/api/repair/browse`                        | Browse MKV files within an allowed repair-picker root                          |
-| `POST`   | `/api/repair/audit`                         | Group a folder or completed job outputs by audio/subtitle metadata             |
-| `POST`   | `/api/repair/audit/group`                   | Validate an audited group and queue subtitle metadata edits for all its files  |
-| `POST`   | `/api/repair/jobs`                          | Validate and queue a subtitle-only stream-copy repair plan                     |
-| `GET`    | `/api/config`                               | Get default settings                                                           |
-| `PATCH`  | `/api/config`                               | Update default settings                                                        |
-| `POST`   | `/api/config/reset`                         | Reset default settings                                                         |
-| `POST`   | `/api/config/import-code`                   | Import a settings code as the new default settings                             |
-| `POST`   | `/api/settings/encode`                      | Encode a settings object into a shareable settings code (`{ code }`)           |
-| `POST`   | `/api/settings/decode`                      | Decode a settings code back into a settings object (`{ settings }`)            |
-| `GET`    | `/api/library`                              | List configured library root directories                                       |
-| `GET`    | `/api/library/browse`                       | Browse a library folder (`?path=/data/library/Animes`)                         |
-| `POST`   | `/api/library/encode`                       | Queue all videos in a folder for in-place encoding                             |
-| `GET`    | `/api/queue`                                | Get queue state (paused or running)                                            |
-| `POST`   | `/api/queue/pause`                          | Pause encoding. Stops current encode and preserves the queue                   |
-| `POST`   | `/api/queue/resume`                         | Resume encoding from where it was paused                                       |
-| `GET`    | `/api/fonts`                                | List font groups and their faces                                               |
-| `POST`   | `/api/fonts/reload`                         | Rescan the user fonts directory and reload the registry                        |
-| `GET`    | `/api/fonts/:label/style`                   | Get a group's style (group-global + per-language/script overrides)             |
-| `PUT`    | `/api/fonts/:label/style`                   | Save a group's style into its `metadata.json` (user fonts dir)                 |
-| `PUT`    | `/api/fonts/:label/style`                   | Save a group's style into its `metadata.json` (user fonts dir)                 |
-| `GET`    | `/api/system-fonts`                         | List importable fonts under the read-only host font directories                |
-| `POST`   | `/api/fonts/groups`                         | Create a new font group folder under the user fonts dir (`{ label }`)          |
-| `PATCH`  | `/api/fonts/groups/:label`                  | Rename a group (folder + label) and repoint defaults and all jobs              |
-| `DELETE` | `/api/fonts/groups/:label`                  | Delete a font group folder and its contents                                    |
-| `POST`   | `/api/fonts/groups/:label/faces`            | Import a host font into the group with writing-system / language keys          |
-| `POST`   | `/api/fonts/upload`                         | Store an uploaded font in `?group=`, or a group named after its family         |
-| `PATCH`  | `/api/fonts/groups/:label/faces/:file`      | Update a face's keys / family override in the group's `metadata.json`          |
-| `DELETE` | `/api/fonts/groups/:label/faces/:file`      | Remove a font file from the group and its metadata entry                       |
-| `POST`   | `/api/subsearch/search`                     | Start a subtitle search for one video: download, sync and rate per language    |
-| `GET`    | `/api/subsearch/search/:id`                 | Progress and result of a subtitle search                                       |
-| `DELETE` | `/api/subsearch/search/:id`                 | Cancel a subtitle search or drop its result                                    |
-| `POST`   | `/api/subsearch/apply`                      | Queue the chosen subtitles as new tracks, or save them next to the video       |
-| `POST`   | `/api/subsearch/test`                       | Check an OpenSubtitles login and report the download quota                     |
-| `POST`   | `/api/subsearch/test-subdl`                 | Check a SubDL API key                                                          |
-| `POST`   | `/api/subtitle-files/scan`                  | Pair a folder of videos with a folder of subtitle files and report their fonts |
-| `POST`   | `/api/subtitle-files/font`                  | Upload a font, renamed to `?name=` when its family differs                     |
-| `POST`   | `/api/subtitle-files/jobs`                  | Queue one subtitle add per paired video, with the fonts each file uses         |
-| `POST`   | `/api/font-check/scan`                      | Start reading a folder's subtitles for fonts its videos do not carry           |
-| `GET`    | `/api/font-check/scan/:id`                  | Progress and result of a font check                                            |
-| `DELETE` | `/api/font-check/scan/:id`                  | Cancel a font check or drop its result                                         |
-| `POST`   | `/api/font-check/jobs`                      | Queue one repair per video, attaching uploaded or library fonts and mapping    |
-| `POST`   | `/api/release-subs/scan`                    | Pair a folder of encodes with folders of releases and plan the subtitles       |
-| `POST`   | `/api/release-subs/check`                   | Compare the audio of one episode with its releases                             |
-| `POST`   | `/api/release-subs/jobs`                    | Queue one repair per episode, retiming the chosen subtitles by audio           |
-| `POST`   | `/api/release-audio/scan`                   | Pair a folder of videos with folders of releases and plan the audio            |
-| `POST`   | `/api/release-audio/jobs`                   | Queue one job per episode, syncing the chosen audio tracks by audio            |
-| `POST`   | `/api/audio-tracks/scan`                    | Plan the audio of a folder as the settings and per-track choices say           |
-| `POST`   | `/api/audio-tracks/jobs`                    | Queue one job per file whose audio changes                                     |
-| `POST`   | `/api/ocr/test`                             | Read a sample subtitle image with the OCR model                                |
-| `GET`    | `/api/ocr/inspect`                          | Subtitle tracks of an MKV, marking picture tracks without a text version       |
-| `POST`   | `/api/ocr/jobs`                             | Queue OCR of chosen picture subtitle tracks of one MKV                         |
-| `POST`   | `/api/ocr/pairs`                            | Match a folder of encodes with a folder of their originals                     |
-| `POST`   | `/api/ocr/batch`                            | Queue OCR for every MKV in a folder                                            |
-| `GET`    | `/api/system`                               | Current system resource usage (CPU, RAM, temp-partition disk, network, GPU)    |
-| `GET`    | `/api/opencl-devices`                       | List available OpenCL devices                                                  |
-| `GET`    | `/api/vulkan-devices`                       | List available Vulkan devices                                                  |
-| `GET`    | `/api/avd-devices`                          | List GPU devices usable by av-denoise                                          |
-| `GET`    | `/api/benchmark`                            | Get current benchmark state                                                    |
-| `POST`   | `/api/benchmark`                            | Start a denoise benchmark run                                                  |
-| `DELETE` | `/api/benchmark`                            | Cancel a running benchmark                                                     |
-| `GET`    | `/api/vs-presets`                           | List all VapourSynth presets (stock + user) with their manifests               |
-| `POST`   | `/api/vs-presets/reload`                    | Rescan stock and user preset directories from disk and reload the registry     |
-| `GET`    | `/api/vs-presets/:id/default-entry`         | Build a fresh filter-chain entry for `:id`, pre-filled with manifest defaults  |
+| Method   | Endpoint                                    | Description                                                                      |
+| -------- | ------------------------------------------- | -------------------------------------------------------------------------------- |
+| `GET`    | `/api/jobs`                                 | List all jobs                                                                    |
+| `GET`    | `/api/jobs/:id`                             | Get job details                                                                  |
+| `PATCH`  | `/api/jobs/:id`                             | Update job settings (queued only)                                                |
+| `DELETE` | `/api/jobs/:id`                             | Remove a job                                                                     |
+| `POST`   | `/api/jobs/:id/retry`                       | Retry a failed job                                                               |
+| `POST`   | `/api/jobs/:id/cancel`                      | Cancel an actively encoding job                                                  |
+| `POST`   | `/api/jobs/:id/move`                        | Move a queued job in the queue (`direction`: `up`, `down`, `top`, `bottom`)      |
+| `POST`   | `/api/jobs/:id/import-code`                 | Apply a settings code to a queued job, replacing its settings                    |
+| `POST`   | `/api/jobs/reorder`                         | Set the entire queue order from a JSON `{ ids: [...] }` body                     |
+| `GET`    | `/api/jobs/:id/audio-preview`               | Preview audio reorder/filter/dedup for a job                                     |
+| `GET`    | `/api/jobs/:id/subtitle-preview`            | Preview subtitle reorder/rename for a job                                        |
+| `GET`    | `/api/jobs/:id/subtitle-tracks`             | List source subtitle tracks (for the translate-only source picker)               |
+| `GET`    | `/api/jobs/:id/mediainfo`                   | Run `mediainfo` on the source file and return the report                         |
+| `GET`    | `/api/jobs/:id/bitrate-analysis`            | Bitrate + noise/bitrate/grain-metric scene data, cached (`?refresh=1` to re-run) |
+| `GET`    | `/api/jobs/:id/measure`                     | The finished encode's quality measurement against its source, if any             |
+| `POST`   | `/api/jobs/:id/measure`                     | Score the encode against its source. Body: `interval`, `metrics`, `withGrain`    |
+| `DELETE` | `/api/jobs/:id/measure`                     | Cancel the running measurement                                                   |
+| `GET`    | `/api/bitrate-analysis?path=`               | Bitrate over time of any video in the media folders (`?refresh=1` to re-run)     |
+| `GET`    | `/api/jobs/:id/live`                        | Steps and Rabbit Boost telemetry, telemetry only when newer than `?version=`     |
+| `GET`    | `/api/jobs/:id/preview`                     | Get preview-encode state for a job (`idle`, running, or completed samples)       |
+| `POST`   | `/api/jobs/:id/preview`                     | Start a preview encode. The optional body configures sample count and duration   |
+| `DELETE` | `/api/jobs/:id/preview`                     | Cancel a running preview, or clear completed preview artifacts                   |
+| `GET`    | `/api/jobs/:id/preview/sample/:index/:kind` | Fetch source/encode clips, comparison PNGs, VS stills, or prepare-stage stills   |
+| `GET`    | `/api/repair/inspect`                       | Inspect target/source MKV subtitle tracks for the repair editor                  |
+| `GET`    | `/api/repair/roots`                         | List configured media roots for the repair file picker                           |
+| `GET`    | `/api/repair/browse`                        | Browse MKV files within an allowed repair-picker root                            |
+| `POST`   | `/api/repair/audit`                         | Group a folder or completed job outputs by audio/subtitle metadata               |
+| `POST`   | `/api/repair/audit/group`                   | Validate an audited group and queue subtitle metadata edits for all its files    |
+| `POST`   | `/api/repair/jobs`                          | Validate and queue a subtitle-only stream-copy repair plan                       |
+| `GET`    | `/api/config`                               | Get default settings                                                             |
+| `PATCH`  | `/api/config`                               | Update default settings                                                          |
+| `POST`   | `/api/config/reset`                         | Reset default settings                                                           |
+| `POST`   | `/api/config/import-code`                   | Import a settings code as the new default settings                               |
+| `POST`   | `/api/settings/encode`                      | Encode a settings object into a shareable settings code (`{ code }`)             |
+| `POST`   | `/api/settings/decode`                      | Decode a settings code back into a settings object (`{ settings }`)              |
+| `GET`    | `/api/library`                              | List configured library root directories                                         |
+| `GET`    | `/api/library/browse`                       | Browse a library folder (`?path=/data/library/Animes`)                           |
+| `POST`   | `/api/library/encode`                       | Queue all videos in a folder for in-place encoding                               |
+| `GET`    | `/api/queue`                                | Get queue state (paused or running)                                              |
+| `POST`   | `/api/queue/pause`                          | Pause encoding. Stops current encode and preserves the queue                     |
+| `POST`   | `/api/queue/resume`                         | Resume encoding from where it was paused                                         |
+| `GET`    | `/api/fonts`                                | List font groups and their faces                                                 |
+| `POST`   | `/api/fonts/reload`                         | Rescan the user fonts directory and reload the registry                          |
+| `GET`    | `/api/fonts/:label/style`                   | Get a group's style (group-global + per-language/script overrides)               |
+| `PUT`    | `/api/fonts/:label/style`                   | Save a group's style into its `metadata.json` (user fonts dir)                   |
+| `PUT`    | `/api/fonts/:label/style`                   | Save a group's style into its `metadata.json` (user fonts dir)                   |
+| `GET`    | `/api/system-fonts`                         | List importable fonts under the read-only host font directories                  |
+| `POST`   | `/api/fonts/groups`                         | Create a new font group folder under the user fonts dir (`{ label }`)            |
+| `PATCH`  | `/api/fonts/groups/:label`                  | Rename a group (folder + label) and repoint defaults and all jobs                |
+| `DELETE` | `/api/fonts/groups/:label`                  | Delete a font group folder and its contents                                      |
+| `POST`   | `/api/fonts/groups/:label/faces`            | Import a host font into the group with writing-system / language keys            |
+| `POST`   | `/api/fonts/upload`                         | Store an uploaded font in `?group=`, or a group named after its family           |
+| `PATCH`  | `/api/fonts/groups/:label/faces/:file`      | Update a face's keys / family override in the group's `metadata.json`            |
+| `DELETE` | `/api/fonts/groups/:label/faces/:file`      | Remove a font file from the group and its metadata entry                         |
+| `POST`   | `/api/subsearch/search`                     | Start a subtitle search for one video: download, sync and rate per language      |
+| `GET`    | `/api/subsearch/search/:id`                 | Progress and result of a subtitle search                                         |
+| `DELETE` | `/api/subsearch/search/:id`                 | Cancel a subtitle search or drop its result                                      |
+| `POST`   | `/api/subsearch/apply`                      | Queue the chosen subtitles as new tracks, or save them next to the video         |
+| `POST`   | `/api/subsearch/test`                       | Check an OpenSubtitles login and report the download quota                       |
+| `POST`   | `/api/subsearch/test-subdl`                 | Check a SubDL API key                                                            |
+| `POST`   | `/api/subtitle-files/scan`                  | Pair a folder of videos with a folder of subtitle files and report their fonts   |
+| `POST`   | `/api/subtitle-files/font`                  | Upload a font, renamed to `?name=` when its family differs                       |
+| `POST`   | `/api/subtitle-files/jobs`                  | Queue one subtitle add per paired video, with the fonts each file uses           |
+| `POST`   | `/api/font-check/scan`                      | Start reading a folder's subtitles for fonts its videos do not carry             |
+| `GET`    | `/api/font-check/scan/:id`                  | Progress and result of a font check                                              |
+| `DELETE` | `/api/font-check/scan/:id`                  | Cancel a font check or drop its result                                           |
+| `POST`   | `/api/font-check/jobs`                      | Queue one repair per video, attaching uploaded or library fonts and mapping      |
+| `POST`   | `/api/release-subs/scan`                    | Pair a folder of encodes with folders of releases and plan the subtitles         |
+| `POST`   | `/api/release-subs/check`                   | Compare the audio of one episode with its releases                               |
+| `POST`   | `/api/release-subs/jobs`                    | Queue one repair per episode, retiming the chosen subtitles by audio             |
+| `POST`   | `/api/release-audio/scan`                   | Pair a folder of videos with folders of releases and plan the audio              |
+| `POST`   | `/api/release-audio/jobs`                   | Queue one job per episode, syncing the chosen audio tracks by audio              |
+| `POST`   | `/api/audio-tracks/scan`                    | Plan the audio of a folder as the settings and per-track choices say             |
+| `POST`   | `/api/audio-tracks/jobs`                    | Queue one job per file whose audio changes                                       |
+| `POST`   | `/api/ocr/test`                             | Read a sample subtitle image with the OCR model                                  |
+| `GET`    | `/api/ocr/inspect`                          | Subtitle tracks of an MKV, marking picture tracks without a text version         |
+| `POST`   | `/api/ocr/jobs`                             | Queue OCR of chosen picture subtitle tracks of one MKV                           |
+| `POST`   | `/api/ocr/pairs`                            | Match a folder of encodes with a folder of their originals                       |
+| `POST`   | `/api/ocr/batch`                            | Queue OCR for every MKV in a folder                                              |
+| `GET`    | `/api/system`                               | Current system resource usage (CPU, RAM, temp-partition disk, network, GPU)      |
+| `GET`    | `/api/opencl-devices`                       | List available OpenCL devices                                                    |
+| `GET`    | `/api/vulkan-devices`                       | List available Vulkan devices                                                    |
+| `GET`    | `/api/avd-devices`                          | List GPU devices usable by av-denoise                                            |
+| `GET`    | `/api/benchmark`                            | Get current benchmark state                                                      |
+| `POST`   | `/api/benchmark`                            | Start a denoise benchmark run                                                    |
+| `DELETE` | `/api/benchmark`                            | Cancel a running benchmark                                                       |
+| `GET`    | `/api/vs-presets`                           | List all VapourSynth presets (stock + user) with their manifests                 |
+| `POST`   | `/api/vs-presets/reload`                    | Rescan stock and user preset directories from disk and reload the registry       |
+| `GET`    | `/api/vs-presets/:id/default-entry`         | Build a fresh filter-chain entry for `:id`, pre-filled with manifest defaults    |
 
 ## License
 

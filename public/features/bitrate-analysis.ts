@@ -87,6 +87,16 @@ const METRIC_DISPLAY: Record<AutoDenoiseMetric, MetricDisplay> = {
 		inputStep: 0.01,
 		axisMax: 1,
 	},
+	grain: {
+		datasetLabel: "Grain (rabbit-denoise)",
+		axisLabel: "Grain deviation (0 to 255 scale)",
+		modeNote:
+			"Source bitrate vs. the grain rabbit-denoise measured in each scene. Clean anime reads below 1, grainy openings 3 and more. Adjust thresholds below to preview denoise classification, then save to this job.",
+		inputMin: 0.1,
+		inputMax: 50,
+		inputStep: 0.1,
+		axisMax: undefined,
+	},
 	bitrate: {
 		datasetLabel: "Bitrate ratio (x median)",
 		axisLabel: "Bitrate ratio (x median)",
@@ -317,7 +327,7 @@ export async function openBitrateAnalysisImport(file: File): Promise<void> {
 		}
 
 		let metric: AutoDenoiseMetric;
-		if (parsed.metric === "bitrate" || parsed.metric === "noise") {
+		if (parsed.metric === "bitrate" || parsed.metric === "noise" || parsed.metric === "grain") {
 			metric = parsed.metric;
 		} else {
 			const heavy = parsed.thresholds?.heavy;

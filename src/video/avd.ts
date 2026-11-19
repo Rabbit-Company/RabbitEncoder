@@ -3,7 +3,9 @@ import { CancelledError, computeFps, run } from "../core/process";
 import {
 	FFV1_ENCODE_ARGS,
 	buildSegmentList,
+	planFrameRanges,
 	probeStreamFormat,
+	readFrameTimestamps,
 	runSegmentedPass,
 	segmentCutArgs,
 	type DenoisePlan,
@@ -267,6 +269,16 @@ export async function isAvdDeviceAvailable(device: string): Promise<boolean> {
 	return devices.some((d) => d.id === device);
 }
 
+let denoiseFramesSupport: Promise<boolean> | null = null;
+
+/** Whether the installed rabbit-denoise has --denoise-frames, from 0.1.9 on. Checked once. */
+export function rabbitSupportsDenoiseFrames(): Promise<boolean> {
+	denoiseFramesSupport ??= run([RABBIT_DENOISE_BIN, "denoise", "--help"])
+		.then((res) => res.code === 0 && res.stdout.includes("--denoise-frames"))
+		.catch(() => false);
+	return denoiseFramesSupport;
+}
+
 /**
  * Whether rabbit-denoise runs on a GPU here: it denoises one small frame with --device gpu.
  * rabbit-denoise picks the GPU itself, so there is no device to choose. Returns the reason when not.
@@ -317,14 +329,23 @@ export async function assertAvdDeviceUsable(engine: AvdEngine, device: string, p
 
 /**
  * Build the av-denoise argv (without the binary name) for one engine at one level.
- * `input` is a file path, or "-" for y4m on stdin.
+ * `input` is a file path, or "-" for y4m on stdin. `denoiseFrames`, for rabbit-denoise only,
+ * limits it to those frames, such as "0-299,515-1265", and the others pass through unchanged.
  */
-export function buildAvdArgs(engine: AvdEngine, level: DenoiseRange["level"], params: AvdParams, device: string, input: string): string[] {
+export function buildAvdArgs(
+	engine: AvdEngine,
+	level: DenoiseRange["level"],
+	params: AvdParams,
+	device: string,
+	input: string,
+	denoiseFrames?: string,
+): string[] {
 	const strength = String(avdStrengthFor(engine, level, params));
 	if (engine === "rabbit-denoise") {
 		// y4m in and out. It picks the GPU itself. Only options that differ from its defaults are passed.
 		const rabbit = params.rabbit ?? DEFAULT_RABBIT_PARAMS;
-		return ["denoise", "-q", "--device", rabbit.device, "--sigma-scale", strength, ...rabbitOptionArgs(rabbit), input];
+		const frames = denoiseFrames ? ["--denoise-frames", denoiseFrames] : [];
+		return ["denoise", "-q", "--device", rabbit.device, "--sigma-scale", strength, ...rabbitOptionArgs(rabbit), ...frames, input];
 	}
 	const common = ["--accelerators", AVD_ACCELERATORS, "--device", isValidAvdDeviceSpec(device) ? device : DEFAULT_AVD_DEVICE];
 	if (avdEngineUsesPreset(engine)) common.push("--preset", params.preset);
@@ -399,6 +420,8 @@ export interface RunAvdPassOptions {
 	device: string;
 	/** Denoise only this time range (seconds). The input must be intra-only (FFV1) for frame-accurate cuts. */
 	range?: { start: number; end: number };
+	/** rabbit-denoise only: denoise these frames of the whole input, such as "0-299,515-1265", and pass the rest through. */
+	denoiseFrames?: string;
 	/** Probed format of the input. Probed here when omitted. */
 	format?: StreamFormat;
 	/** `outSeconds` is how much video has been written so far, when FFmpeg reports it. */
@@ -431,7 +454,7 @@ export async function runAvdPass(opts: RunAvdPassOptions): Promise<void> {
 	// rabbit-denoise always reads the y4m FFmpeg decodes, which keeps the stream as this pass sees it.
 	const piped = !!range || pixFmt !== fmt.pixFmt || engine === "rabbit-denoise";
 
-	const avdArgs = [engineBinary(engine), ...buildAvdArgs(engine, level, params, device, piped ? "-" : inputPath)];
+	const avdArgs = [engineBinary(engine), ...buildAvdArgs(engine, level, params, device, piped ? "-" : inputPath, opts.denoiseFrames)];
 	const encodeArgs = ["ffmpeg", "-y", "-f", "yuv4mpegpipe", "-i", "-", ...buildRetagArgs(fmt), ...FFV1_ENCODE_ARGS, "-an", "-sn", outputPath];
 
 	const stages: string[][] = [];
@@ -636,6 +659,34 @@ export async function runSegmentedAutoDenoiseAvd(
 	const pixFmt = toAvdPixFmt(format.pixFmt);
 	if (pixFmt !== format.pixFmt) {
 		Logger.warn(`[avd] Source is ${format.pixFmt}; converting to ${pixFmt} for av-denoise.`);
+	}
+
+	// rabbit-denoise denoises the plan's frames in one run and passes the rest through, so the
+	// video is neither cut into segments nor joined again.
+	if (engine === "rabbit-denoise" && (await rabbitSupportsDenoiseFrames())) {
+		const pts = await readFrameTimestamps(inputPath, signal);
+		const ranges = pts ? planFrameRanges(plan, pts) : [];
+		if (pts && ranges.length > 0) {
+			const frames = ranges.reduce((sum, [first, last]) => sum + last - first + 1, 0);
+			const label = `${frames} of ${pts.length} frames in ${ranges.length} ranges`;
+			Logger.info(`[avd] rabbit-denoise denoises ${label} in one run`);
+			await runAvdPass({
+				inputPath,
+				outputPath,
+				engine,
+				level: "light",
+				params,
+				device,
+				format,
+				signal,
+				denoiseFrames: ranges.map(([first, last]) => (first === last ? `${first}` : `${first}-${last}`)).join(","),
+				onProgress: (current, fps) => {
+					onProgress(Math.min(0.999, current / pts.length), 1, `${label}, ${current} of ${pts.length} frames${fps ? ` @ ${fps} fps` : ""}`);
+				},
+			});
+			return;
+		}
+		if (!pts) Logger.warn("[avd] Could not read frame timestamps, so rabbit-denoise runs on each range of the plan");
 	}
 
 	const segments = buildSegmentList(mergeEqualStrengthRanges(plan, engine, params), totalDuration);

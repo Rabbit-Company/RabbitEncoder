@@ -98,6 +98,7 @@ export function previewSettingsFingerprint(s: JobSettings): string {
 		autoDenoiseMetric: s.autoDenoiseMetric,
 		autoDenoiseThresholds: s.autoDenoiseThresholds,
 		autoDenoiseBitrateThresholds: s.autoDenoiseBitrateThresholds,
+		autoDenoiseGrainThresholds: s.autoDenoiseGrainThresholds,
 		vsFilters: s.vsFilters ?? [],
 		subtitleProcessing: s.subtitleProcessing,
 		audioEncode: s.audioEncode,

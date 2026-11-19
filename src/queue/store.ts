@@ -291,7 +291,7 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 	audioLanguages: strList,
 	subtitleLanguages: strList,
 
-	autoDenoiseMetric: enumOf(["noise", "bitrate"]),
+	autoDenoiseMetric: enumOf(["noise", "bitrate", "grain"]),
 	autoDenoiseThresholds: (v, cur) => {
 		const t = v as { light?: unknown; medium?: unknown; heavy?: unknown };
 		if (t && typeof t.light === "number" && typeof t.medium === "number" && typeof t.heavy === "number") {
@@ -300,6 +300,13 @@ const SETTINGS_SANITIZERS: { [K in keyof JobSettings]?: Sanitizer } = {
 		return undefined;
 	},
 	autoDenoiseBitrateThresholds: (v, cur) => {
+		const t = v as { light?: unknown; medium?: unknown; heavy?: unknown };
+		if (t && typeof t.light === "number" && typeof t.medium === "number" && typeof t.heavy === "number") {
+			return { light: t.light, medium: t.medium, heavy: t.heavy };
+		}
+		return undefined;
+	},
+	autoDenoiseGrainThresholds: (v, cur) => {
 		const t = v as { light?: unknown; medium?: unknown; heavy?: unknown };
 		if (t && typeof t.light === "number" && typeof t.medium === "number" && typeof t.heavy === "number") {
 			return { light: t.light, medium: t.medium, heavy: t.heavy };
@@ -496,6 +503,7 @@ export function addJob(
 			audioBitrates: { ...appConfig.defaults.audioBitrates },
 			autoDenoiseThresholds: { ...appConfig.defaults.autoDenoiseThresholds },
 			autoDenoiseBitrateThresholds: { ...appConfig.defaults.autoDenoiseBitrateThresholds },
+			autoDenoiseGrainThresholds: { ...appConfig.defaults.autoDenoiseGrainThresholds },
 			nlmeansParams: {
 				light: { ...appConfig.defaults.nlmeansParams.light },
 				medium: { ...appConfig.defaults.nlmeansParams.medium },

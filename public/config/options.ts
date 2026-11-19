@@ -287,7 +287,8 @@ export const DEFAULT_GRADFUN_PARAMS = {
 };
 export const DEFAULT_AUTO_THRESHOLDS = { light: 0.5, medium: 0.7, heavy: 0.9 };
 export const DEFAULT_BITRATE_THRESHOLDS = { light: 1.3, medium: 1.8, heavy: 2.5 };
-export const AUTO_DENOISE_METRICS: readonly AutoDenoiseMetric[] = ["noise", "bitrate"];
+export const DEFAULT_GRAIN_THRESHOLDS = { light: 2, medium: 3, heavy: 5 };
+export const AUTO_DENOISE_METRICS: readonly AutoDenoiseMetric[] = ["noise", "bitrate", "grain"];
 
 export const AUDIO_CODEC_PRIORITY_OPTIONS: AudioCodecPriority[] = ["lossless-first", "smallest-first"];
 
