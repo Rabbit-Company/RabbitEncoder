@@ -989,6 +989,11 @@ export async function fetchBitrateAnalysis(
 	return data;
 }
 
+/** Stops measuring the scenes of a job's source, when the chart is closed before it is done. */
+export async function cancelBitrateAnalysis(jobId: string): Promise<void> {
+	await authFetch(`${API}/api/jobs/${jobId}/bitrate-analysis`, { method: "DELETE" }).catch(() => {});
+}
+
 export async function fetchFileBitrateAnalysis(
 	path: string,
 	opts: { signal?: AbortSignal; refresh?: boolean } = {},

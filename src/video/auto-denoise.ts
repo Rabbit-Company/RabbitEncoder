@@ -486,14 +486,19 @@ export function grainScenesFromEvents(lines: string[]): SceneNoise[] {
 		} catch {
 			continue;
 		}
-		if (event?.event !== "scene") continue;
-		const start = Number(event.start_seconds);
-		const end = Number(event.end_seconds);
-		if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-		const grain = typeof event.grain === "number" && Number.isFinite(event.grain) ? event.grain : 0;
-		scenes.push({ start, end, value: grain });
+		const scene = grainSceneFromEvent(event);
+		if (scene) scenes.push(scene);
 	}
 	return scenes.sort((a, b) => a.start - b.start);
+}
+
+function grainSceneFromEvent(event: any): SceneNoise | null {
+	if (event?.event !== "scene") return null;
+	const start = Number(event.start_seconds);
+	const end = Number(event.end_seconds);
+	if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+	const grain = typeof event.grain === "number" && Number.isFinite(event.grain) ? event.grain : 0;
+	return { start, end, value: grain };
 }
 
 /**
@@ -501,7 +506,12 @@ export function grainScenesFromEvents(lines: string[]): SceneNoise[] {
  * Its own scene cuts are used, so the scenes are the ones it measured. Returns null when the
  * analysis failed.
  */
-export async function runGrainSceneAnalysis(inputPath: string, signal?: AbortSignal, onProgress?: AnalysisProgress): Promise<SceneNoise[] | null> {
+export async function runGrainSceneAnalysis(
+	inputPath: string,
+	signal?: AbortSignal,
+	onProgress?: AnalysisProgress,
+	onScene?: (scene: SceneNoise) => void,
+): Promise<SceneNoise[] | null> {
 	if (signal?.aborted) throw new CancelledError();
 	Logger.info(`[auto-denoise] Measuring the grain of every scene of ${inputPath} with rabbit-denoise analyze`);
 	const proc = Bun.spawn(["rabbit-denoise", "analyze", inputPath, "--progress", "json"], { stdout: "pipe", stderr: "pipe" });
@@ -534,6 +544,9 @@ export async function runGrainSceneAnalysis(inputPath: string, signal?: AbortSig
 				onProgress(percent === null ? 0 : Math.min(1, percent / 100), `grain of every scene, ${frames}${fps}`);
 			} else if (event?.event === "error") {
 				error = String(event.message ?? event.code ?? "unknown error");
+			} else if (onScene) {
+				const scene = grainSceneFromEvent(event);
+				if (scene) onScene(scene);
 			}
 		} catch {}
 	});

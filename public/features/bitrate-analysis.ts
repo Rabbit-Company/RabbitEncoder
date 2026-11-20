@@ -8,7 +8,7 @@ import type {
 	Job,
 	NoiseScenePoint,
 } from "../types";
-import { fetchBitrateAnalysis, fetchFileBitrateAnalysis, fetchJobs, patchJobAutoThresholds } from "../api/client";
+import { cancelBitrateAnalysis, fetchBitrateAnalysis, fetchFileBitrateAnalysis, fetchJobs, patchJobAutoThresholds } from "../api/client";
 import { formatBitrate2 } from "./job-render";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
@@ -136,6 +136,29 @@ function abortActiveRequest(): void {
 	}
 }
 
+/** The job whose source the server is still measuring for this chart. */
+let pendingAnalysisJobId: string | null = null;
+const ANALYSIS_POLL_MS = 1500;
+
+function stopPendingAnalysis(): void {
+	if (pendingAnalysisJobId) void cancelBitrateAnalysis(pendingAnalysisJobId);
+	pendingAnalysisJobId = null;
+}
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(resolve, ms);
+		signal.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timer);
+				reject(signal.reason);
+			},
+			{ once: true },
+		);
+	});
+}
+
 // Current visible x-axis window, for zoom/pan.
 let viewMin = 0;
 let viewMax = 0;
@@ -184,6 +207,7 @@ function destroyCharts(): void {
 
 export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boolean } = {}): Promise<void> {
 	abortActiveRequest();
+	if (pendingAnalysisJobId !== jobId) stopPendingAnalysis();
 	currentJobId = jobId;
 	currentIsImported = false;
 	toolMode = false;
@@ -221,6 +245,19 @@ export async function openBitrateAnalysis(jobId: string, opts: { refresh?: boole
 		byId("bitrate-content").style.display = "";
 		buttonById("bitrate-refresh-btn").style.display = "";
 		renderBitrateAnalysis(job, data);
+
+		// The bitrate is there at once. The scenes keep coming while the server measures them.
+		let latest = data;
+		while (latest.progress) {
+			pendingAnalysisJobId = jobId;
+			await delay(ANALYSIS_POLL_MS, controller.signal);
+			latest = await fetchBitrateAnalysis(jobId, { signal: controller.signal });
+			if (controller.signal.aborted) return;
+			if (latest.error) throw new Error(latest.error);
+			if (latest.progress || latest.noise?.scenes.length) updateAnalysis(latest);
+			else renderBitrateAnalysis(job, latest);
+		}
+		pendingAnalysisJobId = null;
 	} catch (e) {
 		if (controller.signal.aborted) return; // modal was closed — not a real error
 		byId("bitrate-loading").style.display = "none";
@@ -240,6 +277,7 @@ export async function handleBitrateRefresh(): Promise<void> {
 /** Opens the modal from Tools, empty until a video is chosen or data is imported. */
 export function openBitrateTool(): void {
 	abortActiveRequest();
+	stopPendingAnalysis();
 	toolMode = true;
 	currentJobId = null;
 	currentFilePath = "";
@@ -258,6 +296,7 @@ export function chooseBitrateFile(): void {
 
 async function analyzeBitrateFile(path: string, opts: { refresh?: boolean } = {}): Promise<void> {
 	abortActiveRequest();
+	stopPendingAnalysis();
 	toolMode = true;
 	currentJobId = null;
 	currentFilePath = path;
@@ -308,6 +347,7 @@ async function analyzeBitrateFile(path: string, opts: { refresh?: boolean } = {}
  */
 export async function openBitrateAnalysisImport(file: File): Promise<void> {
 	abortActiveRequest();
+	stopPendingAnalysis();
 	toolMode = true;
 	currentJobId = null;
 	currentFilePath = "";
@@ -360,6 +400,7 @@ export async function openBitrateAnalysisImport(file: File): Promise<void> {
 
 export function closeBitrateAnalysis(): void {
 	abortActiveRequest();
+	stopPendingAnalysis();
 	byId("bitrate-modal").style.display = "none";
 	destroyCharts();
 	currentJobId = null;
@@ -433,25 +474,20 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 		});
 	}
 
-	const hasNoise = isSource && !!data.noise && data.noise.scenes.length > 0;
+	const hasNoise = isSource && (!!data.progress || (!!data.noise && data.noise.scenes.length > 0));
 
 	currentMetric = data.metric ?? "noise";
 	const display = METRIC_DISPLAY[currentMetric];
 
 	if (hasNoise) {
 		currentThresholds = { ...data.thresholds! };
-		currentScenes = data.noise!.scenes;
+		currentScenes = data.noise?.scenes ?? [];
 		thresholdsWrap.style.display = "";
 		modeNote.textContent = display.modeNote;
 
-		const noisePoints: { x: number; y: number }[] = [];
-		for (const sc of data.noise!.scenes) {
-			noisePoints.push({ x: sc.start, y: sc.value });
-			noisePoints.push({ x: sc.end, y: sc.value });
-		}
 		datasets.push({
 			label: display.datasetLabel,
-			data: noisePoints,
+			data: scenePoints(currentScenes),
 			borderColor: "#c792ea",
 			backgroundColor: "transparent",
 			borderWidth: 1.5,
@@ -491,8 +527,43 @@ function renderBitrateAnalysis(job: Job | null, data: BitrateAnalysisResult): vo
 	renderEncodeReport(reportHost, currentJobId, data);
 
 	saveBtn.style.display = hasNoise && job?.status === "queued" ? "" : "none";
-	buttonById("bitrate-download-btn").style.display = data.bitrate.length > 0 ? "" : "none";
+	buttonById("bitrate-download-btn").style.display = !data.progress && data.bitrate.length > 0 ? "" : "none";
+	renderProgress(data.progress);
 	updateZoomButtonState();
+}
+
+/** The scenes as steps, each held from its start to its end. */
+function scenePoints(scenes: NoiseScenePoint[]): { x: number; y: number }[] {
+	const points: { x: number; y: number }[] = [];
+	for (const sc of [...scenes].sort((a, b) => a.start - b.start)) {
+		points.push({ x: sc.start, y: sc.value });
+		points.push({ x: sc.end, y: sc.value });
+	}
+	return points;
+}
+
+/** Adds the scenes measured since the last poll, keeping the zoom and the thresholds being edited. */
+function updateAnalysis(data: BitrateAnalysisResult): void {
+	currentData = data;
+	currentScenes = data.noise?.scenes ?? [];
+	const label = METRIC_DISPLAY[currentMetric].datasetLabel;
+	const dataset = chartInstance?.data.datasets.find((d) => d.label === label);
+	if (dataset) dataset.data = scenePoints(currentScenes);
+	chartInstance?.update("none");
+	updateThresholdStats();
+	renderProgress(data.progress);
+	buttonById("bitrate-download-btn").style.display = !data.progress && data.bitrate.length > 0 ? "" : "none";
+}
+
+function renderProgress(progress: BitrateAnalysisResult["progress"]): void {
+	const el = byId("bitrate-progress");
+	el.style.display = progress ? "" : "none";
+	if (!progress) {
+		el.textContent = "";
+		return;
+	}
+	const after = currentMetric === "grain" ? "The chart fills in as each scene is measured." : "The scenes show once the whole video is measured.";
+	el.textContent = `Measuring ${progress.detail}. ${after}`;
 }
 
 /** Width of the left and right axes on every chart, so their plots line up on the same time axis. */

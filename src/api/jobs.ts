@@ -27,6 +27,7 @@ import {
 	updateJobSettings,
 } from "../queue/store";
 import { probeFile } from "../pipeline/probe";
+import { Logger } from "../core/logger";
 import { jobOutputRoot } from "../pipeline/output";
 import { previewAudio } from "../audio/audio-step";
 import { detectSubtitleTrackType, isTextSubtitleCodec, languageToFlag, previewSubtitles } from "../tracks/tracks";
@@ -82,9 +83,90 @@ function withEncodeData(job: Job, result: BitrateAnalysisResult, outPath: string
 }
 
 function clearBitrateAnalysisCache(jobId: string): void {
+	cancelSourceAnalysesOf(jobId);
 	for (const key of bitrateAnalysisCache.keys()) {
 		if (key === jobId || key.startsWith(`${jobId}:`)) bitrateAnalysisCache.delete(key);
 	}
+}
+
+/**
+ * Measuring the scenes of a source takes minutes, so it runs in the background and the chart polls it.
+ * The result in a run holds the bitrate from the start and the scenes as they are measured.
+ */
+interface SourceAnalysisRun {
+	result: BitrateAnalysisResult;
+	controller: AbortController;
+	lastPolled: number;
+}
+
+const sourceAnalysisRuns = new Map<string, SourceAnalysisRun>();
+
+/** A run nobody has polled for this long is stopped, for a closed tab. Hidden tabs poll about once a minute. */
+const SOURCE_ANALYSIS_IDLE_MS = 3 * 60_000;
+
+function cancelSourceAnalysis(cacheKey: string): void {
+	const run = sourceAnalysisRuns.get(cacheKey);
+	if (!run) return;
+	sourceAnalysisRuns.delete(cacheKey);
+	run.controller.abort();
+}
+
+function cancelSourceAnalysesOf(jobId: string): void {
+	for (const key of [...sourceAnalysisRuns.keys()]) {
+		if (key.startsWith(`${jobId}:`)) cancelSourceAnalysis(key);
+	}
+}
+
+function startSourceAnalysis(cacheKey: string, inputPath: string, tempRoot: string, base: BitrateAnalysisResult): SourceAnalysisRun {
+	const controller = new AbortController();
+	const signal = controller.signal;
+	const run: SourceAnalysisRun = { controller, lastPolled: Date.now(), result: { ...base, progress: { fraction: 0, detail: "the scenes" } } };
+	sourceAnalysisRuns.set(cacheKey, run);
+	const onProgress = (fraction: number, detail: string) => {
+		run.result.progress = { fraction, detail };
+	};
+	const watchdog = setInterval(() => {
+		if (Date.now() - run.lastPolled > SOURCE_ANALYSIS_IDLE_MS) cancelSourceAnalysis(cacheKey);
+	}, 10_000);
+	const duration = base.durationSec;
+
+	void (async () => {
+		const tempDir = mkdtempSync(join(tempRoot, "bitrate-analysis-"));
+		let noise: BitrateAnalysisResult["noise"] = null;
+		try {
+			if (base.metric === "grain") {
+				const partial: NonNullable<BitrateAnalysisResult["noise"]> = { samples: [], scenes: [], cuts: [] };
+				run.result.noise = partial;
+				const scenes = await runGrainSceneAnalysis(inputPath, signal, onProgress, (scene) => partial.scenes.push(scene));
+				if (scenes) noise = { samples: [], scenes, cuts: scenes.slice(1).map((s) => s.start) };
+			} else if (base.metric === "bitrate") {
+				const cuts = await detectSceneCuts(inputPath, tempDir, signal, duration, onProgress);
+				if (cuts) noise = { samples: [], scenes: groupScenesByBitrate(base.bitrate, cuts, duration), cuts };
+			} else {
+				const raw = await runNoiseSceneAnalysis(inputPath, tempDir, duration, signal, onProgress);
+				if (raw) {
+					noise = {
+						samples: raw.samples.map((s) => ({ t: s.time, y: s.y })),
+						scenes: groupSamplesByScene(raw.samples, raw.cuts, duration),
+						cuts: raw.cuts,
+					};
+				}
+			}
+		} catch (err) {
+			if (!signal.aborted) Logger.warn(`[auto-denoise] Scene analysis of ${inputPath} failed: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			clearInterval(watchdog);
+			try {
+				rmSync(tempDir, { recursive: true, force: true });
+			} catch {}
+		}
+		if (signal.aborted) return;
+		const result: BitrateAnalysisResult = { ...base, noise, progress: null };
+		bitrateAnalysisCache.set(cacheKey, result);
+		run.result = result;
+		if (sourceAnalysisRuns.get(cacheKey) === run) sourceAnalysisRuns.delete(cacheKey);
+	})();
+	return run;
 }
 
 export function registerJobRoutes(app: Web, config: AppConfig): void {
@@ -362,55 +444,40 @@ export function registerJobRoutes(app: Web, config: AppConfig): void {
 
 			const metric = job.settings.autoDenoiseMetric;
 			const cacheKey = `${job.id}:source:${metric}`;
+			if (forceRefresh) cancelSourceAnalysis(cacheKey);
 			const cached = !forceRefresh && bitrateAnalysisCache.get(cacheKey);
 			if (cached) return c.json(cached);
 
-			const probe = job.probe ?? (await probeFile(job.inputPath));
-			const bitrate = await sampleBitrateOverTime(job.inputPath);
-
-			const tempDir = mkdtempSync(join(config.tempDir, "bitrate-analysis-"));
-			let noise: BitrateAnalysisResult["noise"] = null;
-			try {
-				if (metric === "grain") {
-					const scenes = await runGrainSceneAnalysis(job.inputPath, signal);
-					if (scenes) {
-						noise = { samples: [], scenes, cuts: scenes.slice(1).map((s) => s.start) };
-					}
-				} else if (metric === "bitrate") {
-					const cuts = await detectSceneCuts(job.inputPath, tempDir, signal);
-					if (cuts) {
-						noise = { samples: [], scenes: groupScenesByBitrate(bitrate, cuts, probe.duration), cuts };
-					}
-				} else {
-					const raw = await runNoiseSceneAnalysis(job.inputPath, tempDir, probe.duration, signal);
-					if (raw) {
-						noise = {
-							samples: raw.samples.map((s) => ({ t: s.time, y: s.y })),
-							scenes: groupSamplesByScene(raw.samples, raw.cuts, probe.duration),
-							cuts: raw.cuts,
-						};
-					}
-				}
-			} finally {
-				try {
-					rmSync(tempDir, { recursive: true, force: true });
-				} catch {}
+			const running = sourceAnalysisRuns.get(cacheKey);
+			if (running) {
+				running.lastPolled = Date.now();
+				return c.json(running.result);
 			}
 
-			const result: BitrateAnalysisResult = {
-				mode: "source",
-				durationSec: probe.duration,
-				bitrate,
-				noise,
-				metric,
-				thresholds: autoThresholdsFor(job.settings),
-			};
-			bitrateAnalysisCache.set(cacheKey, result);
-			return c.json(result);
+			const probe = job.probe ?? (await probeFile(job.inputPath));
+			const bitrate = await sampleBitrateOverTime(job.inputPath);
+			if (signal.aborted) return c.json({ error: "Cancelled" }, 499);
+
+			const run =
+				sourceAnalysisRuns.get(cacheKey) ??
+				startSourceAnalysis(cacheKey, job.inputPath, config.tempDir, {
+					mode: "source",
+					durationSec: probe.duration,
+					bitrate,
+					noise: null,
+					metric,
+					thresholds: autoThresholdsFor(job.settings),
+				});
+			return c.json(run.result);
 		} catch (err: any) {
 			if (err?.name === "CancelledError" || signal.aborted) return c.json({ error: "Cancelled" }, 499);
 			return c.json({ error: `Bitrate analysis failed: ${err.message || err}` }, 500);
 		}
+	});
+
+	app.delete("/api/jobs/:id/bitrate-analysis", (c) => {
+		cancelSourceAnalysesOf(c.params.id!);
+		return c.json({ ok: true });
 	});
 
 	app.get("/api/jobs/:id/measure", (c) => {

@@ -1397,6 +1397,8 @@ export interface BitrateAnalysisResult {
 	measurement?: EncodeMeasurement | null;
 	/** The source is still there, so the encode can be measured against it. */
 	canMeasure?: boolean;
+	/** Set while the scenes of the source are still being measured. `noise` then holds the scenes measured so far. */
+	progress?: { fraction: number; detail: string } | null;
 }
 
 export interface PreviewSampleVsFrame {
