@@ -6484,3 +6484,20 @@ a.btn {
 	font-size: 0.7rem;
 	color: var(--text-2);
 }
+
+.repair-track.is-removed {
+	opacity: 0.6;
+}
+
+.repair-track.is-removed .repair-track-head {
+	margin-bottom: 4px;
+}
+
+.repair-audit-removed-note {
+	font-size: 0.72rem;
+	color: var(--text-2);
+}
+
+.repair-audit-removed-note span {
+	text-decoration: line-through;
+}

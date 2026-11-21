@@ -612,6 +612,7 @@ export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" |
 	if (!subtitleCount && !edit.audio?.length && !edit.audioOrder) throw new Error("The group has no tracks to edit");
 	const audioOrder = groupOrder(edit.audioOrder, audioCount, "audio");
 	const subtitleOrder = groupOrder(edit.subtitleOrder, subtitleCount, "subtitle");
+	const removeSubtitles = groupRemovals(edit.removeSubtitles, subtitleCount);
 	return files.map((file) => {
 		if (auditSignature(file) !== expectedSignature) throw new Error(`${basename(file.path)} metadata changed since the audit. Audit the folder again.`);
 		const fileAudio = file.tracks.filter((track) => track.type === "audio");
@@ -629,26 +630,37 @@ export function buildRepairAuditGroupPlans(files: Pick<RepairAuditFile, "path" |
 			...(audioTracks.length ? { audioTracks } : {}),
 			...(audioOrder ? { audioOrder: audioOrder.map((index) => fileAudio[index]!.id) } : {}),
 			// Metadata stays at each track's first position, the order only says where it goes.
-			tracks: (subtitleOrder ?? fileSubtitles.map((_, index) => index)).map((index, order) => {
-				const metadata = edit.subtitles[index]!;
-				return {
-					title: metadata.title,
-					language: metadata.language,
-					isDefault: metadata.isDefault,
-					isForced: metadata.isForced,
-					isEnabled: metadata.isEnabled,
-					isHearingImpaired: metadata.isHearingImpaired,
-					isOriginal: metadata.isOriginal,
-					isCommentary: metadata.isCommentary,
-					source: "target",
-					trackId: fileSubtitles[index]!.id,
-					mode: "copy",
-					order,
-					compression: "preserve",
-				};
-			}),
+			tracks: (subtitleOrder ?? fileSubtitles.map((_, index) => index))
+				.filter((index) => !removeSubtitles.has(index))
+				.map((index, order) => {
+					const metadata = edit.subtitles[index]!;
+					return {
+						title: metadata.title,
+						language: metadata.language,
+						isDefault: metadata.isDefault,
+						isForced: metadata.isForced,
+						isEnabled: metadata.isEnabled,
+						isHearingImpaired: metadata.isHearingImpaired,
+						isOriginal: metadata.isOriginal,
+						isCommentary: metadata.isCommentary,
+						source: "target",
+						trackId: fileSubtitles[index]!.id,
+						mode: "copy",
+						order,
+						compression: "preserve",
+					};
+				}),
 		});
 	});
+}
+
+/** The positions of the group's subtitle tracks to drop from every file. */
+function groupRemovals(raw: unknown, count: number): Set<number> {
+	if (raw === undefined) return new Set();
+	const positions = Array.isArray(raw) ? raw.map(Number) : [];
+	if (!Array.isArray(raw) || positions.some((index) => !Number.isInteger(index) || index < 0 || index >= count))
+		throw new Error("Subtitle removals must name subtitle tracks of the group");
+	return new Set(positions);
 }
 
 /** A new order of a group's tracks by position, or null when it keeps the current one. */

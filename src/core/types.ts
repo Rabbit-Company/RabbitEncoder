@@ -1109,6 +1109,8 @@ export interface RepairAuditGroupEdit {
 	audioOrder?: number[];
 	/** The positions of the subtitle tracks in the order wanted. Leave out to keep the order. */
 	subtitleOrder?: number[];
+	/** The positions of the subtitle tracks to remove from every file of the group. */
+	removeSubtitles?: number[];
 	replaceTarget: boolean;
 }
 

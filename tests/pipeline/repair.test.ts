@@ -227,6 +227,39 @@ describe("subtitle repair plans", () => {
 		expect(() => buildRepairAuditGroupPlans([file], edit)).toThrow("preserve every subtitle track");
 	});
 
+	test("removes chosen subtitle positions from every group file and keeps the order of the rest", () => {
+		const tracks = [
+			auditTrack("subtitles", "eng", "Full", { id: 3 }),
+			auditTrack("subtitles", "eng", "Signs", { id: 4 }),
+			auditTrack("subtitles", "ger", "Deutsch", { id: 5 }),
+		];
+		const files = [
+			{ path: "/show/e01.mkv", tracks },
+			{ path: "/show/e02.mkv", tracks: tracks.map((track) => ({ ...track, id: track.id + 10 })) },
+		];
+		const edit: RepairAuditGroupEdit = {
+			paths: files.map((file) => file.path),
+			expectedTracks: tracks,
+			subtitles: tracks.map((track) => ({ ...track })),
+			subtitleOrder: [2, 0, 1],
+			removeSubtitles: [1],
+			replaceTarget: false,
+		};
+		const plans = buildRepairAuditGroupPlans(files, edit);
+		expect(plans.map((plan) => plan.tracks.map((track) => [track.trackId, track.order]))).toEqual([
+			[
+				[5, 0],
+				[3, 1],
+			],
+			[
+				[15, 0],
+				[13, 1],
+			],
+		]);
+		expect(buildRepairAuditGroupPlans(files, { ...edit, subtitleOrder: undefined, removeSubtitles: [0, 1, 2] })[0]!.tracks).toEqual([]);
+		expect(() => buildRepairAuditGroupPlans(files, { ...edit, removeSubtitles: [3] })).toThrow("must name subtitle tracks");
+	});
+
 	test("sanitizes metadata and gives every selected track a stable order", () => {
 		const plan = sanitizeRepairPlan({
 			targetPath: "/media/encoded.mkv",

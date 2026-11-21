@@ -29,11 +29,13 @@ let selectedPath = "";
 let editingGroup: number | null = null;
 let groupSubtitles: RepairAuditSubtitleMetadata[] = [];
 let groupAudio: RepairAuditAudioMetadata[] = [];
-let originalSubtitles = "";
+let originalSubtitles: RepairAuditSubtitleMetadata[] = [];
 let originalAudio = "";
 /** First positions of the group's tracks in the order wanted. Metadata stays at the first position. */
 let audioOrder: number[] = [];
 let subtitleOrder: number[] = [];
+/** First positions of the group's subtitle tracks to remove from every file. */
+const removedSubtitles = new Set<number>();
 let queueingGroup = false;
 const queuedPaths = new Set<string>();
 /** Subtitle languages ticked for removal. */
@@ -73,22 +75,25 @@ function audioMetadata(track: RepairAuditTrack): RepairAuditAudioMetadata {
 
 const reordered = (order: number[]): boolean => order.some((index, position) => index !== position);
 
-function groupEdited(): { audio: boolean; subtitles: boolean; audioOrder: boolean; subtitleOrder: boolean } {
+function groupEdited(): { audio: boolean; subtitles: boolean; audioOrder: boolean; subtitleOrder: boolean; removed: boolean } {
+	const kept = subtitleOrder.filter((index) => !removedSubtitles.has(index));
+	const keptMetadata = (list: RepairAuditSubtitleMetadata[]) => JSON.stringify(list.filter((_, index) => !removedSubtitles.has(index)));
 	return {
 		audio: JSON.stringify(groupAudio) !== originalAudio,
-		subtitles: JSON.stringify(groupSubtitles) !== originalSubtitles,
+		subtitles: keptMetadata(groupSubtitles) !== keptMetadata(originalSubtitles),
 		audioOrder: reordered(audioOrder),
-		subtitleOrder: reordered(subtitleOrder),
+		subtitleOrder: kept.some((index, position) => index > (kept[position + 1] ?? Infinity)),
+		removed: removedSubtitles.size > 0,
 	};
 }
 
 const anyGroupEdit = (edited: ReturnType<typeof groupEdited>): boolean => Object.values(edited).some(Boolean);
 
-function moveButtons(kind: "audio" | "subtitle", index: number, position: number, count: number): string {
-	if (count < 2) return "";
+function moveButtons(kind: "audio" | "subtitle", index: number, position: number, count: number, extra = ""): string {
 	const button = (direction: "up" | "down", disabled: boolean) =>
 		`<button class="btn btn-ghost btn-sm" type="button" data-audit-move="${direction}" data-audit-kind="${kind}" data-audit-track="${index}" title="Move ${direction}" ${disabled ? "disabled" : ""}>${direction === "up" ? "↑" : "↓"}</button>`;
-	return `<div class="repair-order">${button("up", position === 0)}${button("down", position === count - 1)}</div>`;
+	const moves = count < 2 ? "" : button("up", position === 0) + button("down", position === count - 1);
+	return moves || extra ? `<div class="repair-order">${moves}${extra}</div>` : "";
 }
 
 function subtitleMetadata(track: RepairAuditTrack): RepairAuditSubtitleMetadata {
@@ -247,16 +252,21 @@ function renderGroupEditor(): void {
 		.join("");
 	const subtitleRows = subtitleOrder
 		.map((index, position) => [groupSubtitles[index]!, index, position] as const)
-		.map(
-			([track, index, position]) => `<div class="repair-track">
-			<div class="repair-track-head"><span class="sub-track-id">Subtitle ${position + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span>${moved(index, position)}${moveButtons("subtitle", index, position, subtitleOrder.length)}</div>
+		.map(([track, index, position]) => {
+			const removed = removedSubtitles.has(index);
+			const toggle = `<button class="btn btn-ghost btn-sm${removed ? "" : " repair-remove-track"}" type="button" data-audit-remove-subtitle="${index}" title="${removed ? "Keep this subtitle track" : "Remove this subtitle track from every file in the group"}">${removed ? "Keep" : "Remove"}</button>`;
+			const head = `<div class="repair-track-head"><span class="sub-track-id">Subtitle ${position + 1}</span><span class="repair-codec">${escapeHtml(tracks[index]?.codec)}</span>${moved(index, position)}${moveButtons("subtitle", index, position, subtitleOrder.length, toggle)}</div>`;
+			if (removed)
+				return `<div class="repair-track is-removed">${head}<div class="repair-audit-removed-note"><span>${escapeHtml(track.title || "Untitled")}</span> ${escapeHtml(track.language)} is removed from every file</div></div>`;
+			return `<div class="repair-track">
+			${head}
 			<div class="repair-track-fields repair-audit-metadata-fields">
 				<label>Subtitle name<input class="repair-input" data-audit-kind="subtitle" data-audit-track="${index}" data-audit-field="title" value="${escapeHtml(track.title)}" maxlength="512"></label>
 				${languageField("subtitle", index, track.language)}
 			</div>
 			<div class="repair-flags">${subtitleFlags.map(([field, label]) => `<label class="repair-flag"><input type="checkbox" data-audit-kind="subtitle" data-audit-track="${index}" data-audit-field="${field}" ${track[field] ? "checked" : ""}> ${label}</label>`).join("")}</div>
-		</div>`,
-		)
+		</div>`;
+		})
 		.join("");
 	byId("repair-audit-details").innerHTML = `<div class="repair-audit-detail-head">
 		<div><span class="repair-audit-group-badge ${groupClass(representative.group)}">${escapeHtml(representative.groupLabel)}</span><strong>Edit group ${escapeHtml(representative.groupLabel)}</strong></div>
@@ -271,7 +281,7 @@ function renderGroupEditor(): void {
 				<option value="copies">New .repaired.mkv copies</option>
 			</select>
 		</label>
-		<p class="repair-subtitle">Existing files are updated after verification. Use the arrows to reorder tracks. Compression is preserved.</p>
+		<p class="repair-subtitle">Existing files are updated after verification. Use the arrows to reorder tracks. Removed subtitle tracks are dropped from every file in the group. Compression is preserved.</p>
 		<div class="repair-audit-group-actions"><button class="btn btn-ghost" type="button" data-audit-cancel-group>Cancel</button><button class="btn btn-primary" id="repair-audit-group-queue" type="button" data-audit-queue-group ${anyGroupEdit(groupEdited()) ? "" : "disabled"}>Queue changes for ${files.length} file${files.length === 1 ? "" : "s"}</button></div>
 	</fieldset>`;
 	buttonById("repair-audit-open-btn").disabled = true;
@@ -646,6 +656,7 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	groupAudio = [];
 	audioOrder = [];
 	subtitleOrder = [];
+	removedSubtitles.clear();
 	queuedPaths.clear();
 	removeLanguages.clear();
 	languagesOpen = null;
@@ -721,7 +732,7 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 	const element =
 		event.target instanceof Element
 			? event.target.closest<HTMLElement>(
-					"[data-audit-select], [data-audit-edit-group], [data-audit-cancel-group], [data-audit-queue-group], [data-audit-move]",
+					"[data-audit-select], [data-audit-edit-group], [data-audit-cancel-group], [data-audit-queue-group], [data-audit-move], [data-audit-remove-subtitle]",
 				)
 			: null;
 	if (!element || (element instanceof HTMLButtonElement && element.disabled)) return;
@@ -733,15 +744,20 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 		);
 		return;
 	}
+	if (element.dataset.auditRemoveSubtitle !== undefined) {
+		toggleSubtitleRemoval(Number(element.dataset.auditRemoveSubtitle));
+		return;
+	}
 	if (element.hasAttribute("data-audit-edit-group")) {
 		editingGroup = Number(element.dataset.auditEditGroup);
 		const tracks = groupFiles()[0]?.tracks || [];
 		groupSubtitles = tracks.filter((track) => track.type === "subtitles").map(subtitleMetadata);
 		groupAudio = tracks.filter((track) => track.type === "audio").map(audioMetadata);
-		originalSubtitles = JSON.stringify(groupSubtitles);
+		originalSubtitles = groupSubtitles.map((track) => ({ ...track }));
 		originalAudio = JSON.stringify(groupAudio);
 		audioOrder = groupAudio.map((_, index) => index);
 		subtitleOrder = groupSubtitles.map((_, index) => index);
+		removedSubtitles.clear();
 		byId("repair-audit-status").textContent = "";
 		renderDetails();
 		return;
@@ -759,6 +775,15 @@ export function handleRepairAuditClick(event: MouseEvent): void {
 	selectedPath = element.dataset.auditSelect;
 	renderFileList();
 	renderDetails();
+}
+
+function toggleSubtitleRemoval(index: number): void {
+	if (removedSubtitles.has(index)) removedSubtitles.delete(index);
+	else removedSubtitles.add(index);
+	const saveMode = (byId("repair-audit-group-save-mode") as HTMLSelectElement).value;
+	renderGroupEditor();
+	(byId("repair-audit-group-save-mode") as HTMLSelectElement).value = saveMode;
+	byId("repair-audit-details").querySelector<HTMLButtonElement>(`[data-audit-remove-subtitle="${index}"]`)?.focus();
 }
 
 function moveGroupTrack(kind: "audio" | "subtitle", index: number, step: number): void {
@@ -809,6 +834,11 @@ async function queueAuditGroup(): Promise<void> {
 	if (queueingGroup || !files.length || !anyGroupEdit(edited)) return;
 	const currentAudit = audit;
 	const replaceTarget = (byId("repair-audit-group-save-mode") as HTMLSelectElement).value === "existing";
+	if (edited.removed) {
+		const names = [...removedSubtitles].map((index) => groupSubtitles[index]!.title || groupSubtitles[index]!.language).join(", ");
+		const count = removedSubtitles.size;
+		if (!confirm(`Remove ${count} subtitle track${count === 1 ? "" : "s"} (${names}) from ${files.length} file${files.length === 1 ? "" : "s"}?`)) return;
+	}
 	queueingGroup = true;
 	buttonById("repair-audit-pick-folder-btn").disabled = true;
 	const fields = byId("repair-audit-details").querySelector("fieldset");
@@ -822,6 +852,7 @@ async function queueAuditGroup(): Promise<void> {
 			...(edited.audio ? { audio: groupAudio } : {}),
 			...(edited.audioOrder ? { audioOrder } : {}),
 			...(edited.subtitleOrder ? { subtitleOrder } : {}),
+			...(edited.removed ? { removeSubtitles: [...removedSubtitles] } : {}),
 			replaceTarget,
 		});
 		if (audit === currentAudit) {

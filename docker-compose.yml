@@ -5,6 +5,14 @@ services:
     restart: unless-stopped
     devices:
       - /dev/dri:/dev/dri
+    # NVIDIA GPUs (needs the NVIDIA Container Toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     ports:
       - "3000:3000"
     volumes:
