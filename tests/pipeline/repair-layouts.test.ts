@@ -28,8 +28,8 @@ const episode = (path: string): RepairInspectionFile => ({
 	filename: path,
 	durationSeconds: 1400,
 	subtitles: [
-		subtitle(5, "[Coalgirls] Signs/Songs"),
-		subtitle(6, "[Coalgirls] Full Subtitles"),
+		subtitle(5, "[Burrowgirls] Signs/Songs"),
+		subtitle(6, "[Burrowgirls] Full Subtitles"),
 		subtitle(7, "[Taka] Signs/Songs"),
 		subtitle(8, "[Taka] Full Subtitles"),
 		subtitle(10, "[PGS] Full Subtitles", pgs),
@@ -40,7 +40,7 @@ const ova = (path: string): RepairInspectionFile => ({
 	path,
 	filename: path,
 	durationSeconds: 1400,
-	subtitles: [subtitle(3, "[Coalgirls] Signs/Songs"), subtitle(4, "[Umee] Full Subtitles"), subtitle(5, "[PGS] Full Subtitles", pgs)],
+	subtitles: [subtitle(3, "[Burrowgirls] Signs/Songs"), subtitle(4, "[Umee] Full Subtitles"), subtitle(5, "[PGS] Full Subtitles", pgs)],
 });
 
 const plan = (position: number, title: string, options: Partial<RepairLayoutTrackPlan> = {}): RepairLayoutTrackPlan => ({
@@ -67,7 +67,7 @@ describe("batch subtitle layouts", () => {
 			["A", ["/s/01.mkv", "/s/02.mkv"]],
 			["B", ["/s/20.5.mkv"]],
 		]);
-		expect(layouts[0]!.tracks.map((track) => track.releaseGroup)).toEqual(["Coalgirls", "Coalgirls", "Taka", "Taka", null]);
+		expect(layouts[0]!.tracks.map((track) => track.releaseGroup)).toEqual(["Burrowgirls", "Burrowgirls", "Taka", "Taka", null]);
 	});
 
 	test("turns a workflow plan into positions", () => {

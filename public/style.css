@@ -5851,8 +5851,8 @@ a.btn {
 	left: 0;
 	z-index: 1;
 	background: var(--bg-2);
-	min-width: 260px;
-	max-width: 340px;
+	min-width: 360px;
+	max-width: 460px;
 	text-align: left;
 	font-weight: 400;
 }
@@ -6500,4 +6500,42 @@ a.btn {
 
 .repair-audit-removed-note span {
 	text-decoration: line-through;
+}
+
+.release-row-source-pick {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.release-source-select {
+	flex: 1;
+	min-width: 0;
+	font-size: 0.7rem;
+	text-overflow: ellipsis;
+}
+
+.release-row-source-pick .repair-pair-method {
+	flex: 0 0 78px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.release-row-shared {
+	margin-top: 2px;
+	color: var(--amber);
+	font-size: 0.63rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.release-check-all {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 8px;
+	font-size: 0.74rem;
+	color: var(--text-2);
 }

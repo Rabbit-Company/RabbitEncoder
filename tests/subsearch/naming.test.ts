@@ -33,7 +33,7 @@ describe("downloaded subtitle track names", () => {
 	it("use a credit entered by hand over the one read from the names", () => {
 		expect(candidateCredit("Solo.Leveling.S01E01.WEBRip", "tedi")).toBe("tedi");
 		expect(candidateCredit("", "Anonymous", "Solo.Leveling.S01E01.NF.srt")).toBe("NF");
-		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.DUBTITLE.WEBRip", "tedi", "", "SubsPlease")).toBe("Full Dubtitles [SubsPlease]");
+		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.DUBTITLE.WEBRip", "tedi", "", "SubsHop")).toBe("Full Dubtitles [SubsHop]");
 		expect(downloadedTrackName("full", "Solo.Leveling.S01E01.WEBRip", "tedi", "", "  ")).toBe("Full Subtitles [tedi]");
 	});
 });
@@ -59,7 +59,7 @@ describe("preferred sources", () => {
 
 	it("matches groups named anywhere in the release name", () => {
 		expect(rank("[Mugi] Solo Leveling - 07 [CR]", ["mugi"])).toBe(0);
-		expect(rank("[Erai-raws] Solo Leveling - 07 [1080p]", ["NF", "Erai-raws"])).toBe(1);
+		expect(rank("[Hare-raws] Solo Leveling - 07 [1080p]", ["NF", "Hare-raws"])).toBe(1);
 		expect(rank("[Mugiwara] Solo Leveling - 07", ["Mugi"])).toBe(1);
 	});
 

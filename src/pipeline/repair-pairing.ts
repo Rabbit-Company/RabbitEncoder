@@ -44,6 +44,15 @@ export function parseEpisodeKey(name: string): EpisodeKey | null {
 	return parsed && { season: parsed.season ?? 1, episode: parsed.episode };
 }
 
+/** A season named apart from the episode, as in "Show S2 - 02", "Show Season 2 - 02" or "Show 2nd Season - 02". */
+const SEASON_RE = /\bS(\d{1,2})\b|\bSeason[\s._]*(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)[\s._]+Season\b/gi;
+
+function seasonBefore(text: string): number | undefined {
+	let season: number | undefined;
+	for (const match of text.matchAll(SEASON_RE)) season = Number(match[1] ?? match[2] ?? match[3]);
+	return season;
+}
+
 /** The episode a filename names, with its season only when the name gives one, as fansub releases numbered across seasons do not. */
 export function parseEpisodeName(name: string): { season?: number; episode: number } | null {
 	const stem = basename(name, extname(name)).replace(BRACKET_RE, " ");
@@ -51,7 +60,7 @@ export function parseEpisodeName(name: string): { season?: number; episode: numb
 		const match = stem.match(pattern.re);
 		if (!match) continue;
 		const episode = pattern.episode(match);
-		const season = pattern.season?.(match);
+		const season = pattern.season ? pattern.season(match) : seasonBefore(stem.slice(0, match.index));
 		if (!Number.isFinite(episode) || (season !== undefined && !Number.isFinite(season))) continue;
 		return season === undefined ? { episode } : { season, episode };
 	}
@@ -82,6 +91,7 @@ export function pairRepairFiles(
 ): { pairs: RepairPairSuggestion[]; unmatchedSources: string[] } {
 	const sortedTargets = naturalSort(targets);
 	const sortedSources = naturalSort(sources);
+	if (options.absoluteOffset !== undefined) return pairByOffset(sortedTargets, sortedSources, options.absoluteOffset);
 
 	const sourcesByEpisode = new Map<string, string[]>();
 	for (const source of sortedSources) {
@@ -115,13 +125,13 @@ export function pairRepairFiles(
 	const offsets = absoluteOffsets(
 		sortedTargets.filter((target) => !matched.has(target)),
 		sortedSources.filter((source) => !usedSources.has(source)),
-		options.absoluteOffset,
 	);
 	const absoluteMatched = new Map<string, number>();
 	for (const [target, { source, offset }] of offsets) {
 		matched.set(target, source);
 		usedSources.add(source);
-		absoluteMatched.set(target, offset);
+		// Offset 0 is a release that numbers each season from 1 without naming it, an ordinary episode match.
+		if (offset !== 0) absoluteMatched.set(target, offset);
 	}
 
 	const leftoverTargets = sortedTargets.filter((target) => !matched.has(target));
@@ -157,10 +167,9 @@ export function pairRepairFiles(
  * Targets that name a season matched to sources numbered without one, by the
  * offset most of a season's leftovers agree on. An offset needs two pairs that
  * agree, or the season's only leftover target, and no other offset as common,
- * so a stray number never decides it, unless the user gives it. Each number
- * must name one source only.
+ * so a stray number never decides it. Each number must name one source only.
  */
-function absoluteOffsets(targets: string[], sources: string[], given?: number): Map<string, { source: string; offset: number }> {
+function absoluteOffsets(targets: string[], sources: string[]): Map<string, { source: string; offset: number }> {
 	const out = new Map<string, { source: string; offset: number }>();
 	const sourceByNumber = new Map<number, string | null>();
 	for (const source of sources) {
@@ -174,15 +183,18 @@ function absoluteOffsets(targets: string[], sources: string[], given?: number): 
 		if (!parsed || parsed.season === undefined) continue;
 		bySeason.set(parsed.season, [...(bySeason.get(parsed.season) ?? []), { target, episode: parsed.episode }]);
 	}
-	for (const entries of bySeason.values()) {
+	for (const [season, entries] of bySeason) {
+		// Season one already had its exact match, so offset 0 there would only guess past an ambiguity.
+		const lowest = season === 1 ? 1 : 0;
 		const votes = new Map<number, number>();
 		for (const { episode } of entries)
-			for (const [number, source] of sourceByNumber) if (source && number > episode) votes.set(number - episode, (votes.get(number - episode) ?? 0) + 1);
+			for (const [number, source] of sourceByNumber)
+				if (source && number - episode >= lowest) votes.set(number - episode, (votes.get(number - episode) ?? 0) + 1);
 		const ranked = [...votes].sort((a, b) => b[1] - a[1]);
 		const [best, second] = ranked;
-		// An offset given by hand decides alone. Otherwise a tie, such as a folder of the whole series, is left to the user.
-		const offset = given ?? (!best || (second && second[1] === best[1]) || (best[1] < 2 && entries.length > 1) ? undefined : best[0]);
-		if (offset === undefined) continue;
+		// A tie, such as a folder of the whole series, is left to the user.
+		if (!best || (second && second[1] === best[1]) || (best[1] < 2 && entries.length > 1)) continue;
+		const offset = best[0];
 		for (const { target, episode } of entries) {
 			const source = sourceByNumber.get(episode + offset);
 			if (!source || [...out.values()].some((m) => m.source === source)) continue;
@@ -190,4 +202,32 @@ function absoluteOffsets(targets: string[], sources: string[], given?: number): 
 		}
 	}
 	return out;
+}
+
+/**
+ * Every target paired with the source numbered its episode plus the offset the
+ * user gave, whatever season either side names. This overrides the automatic
+ * pairing, so a whole folder paired one off is fixed with one number. A number
+ * that names several sources, or no target number at all, is left unmatched.
+ */
+function pairByOffset(targets: string[], sources: string[], offset: number): { pairs: RepairPairSuggestion[]; unmatchedSources: string[] } {
+	const sourceByNumber = new Map<number, string | null>();
+	for (const source of sources) {
+		const parsed = parseEpisodeName(source);
+		if (parsed) sourceByNumber.set(parsed.episode, sourceByNumber.has(parsed.episode) ? null : source);
+	}
+	const targetCount = new Map<number, number>();
+	for (const target of targets) {
+		const episode = parseEpisodeName(target)?.episode;
+		if (episode !== undefined) targetCount.set(episode, (targetCount.get(episode) ?? 0) + 1);
+	}
+	const used = new Set<string>();
+	const pairs = targets.map((target): RepairPairSuggestion => {
+		const episode = parseEpisodeName(target)?.episode;
+		const source = episode !== undefined && targetCount.get(episode) === 1 ? sourceByNumber.get(episode + offset) : undefined;
+		if (!source || used.has(source)) return { targetPath: target, targetName: basename(target), sourcePath: "", sourceName: "", method: "none" };
+		used.add(source);
+		return { targetPath: target, targetName: basename(target), sourcePath: source, sourceName: basename(source), method: "absolute", offset };
+	});
+	return { pairs, unmatchedSources: sources.filter((source) => !used.has(source)) };
 }

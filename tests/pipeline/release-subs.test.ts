@@ -45,14 +45,14 @@ describe("releaseLanguageKey", () => {
 describe("releaseCredit", () => {
 	it("credits the track name first, then the release's source, then its group", () => {
 		expect(releaseCredit("Full Subtitles [CrappySubs]", "x.mkv")).toBe("CrappySubs");
-		expect(releaseCredit("English", "[Erai-raws] Show - 01 [1080p CR WEB-DL AVC AAC][MultiSub][ABCD1234].mkv")).toBe("CR");
-		expect(releaseCredit("", "Show.S01E01.1080p.NF.WEB-DL.DDP2.0.H.264-VARYG.mkv")).toBe("NF");
+		expect(releaseCredit("English", "[Hare-raws] Show - 01 [1080p CR WEB-DL AVC AAC][MultiSub][ABCD1234].mkv")).toBe("CR");
+		expect(releaseCredit("", "Show.S01E01.1080p.NF.WEB-DL.DDP2.0.H.264-WARRN.mkv")).toBe("NF");
 		expect(releaseCredit("SDH Dubtitles (AMZN)", "Show.S03E01.1080p.BluRay.Opus.2.0.x265-YURASUKA.mkv")).toBe("AMZN");
 		expect(releaseCredit("English", "Show.S03E01.1080p.BluRay.Opus.2.0.x265-YURASUKA.mkv")).toBe("YURASUKA");
 	});
 
 	it("does not take the CRC of a fansub release for its group", () => {
-		expect(releaseCredit("English", "[SubsPlease] Show - 01 (1080p) [ABCD1234].mkv")).toBe("SubsPlease");
+		expect(releaseCredit("English", "[SubsHop] Show - 01 (1080p) [ABCD1234].mkv")).toBe("SubsHop");
 	});
 });
 
@@ -86,7 +86,7 @@ const target = file("/enc/Show - S01E01 [AV1]-Rabbit.mkv", [
 	sub("en", "Full Subtitles [CrappySubs]", "S_TEXT/ASS", { isDefault: true }),
 	sub("en", "Signs & Songs [CrappySubs]", "S_TEXT/ASS", { isForced: true }),
 ]);
-const erai = file("/erai/[Erai-raws] Show - 01 [1080p CR WEB-DL AVC AAC][MultiSub][ABCD1234].mkv", [
+const hare = file("/hare/[Hare-raws] Show - 01 [1080p CR WEB-DL AVC AAC][MultiSub][ABCD1234].mkv", [
 	sub("en", "English"),
 	sub("de", "Deutsch"),
 	sub("es-419", "Español (América Latina)"),
@@ -95,7 +95,7 @@ const erai = file("/erai/[Erai-raws] Show - 01 [1080p CR WEB-DL AVC AAC][MultiSu
 	sub("und", "Unknown"),
 	sub("en", "Commentary", "S_TEXT/ASS", { isCommentary: true }),
 ]);
-const varyg = file("/varyg/Show.S01E01.1080p.NF.WEB-DL.DDP2.0.H.264-VARYG.mkv", [
+const warren = file("/warren/Show.S01E01.1080p.NF.WEB-DL.DDP2.0.H.264-WARRN.mkv", [
 	sub("ger", "German", "S_TEXT/UTF8"),
 	sub("it", "Italian", "S_TEXT/UTF8"),
 	sub("it", "Italian", "S_HDMV/PGS"),
@@ -158,7 +158,7 @@ describe("track mappings", () => {
 });
 
 describe("planReleaseSubtitles", () => {
-	const plan = planReleaseSubtitles(target, [varyg, erai], options);
+	const plan = planReleaseSubtitles(target, [warren, hare], options);
 	const action = (key: string) => plan.cells.find((c) => c.key === key)?.action;
 	const added = (key: string) => plan.additions.find((a) => a.key === key);
 
@@ -170,14 +170,14 @@ describe("planReleaseSubtitles", () => {
 	});
 
 	it("takes the preferred source first, whichever folder it is in", () => {
-		expect(added("de:full")).toMatchObject({ sourcePath: erai.path, credit: "CR", trackName: "Full Subtitles [CR]", mode: "rabbit", language: "de" });
+		expect(added("de:full")).toMatchObject({ sourcePath: hare.path, credit: "CR", trackName: "Full Subtitles [CR]", mode: "rabbit", language: "de" });
 		expect(plan.cells.find((c) => c.key === "de:full")!.candidates.map((c) => c.credit)).toEqual(["CR", "NF"]);
 	});
 
 	it("takes text before pictures and ASS before SRT from the same source", () => {
-		expect(added("it:full")).toMatchObject({ sourcePath: varyg.path, codecId: "S_TEXT/UTF8", mode: "rabbit" });
+		expect(added("it:full")).toMatchObject({ sourcePath: warren.path, codecId: "S_TEXT/UTF8", mode: "rabbit" });
 		expect(added("ja:full")).toMatchObject({ codecId: "S_HDMV/PGS", mode: "copy" });
-		const pictures = planReleaseSubtitles(target, [varyg], { ...options, formatPriority: "picture-first" });
+		const pictures = planReleaseSubtitles(target, [warren], { ...options, formatPriority: "picture-first" });
 		expect(pictures.additions.find((a) => a.key === "it:full")!.codecId).toBe("S_HDMV/PGS");
 	});
 
@@ -196,23 +196,23 @@ describe("planReleaseSubtitles", () => {
 	});
 
 	it("replaces a track from a source ranked lower when asked", () => {
-		const replaced = planReleaseSubtitles(target, [erai], { ...options, replaceWorse: true });
+		const replaced = planReleaseSubtitles(target, [hare], { ...options, replaceWorse: true });
 		expect(replaced.cells.find((c) => c.key === "en:full")!.action).toBe("replace");
 		expect(replaced.removals).toEqual([target.subtitles[0]!.id]);
 		expect(replaced.additions.find((a) => a.key === "en:full")).toMatchObject({ credit: "CR", isDefault: true });
 		// A target track from a preferred source stays.
 		const crTarget = file("/enc/x.mkv", [sub("en", "Full Subtitles [CR]")]);
 		expect(
-			planReleaseSubtitles(crTarget, [varyg, file("/src/[Erai-raws] x [CR].mkv", [sub("en", "English")])], { ...options, replaceWorse: true }).removals,
+			planReleaseSubtitles(crTarget, [warren, file("/src/[Hare-raws] x [CR].mkv", [sub("en", "English")])], { ...options, replaceWorse: true }).removals,
 		).toEqual([]);
 	});
 
 	it("follows choices made by hand", () => {
-		const chosen = planReleaseSubtitles(target, [varyg, erai], {
+		const chosen = planReleaseSubtitles(target, [warren, hare], {
 			...options,
-			choices: { "de:full": { sourcePath: varyg.path, trackId: varyg.subtitles[0]!.id }, "it:full": null },
+			choices: { "de:full": { sourcePath: warren.path, trackId: warren.subtitles[0]!.id }, "it:full": null },
 		});
-		expect(chosen.additions.find((a) => a.key === "de:full")!.sourcePath).toBe(varyg.path);
+		expect(chosen.additions.find((a) => a.key === "de:full")!.sourcePath).toBe(warren.path);
 		expect(chosen.cells.find((c) => c.key === "it:full")!.action).toBe("skip");
 		expect(chosen.additions.some((a) => a.key === "it:full")).toBe(false);
 	});
@@ -236,15 +236,15 @@ describe("planReleaseSubtitles", () => {
 	});
 
 	it("keeps the source's own names when tracks are not renamed", () => {
-		const kept = planReleaseSubtitles(target, [erai], { ...options, renameTracks: false });
+		const kept = planReleaseSubtitles(target, [hare], { ...options, renameTracks: false });
 		expect(kept.additions.find((a) => a.key === "de:full")!.trackName).toBe("Deutsch");
 	});
 });
 
 describe("releaseGrid", () => {
 	it("gives every row a cell for every column any file has, in the order tracks get in files", () => {
-		const one = planReleaseSubtitles(target, [erai], options);
-		const two = planReleaseSubtitles(file("/enc/Show - S01E02 [AV1]-Rabbit.mkv", [sub("en", "Full Subtitles")]), [varyg], options);
+		const one = planReleaseSubtitles(target, [hare], options);
+		const two = planReleaseSubtitles(file("/enc/Show - S01E02 [AV1]-Rabbit.mkv", [sub("en", "Full Subtitles")]), [warren], options);
 		const rows: ReleaseRow[] = [
 			{ ...one, targetName: "1", sources: [] },
 			{ ...two, targetName: "2", sources: [] },
@@ -281,23 +281,23 @@ const hasTools = ["mkvmerge"].every((tool) => Bun.which(tool));
 			const result = await run(args);
 			if (result.code > 1) throw new Error(result.stderr || result.stdout);
 		};
-		for (const dir of ["enc", "erai", "varyg"]) mkdirSync(join(root, dir));
+		for (const dir of ["enc", "hare", "warren"]) mkdirSync(join(root, dir));
 		await make(join(root, "enc", "Show - S01E01 [AV1]-Rabbit.mkv"), [["en", "Full Subtitles [CR]"]]);
 		await make(join(root, "enc", "Show - S01E02 [AV1]-Rabbit.mkv"), [["en", "Full Subtitles [CR]"]]);
-		await make(join(root, "erai", "[Erai-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv"), [
+		await make(join(root, "hare", "[Hare-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv"), [
 			["en", "English"],
 			["de", "Deutsch"],
 		]);
-		await make(join(root, "erai", "[Erai-raws] Show - 02 [1080p CR WEB-DL][ABCD1235].mkv"), [["en", "English"]]);
-		await make(join(root, "erai", "[Erai-raws] Show - 03 [1080p CR WEB-DL][ABCD1236].mkv"), [["en", "English"]]);
-		await make(join(root, "varyg", "Show.S01E02.1080p.NF.WEB-DL-VARYG.mkv"), [["it", "Italian"]]);
+		await make(join(root, "hare", "[Hare-raws] Show - 02 [1080p CR WEB-DL][ABCD1235].mkv"), [["en", "English"]]);
+		await make(join(root, "hare", "[Hare-raws] Show - 03 [1080p CR WEB-DL][ABCD1236].mkv"), [["en", "English"]]);
+		await make(join(root, "warren", "Show.S01E02.1080p.NF.WEB-DL-WARRN.mkv"), [["it", "Italian"]]);
 
 		const targets = [join(root, "enc", "Show - S01E01 [AV1]-Rabbit.mkv"), join(root, "enc", "Show - S01E02 [AV1]-Rabbit.mkv")];
-		const scan = await scanReleaseSubtitles({ targets, sourceDirs: [join(root, "erai"), join(root, "varyg")], options });
-		expect(scan.unmatchedSources.map((p) => p.split("/").pop())).toEqual(["[Erai-raws] Show - 03 [1080p CR WEB-DL][ABCD1236].mkv"]);
+		const scan = await scanReleaseSubtitles({ targets, sourceDirs: [join(root, "hare"), join(root, "warren")], options });
+		expect(scan.unmatchedSources.map((p) => p.split("/").pop())).toEqual(["[Hare-raws] Show - 03 [1080p CR WEB-DL][ABCD1236].mkv"]);
 		expect(scan.columns.map((c) => c.key)).toEqual(["en:full", "de:full", "it:full"]);
 		const [first, second] = scan.rows;
-		expect(first!.sources.map((s) => [s.name, s.method])).toEqual([["[Erai-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv", "episode"]]);
+		expect(first!.sources.map((s) => [s.name, s.method])).toEqual([["[Hare-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv", "episode"]]);
 		expect(first!.cells.map((c) => c.action)).toEqual(["keep", "add", "missing"]);
 		expect(second!.sources).toHaveLength(2);
 		expect(second!.cells.map((c) => c.action)).toEqual(["keep", "missing", "add"]);
@@ -320,19 +320,19 @@ const hasTools = ["mkvmerge"].every((tool) => Bun.which(tool));
 		for (const dir of ["enc", "season", "series"]) mkdirSync(join(root, dir));
 		const targets = [join(root, "enc", "Show - S02E01.mkv"), join(root, "enc", "Show - S02E02.mkv")];
 		for (const target of targets) await make(target, "en");
-		for (const n of [13, 14]) await make(join(root, "season", `[Erai-raws] Show - ${n} [1080p CR WEB-DL].mkv`), "de");
-		for (let n = 1; n <= 24; n++) await make(join(root, "series", `[Erai-raws] Show - ${String(n).padStart(2, "0")} [1080p CR WEB-DL].mkv`), "it");
+		for (const n of [13, 14]) await make(join(root, "season", `[Hare-raws] Show - ${n} [1080p CR WEB-DL].mkv`), "de");
+		for (let n = 1; n <= 24; n++) await make(join(root, "series", `[Hare-raws] Show - ${String(n).padStart(2, "0")} [1080p CR WEB-DL].mkv`), "it");
 
 		const auto = await scanReleaseSubtitles({ targets, sourceDirs: [join(root, "season"), join(root, "series")], options });
 		expect(auto.rows.map((row) => row.sources.map((s) => [s.name, s.method, s.offset]))).toEqual([
-			[["[Erai-raws] Show - 13 [1080p CR WEB-DL].mkv", "absolute", 12]],
-			[["[Erai-raws] Show - 14 [1080p CR WEB-DL].mkv", "absolute", 12]],
+			[["[Hare-raws] Show - 13 [1080p CR WEB-DL].mkv", "absolute", 12]],
+			[["[Hare-raws] Show - 14 [1080p CR WEB-DL].mkv", "absolute", 12]],
 		]);
 
 		const given = await scanReleaseSubtitles({ targets, sourceDirs: [{ path: join(root, "series"), offset: 12 }], options });
 		expect(given.rows.map((row) => row.sources.map((s) => s.name))).toEqual([
-			["[Erai-raws] Show - 13 [1080p CR WEB-DL].mkv"],
-			["[Erai-raws] Show - 14 [1080p CR WEB-DL].mkv"],
+			["[Hare-raws] Show - 13 [1080p CR WEB-DL].mkv"],
+			["[Hare-raws] Show - 14 [1080p CR WEB-DL].mkv"],
 		]);
 		expect(given.rows[0]!.additions.map((a) => a.key)).toEqual(["it:full"]);
 	}, 30_000);

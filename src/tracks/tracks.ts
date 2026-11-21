@@ -767,13 +767,13 @@ function scoreGroupCandidate(s: string): number {
 	const t = s.trim();
 	let score = 0;
 
-	// Fansub suffix ("Kaleido-subs", "BlubberSubs") - but not a bare "sub"/"subs".
+	// Fansub suffix ("Meadow-subs", "CloverSubs") - but not a bare "sub"/"subs".
 	if (/(?:fan)?subs?\b/i.test(t) && !/^(?:fan)?subs?$/i.test(t)) score += 4;
-	// Hyphen joining two alpha parts ("Erai-raws", "GST-subs").
+	// Hyphen joining two alpha parts ("Hare-raws", "BNY-subs").
 	if (/[A-Za-z]+-[A-Za-z]+/.test(t)) score += 2;
-	// Internal CamelCase ("SubsPlease", "BlubberSubs").
+	// Internal CamelCase ("SubsHop", "CloverSubs").
 	if (/[a-z][A-Z]/.test(t)) score += 3;
-	// All-caps acronym ("MTBB", "GJM", "ASW").
+	// All-caps acronym ("BNNY", "GJM", "ASW").
 	if (/^[A-Z][A-Z0-9]+$/.test(t)) score += 3;
 	// Official-studio keywords ("Sentai Filmworks").
 	if (/\b(filmworks|studios?|media|entertainment|works|productions?|fansubs?)\b/i.test(t)) score += 2;
@@ -811,10 +811,10 @@ function isEditCredit(s: string): boolean {
 /**
  * Extract likely fansub/release group name from a subtitle title.
  *
- * Strategy 1 - Pipe-separated:   "Full Subtitles | Static-Subs (edit)" => "Static-Subs"
- * Strategy 2 - "@"-separated:    "Full Sub@Kaleido-subs"               => "Kaleido-subs"
- * Strategy 3 - Bracketed:        "English (SubsPlease)" / "[MTBB]"     => group
- * Strategy 4 - Bare title (risky, score-gated): "Erai-raws"           => "Erai-raws"
+ * Strategy 1 - Pipe-separated:   "Full Subtitles | Thicket-Subs (edit)" => "Thicket-Subs"
+ * Strategy 2 - "@"-separated:    "Full Sub@Meadow-subs"               => "Meadow-subs"
+ * Strategy 3 - Bracketed:        "English (SubsHop)" / "[BNNY]"     => group
+ * Strategy 4 - Bare title (risky, score-gated): "Hare-raws"           => "Hare-raws"
  *                                                "English"            => null
  */
 export function extractGroupFromTitle(title: string | undefined): string | null {
@@ -852,8 +852,8 @@ export function extractGroupFromTitle(title: string | undefined): string | null 
 	}
 
 	// Strategy 4 (risky): bare title with no delimiters/brackets. Trim blocked
-	// descriptor/language words off both ends ("Full Subtitles Kaleido-subs" =>
-	// "Kaleido-subs"), then accept the remainder only if it scores group-like.
+	// descriptor/language words off both ends ("Full Subtitles Meadow-subs" =>
+	// "Meadow-subs"), then accept the remainder only if it scores group-like.
 	if (!/[|@\[\](){}]/.test(title)) {
 		const tokens = title.trim().split(/\s+/).filter(Boolean);
 		let start = 0;
@@ -1000,12 +1000,12 @@ export function buildAudioTrackName(trackType: AudioTrackType, sourceTitle?: str
  * Build a clean track name for a subtitle stream.
  *
  * Examples:
- *   "Full Subtitles [SubsPlease]"
+ *   "Full Subtitles [SubsHop]"
  *   "Full Subtitles"
- *   "Full Subtitles (Honorifics) [MTBB]"
+ *   "Full Subtitles (Honorifics) [BNNY]"
  *   "SDH [Group]"
  *   "Signs & Songs"
- *   "Full Subtitles [MTBB]"
+ *   "Full Subtitles [BNNY]"
  */
 export function buildSubtitleTrackName(trackType: SubtitleTrackType, sourceTitle?: string, groupOverride?: string): string {
 	const title = sourceTitle || "";

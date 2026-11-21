@@ -82,7 +82,7 @@ function groupIn(name: string): string | null {
 /**
  * Who a track from a release comes from: the streaming source or group its
  * track name credits, else the one in the release's file name, such as CR in
- * "[Erai-raws] Show - 01 [1080p CR WEB-DL]".
+ * "[Hare-raws] Show - 01 [1080p CR WEB-DL]".
  */
 export function releaseCredit(title: string, fileName: string): string | null {
 	// The CRC32 fansub releases end with would otherwise pass for a group.
@@ -418,7 +418,7 @@ export function releaseGrid(rows: ReleaseRow[], languagePriority: string[] = [])
 
 export interface ReleaseFolder {
 	path: string;
-	/** What a release numbered across seasons adds to an episode, such as 12 when S02E01 is "- 13". */
+	/** What the release adds to an encode's episode number, such as 12 when S02E01 is "- 13". Given, it overrides the automatic pairing. */
 	offset?: number;
 }
 
@@ -436,6 +436,8 @@ export interface ReleaseTrackSummary {
 
 export interface ReleaseScan extends ReleaseGrid {
 	unmatchedSources: string[];
+	/** Every release file read, so a pairing can be changed to any of them. */
+	releaseFiles: string[];
 	tracks: ReleaseTrackSummary[];
 }
 
@@ -506,8 +508,8 @@ export function pairReleaseFolders(
 	targets: string[],
 	folders: Array<string | ReleaseFolder>,
 	overrides: ReleaseOverride[] = [],
-): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[] } {
-	const { pairedSources, unmatchedSources } = pairReleaseFoldersAuto(targets, folders);
+): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[]; releaseFiles: string[] } {
+	const { pairedSources, unmatchedSources, releaseFiles } = pairReleaseFoldersAuto(targets, folders);
 	const chosen = new Set<string>();
 	for (const override of overrides) {
 		if (!pairedSources.has(override.targetPath)) continue;
@@ -518,21 +520,20 @@ export function pairReleaseFolders(
 		);
 		for (const path of paths) chosen.add(path);
 	}
-	return { pairedSources, unmatchedSources: unmatchedSources.filter((path) => !chosen.has(path)) };
+	return { pairedSources, unmatchedSources: unmatchedSources.filter((path) => !chosen.has(path)), releaseFiles };
 }
 
 function pairReleaseFoldersAuto(
 	targets: string[],
 	folders: Array<string | ReleaseFolder>,
-): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[] } {
+): { pairedSources: Map<string, ReleaseSource[]>; unmatchedSources: string[]; releaseFiles: string[] } {
 	const pairedSources = new Map<string, ReleaseSource[]>(targets.map((t) => [t, []]));
 	const unmatchedSources: string[] = [];
+	const releaseFiles: string[] = [];
 	for (const folder of folders.map((f) => (typeof f === "string" ? { path: f } : f))) {
-		const { pairs, unmatchedSources: unmatched } = pairRepairFiles(
-			targets,
-			releaseFilesIn(folder.path).filter((path) => !targets.includes(path)),
-			{ absoluteOffset: folder.offset },
-		);
+		const files = releaseFilesIn(folder.path).filter((path) => !targets.includes(path));
+		releaseFiles.push(...files);
+		const { pairs, unmatchedSources: unmatched } = pairRepairFiles(targets, files, { absoluteOffset: folder.offset });
 		unmatchedSources.push(...unmatched);
 		for (const pair of pairs) {
 			if (!pair.sourcePath) continue;
@@ -541,7 +542,7 @@ function pairReleaseFoldersAuto(
 				.push({ path: pair.sourcePath, name: pair.sourceName, method: pair.method, ...(pair.offset !== undefined ? { offset: pair.offset } : {}) });
 		}
 	}
-	return { pairedSources, unmatchedSources };
+	return { pairedSources, unmatchedSources, releaseFiles };
 }
 
 /**
@@ -558,7 +559,7 @@ export async function scanReleaseSubtitles(input: {
 	signal?: AbortSignal;
 }): Promise<ReleaseScan> {
 	const { targets, options, signal } = input;
-	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
+	const { pairedSources, unmatchedSources, releaseFiles } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
 	const files = [...new Set([...targets, ...[...pairedSources.values()].flat().map((s) => s.path)])];
 	const inspected = new Map<string, RepairInspectionFile>();
 	await mapPool(files, 4, async (path) => {
@@ -579,7 +580,7 @@ export async function scanReleaseSubtitles(input: {
 		[...sourcePaths].map((path) => inspected.get(path)!),
 		options.languagePriority,
 	);
-	return { ...releaseGrid(rows, options.languagePriority), unmatchedSources, tracks };
+	return { ...releaseGrid(rows, options.languagePriority), unmatchedSources, releaseFiles, tracks };
 }
 
 /**

@@ -60,7 +60,7 @@ const options: ReleaseAudioOptions = {
 };
 
 const target = file("/enc/Show - S01E01 [AV1]-Rabbit.mkv", [audio("ja", "Opus", 2, { isDefault: true, isOriginal: true })]);
-const web = file("/web/[Erai-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv", [
+const web = file("/web/[Hare-raws] Show - 01 [1080p CR WEB-DL][ABCD1234].mkv", [
 	audio("ja", "AAC", 2),
 	audio("en", "AAC", 2, { title: "English" }),
 	audio("de", "AAC", 2),

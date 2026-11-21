@@ -249,12 +249,12 @@ export function getResolutionTag(width: number, height: number): string {
  *
  * Removes metadata conservatively:
  *   - IMDb ID metadata wherever it appears (`[imdbid-tt0983213]`)
- *   - a trailing release group   (`...[x265]-Judas`  -> `...[x265]`)
+ *   - a trailing release group   (`...[x265]-Lepus`  -> `...[x265]`)
  *   - trailing `[...]` / `(...)` tag blocks, peeled off one at a time
  *   - any leftover trailing separator dash / whitespace
  *
  * It deliberately does NOT cut from the first `[`. Anime-style names lead with
- * the group (`[SubsPlease] Show - 01 [hash]`); cutting from the first bracket
+ * the group (`[SubsHop] Show - 01 [hash]`); cutting from the first bracket
  * there wipes the entire title, so every episode collapses to the same base
  * name and later encodes overwrite earlier ones. The episode/sequence portion
  * must survive so distinct inputs keep distinct names.

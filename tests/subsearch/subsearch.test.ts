@@ -231,8 +231,8 @@ describe("mergeEpisodeListings", () => {
 	});
 
 	it("keeps what the series search found and only correctly named neighbours", () => {
-		const main = [listing(1, "[Erai-raws] Solo Leveling - 12 END")];
-		const series = [listing(1, "[Erai-raws] Solo Leveling - 12 END"), listing(2, "Solo.Leveling.S01E11.1080p.WEB")];
+		const main = [listing(1, "[Hare-raws] Solo Leveling - 12 END")];
+		const series = [listing(1, "[Hare-raws] Solo Leveling - 12 END"), listing(2, "Solo.Leveling.S01E11.1080p.WEB")];
 		const neighbours = [
 			listing(3, "[Crunchyroll] Ore dake Level Up na Ken - 11"),
 			listing(4, "[Crunchyroll] Ore dake Level Up na Ken - 10"),

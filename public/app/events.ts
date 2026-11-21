@@ -224,6 +224,7 @@ import {
 	handleReleaseSubsOptionChange,
 	handleReleaseSubsSourcesClick,
 	handleReleaseSubsSourcesInput,
+	handleReleaseSubsSourcesChange,
 	openReleaseSubs,
 	pickReleaseSubsTargetFolder,
 	pickReleaseSubsTargetVideos,
@@ -239,6 +240,7 @@ import {
 	handleReleaseAudioGridClick,
 	handleReleaseAudioSourcesClick,
 	handleReleaseAudioSourcesInput,
+	handleReleaseAudioSourcesChange,
 	openReleaseAudio,
 	pickReleaseAudioTargetFolder,
 	pickReleaseAudioTargetVideos,
@@ -352,6 +354,7 @@ export function initEventListeners() {
 	byId("release-subs-pick-videos-btn").addEventListener("click", pickReleaseSubsTargetVideos);
 	byId("release-subs-sources").addEventListener("click", handleReleaseSubsSourcesClick);
 	byId("release-subs-sources").addEventListener("input", handleReleaseSubsSourcesInput);
+	byId("release-subs-sources").addEventListener("change", handleReleaseSubsSourcesChange);
 	byId("release-subs-preferred").addEventListener("input", handleReleaseSubsOptionChange);
 	byId("release-subs-replace").addEventListener("change", handleReleaseSubsOptionChange);
 	byId("release-subs-scan-btn").addEventListener("click", () => scanReleaseSubs());
@@ -370,6 +373,7 @@ export function initEventListeners() {
 	byId("release-audio-pick-videos-btn").addEventListener("click", pickReleaseAudioTargetVideos);
 	byId("release-audio-sources").addEventListener("click", handleReleaseAudioSourcesClick);
 	byId("release-audio-sources").addEventListener("input", handleReleaseAudioSourcesInput);
+	byId("release-audio-sources").addEventListener("change", handleReleaseAudioSourcesChange);
 	byId("release-audio-scan-btn").addEventListener("click", () => scanReleaseAudio());
 	byId("release-audio-grid").addEventListener("change", handleReleaseAudioGridChange);
 	byId("release-audio-grid").addEventListener("click", handleReleaseAudioGridClick);

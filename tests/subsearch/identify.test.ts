@@ -34,7 +34,7 @@ describe("parseMediaName", () => {
 	});
 
 	it("reads anime absolute numbers", () => {
-		expect(parseMediaName("/a/[SubsPlease] Sousou no Frieren - 12 (1080p) [ABCD1234].mkv")).toMatchObject({
+		expect(parseMediaName("/a/[SubsHop] Sousou no Frieren - 12 (1080p) [ABCD1234].mkv")).toMatchObject({
 			kind: "episode",
 			title: "Sousou no Frieren",
 			episode: 12,

@@ -4,6 +4,18 @@ import { buttonById, byId, inputById } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openMkvVideosPicker, openRepairFolderPicker } from "./repair";
 import { update } from "./polling";
+import {
+	checkAllHtml,
+	checkAllTiming,
+	checkTiming,
+	pairingView,
+	pickRelease,
+	shiftBelow,
+	shiftButton,
+	sourcePickers,
+	type LastPick,
+	type PairingView,
+} from "./release-pairing";
 
 const MAX_RELEASE_FOLDERS = 10;
 
@@ -24,6 +36,9 @@ let scannedWith = "";
 let rescanQueued = false;
 /** Releases picked by hand, by video. They outlive a scan and replace what pairing found. */
 let chosenReleases = new Map<string, string[]>();
+let lastPick: LastPick = null;
+/** Labels of the releases and encodes, made once per render. */
+let view: PairingView = pairingView([], []);
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -76,8 +91,8 @@ function renderFolders(): void {
 						${
 							dir.file
 								? ""
-								: `<label class="release-subs-offset" title="For a release numbered across seasons: what it adds to the episode number, such as 12 when S02E01 is episode 13. Empty finds it from the file names.">Offset
-							<input type="number" min="1" max="5000" class="repair-input" data-release-offset="${i}" placeholder="auto" value="${escapeHtml(dir.offset)}">
+								: `<label class="release-subs-offset" title="What the release adds to each episode number, such as 12 when S02E01 is episode 13 of the release, or -1 when every episode is paired one too far. It replaces the automatic pairing for this folder. Empty pairs from the file names.">Offset
+							<input type="number" min="-5000" max="5000" class="repair-input" data-release-offset="${i}" placeholder="auto" value="${escapeHtml(dir.offset)}">
 						</label>`
 						}
 						<button class="btn btn-ghost btn-sm" type="button" data-release-remove-dir="${i}">Remove</button>
@@ -91,15 +106,6 @@ function renderFolders(): void {
 	const button = buttonById("release-audio-scan-btn");
 	button.disabled = scanning || !(targetDir || targetVideos.length) || !releaseDirs.length;
 	button.textContent = scanning ? "Reading releases..." : scan ? "Read releases again" : "Read releases";
-}
-
-function methodLabel(method: string, offset?: number): string {
-	if (method === "episode") return '<span class="repair-pair-method">Episode number</span>';
-	if (method === "absolute")
-		return `<span class="repair-pair-method" title="The release numbers its episodes across seasons">Absolute number (+${offset ?? "?"})</span>`;
-	if (method === "order") return '<span class="repair-pair-method repair-pair-weak">Filename order</span>';
-	if (method === "manual") return '<span class="repair-pair-method">Chosen by hand</span>';
-	return '<span class="repair-pair-method repair-pair-none">No match</span>';
 }
 
 function selectionOf(row: ReleaseAudioRow, cell: ReleaseAudioCell): string {
@@ -148,16 +154,14 @@ function renderCheck(row: ReleaseAudioRow): string {
 	return (check.results ?? [])
 		.map(
 			(r) =>
-				`<div class="release-check ${r.matched ? "is-matched" : "repair-pair-none"}" title="${escapeHtml(fileName(r.sourcePath))}">${r.matched ? "✓" : "✗"} ${escapeHtml(fileName(r.sourcePath).slice(0, 28))}: ${escapeHtml(r.detail)}</div>`,
+				`<div class="release-check ${r.matched ? "is-matched" : "repair-pair-none"}" title="${escapeHtml(fileName(r.sourcePath))}">${r.matched ? "✓" : "✗"} ${escapeHtml(view.labels.get(r.sourcePath) ?? fileName(r.sourcePath).slice(0, 28))}: ${escapeHtml(r.detail)}</div>`,
 		)
 		.join("");
 }
 
 function renderRow(row: ReleaseAudioRow, rowIndex: number): string {
 	const sources = row.sources.length
-		? row.sources
-				.map((s) => `<div class="release-row-source" title="${escapeHtml(s.path)}">${escapeHtml(s.name)} ${methodLabel(s.method, s.offset)}</div>`)
-				.join("")
+		? sourcePickers(view, row, rowIndex, scanning)
 		: '<div class="repair-pair-warning">No release of this episode was found.</div>';
 	const check = checks.get(row.targetPath);
 	return `<tr>
@@ -167,6 +171,7 @@ function renderRow(row: ReleaseAudioRow, rowIndex: number): string {
 			<div class="release-row-actions">
 				<button class="btn btn-ghost btn-sm" type="button" data-release-pick="${rowIndex}" ${scanning ? "disabled" : ""}>${row.sources.length ? "Change release..." : "Choose release..."}</button>
 				${chosenReleases.has(row.targetPath) ? `<button class="btn btn-ghost btn-sm" type="button" data-release-auto="${rowIndex}" ${scanning ? "disabled" : ""} title="Pair this episode from the release folders again">Automatic</button>` : ""}
+				${shiftButton(lastPick, row, rowIndex, scan?.rows ?? [], scanning)}
 				${row.sources.length ? `<button class="btn btn-ghost btn-sm" type="button" data-release-check="${rowIndex}" ${check?.loading ? "disabled" : ""}>Check timing</button>` : ""}
 			</div>
 			${renderCheck(row)}
@@ -209,8 +214,9 @@ function renderGrid(): void {
 				`<th class="release-col${excluded.has(col.key) ? " is-excluded" : ""}" scope="col"><label title="Take ${escapeHtml(col.label)} audio from the releases"><input type="checkbox" data-release-column="${escapeHtml(col.key)}" ${excluded.has(col.key) ? "" : "checked"}> ${escapeHtml(col.label)}</label></th>`,
 		)
 		.join("");
+	view = pairingView(scan.rows, scan.releaseFiles ?? []);
 	grid.innerHTML = scan.rows.length
-		? `<table class="release-grid"><thead><tr><th class="release-row-head" scope="col">Episode</th>${head}</tr></thead><tbody>${scan.rows.map(renderRow).join("")}</tbody></table>`
+		? `${checkAllHtml(scan.rows, checks)}<table class="release-grid"><thead><tr><th class="release-row-head" scope="col">Episode</th>${head}</tr></thead><tbody>${scan.rows.map(renderRow).join("")}</tbody></table>`
 		: '<div class="repair-empty">There are no MKV files to add audio to.</div>';
 
 	const planned = plannedRows();
@@ -306,6 +312,15 @@ export function handleReleaseAudioSourcesInput(event: Event): void {
 	renderGrid();
 }
 
+/** Leaving the offset field, or Enter in it, reads the releases again with it. */
+export function handleReleaseAudioSourcesChange(event: Event): void {
+	const input = event.target;
+	if (!(input instanceof HTMLInputElement) || input.dataset.releaseOffset === undefined || !scan) return;
+	checks = new Map();
+	lastPick = null;
+	void scanReleaseAudio(true);
+}
+
 /** With keep, the picks and turned off columns stay, as after choosing an episode's release by hand. */
 export async function scanReleaseAudio(keep = false): Promise<void> {
 	if (scanning) {
@@ -334,6 +349,7 @@ export async function scanReleaseAudio(keep = false): Promise<void> {
 			selections = new Map();
 			excluded = new Set();
 			checks = new Map();
+			lastPick = null;
 		}
 	} catch (error) {
 		setError(errorMessage(error));
@@ -356,6 +372,14 @@ export function handleReleaseAudioGridChange(event: Event): void {
 		if (element.checked) excluded.delete(key);
 		else excluded.add(key);
 		renderGrid();
+		return;
+	}
+	if (element instanceof HTMLSelectElement && element.dataset.releaseSourceRow !== undefined) {
+		const row = scan.rows[Number(element.dataset.releaseSourceRow)];
+		if (!row) return;
+		const { paths, pick } = pickRelease(view, row, Number(element.dataset.releaseSourceIndex), element.value);
+		lastPick = pick;
+		setChosenReleases(row.targetPath, paths);
 		return;
 	}
 	if (!(element instanceof HTMLSelectElement) || element.dataset.releaseRow === undefined) return;
@@ -387,6 +411,7 @@ export async function handleReleaseAudioGridClick(event: MouseEvent): Promise<vo
 	if (scan && (pick || auto)) {
 		const row = scan.rows[Number((pick ?? auto)!.dataset.releasePick ?? (pick ?? auto)!.dataset.releaseAuto)];
 		if (!row) return;
+		lastPick = null;
 		if (auto) setChosenReleases(row.targetPath, null);
 		else
 			openMkvVideosPicker(
@@ -400,20 +425,27 @@ export async function handleReleaseAudioGridClick(event: MouseEvent): Promise<vo
 			);
 		return;
 	}
+	const shift = target?.closest<HTMLButtonElement>("[data-release-shift]");
+	if (scan && shift && lastPick) {
+		for (const [targetPath, paths] of shiftBelow(view, scan.rows, Number(shift.dataset.releaseShift), lastPick)) {
+			chosenReleases.set(targetPath, paths);
+			checks.delete(targetPath);
+		}
+		lastPick = null;
+		void scanReleaseAudio(true);
+		return;
+	}
+	if (scan && target?.closest("[data-release-check-all]")) {
+		await checkAllTiming(scan.rows, checks, fetchReleaseCheck, renderGrid);
+		return;
+	}
 	const button = target?.closest<HTMLButtonElement>("[data-release-check]");
 	if (!button || !scan) return;
 	const row = scan.rows[Number(button.dataset.releaseCheck)];
 	if (!row) return;
 	checks.set(row.targetPath, { loading: true });
 	renderGrid();
-	try {
-		checks.set(row.targetPath, {
-			loading: false,
-			results: await fetchReleaseCheck({ targetPath: row.targetPath, sourcePaths: row.sources.map((s) => s.path) }),
-		});
-	} catch (error) {
-		checks.set(row.targetPath, { loading: false, error: errorMessage(error) });
-	}
+	await checkTiming(row, checks, fetchReleaseCheck);
 	renderGrid();
 }
 

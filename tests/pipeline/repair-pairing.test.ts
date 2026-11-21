@@ -86,13 +86,13 @@ describe("pairRepairFiles", () => {
 
 	test("pairs a season with a release numbered across seasons by the offset its episodes agree on", () => {
 		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv", "/enc/Show - S02E04.mkv"];
-		const sources = ["/src/[Erai-raws] Show - 13 [1080p].mkv", "/src/[Erai-raws] Show - 14 [1080p].mkv", "/src/[Erai-raws] Show - 16 [1080p].mkv"];
+		const sources = ["/src/[Hare-raws] Show - 13 [1080p].mkv", "/src/[Hare-raws] Show - 14 [1080p].mkv", "/src/[Hare-raws] Show - 16 [1080p].mkv"];
 		const { pairs, unmatchedSources } = pairRepairFiles(season2, sources);
 
 		expect(pairs.map((pair) => [pair.targetName, pair.sourceName, pair.method, pair.offset])).toEqual([
-			["Show - S02E01.mkv", "[Erai-raws] Show - 13 [1080p].mkv", "absolute", 12],
-			["Show - S02E02.mkv", "[Erai-raws] Show - 14 [1080p].mkv", "absolute", 12],
-			["Show - S02E04.mkv", "[Erai-raws] Show - 16 [1080p].mkv", "absolute", 12],
+			["Show - S02E01.mkv", "[Hare-raws] Show - 13 [1080p].mkv", "absolute", 12],
+			["Show - S02E02.mkv", "[Hare-raws] Show - 14 [1080p].mkv", "absolute", 12],
+			["Show - S02E04.mkv", "[Hare-raws] Show - 16 [1080p].mkv", "absolute", 12],
 		]);
 		expect(unmatchedSources).toEqual([]);
 	});
@@ -129,9 +129,64 @@ describe("pairRepairFiles", () => {
 		]);
 	});
 
+	test("an offset given by hand overrides the automatic pairing, whatever season the release names", () => {
+		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv", "/enc/Show - S02E03.mkv"];
+		const sources = ["/src/Show S2 - 01.mkv", "/src/Show S2 - 02.mkv", "/src/Show S2 - 03.mkv", "/src/Show S2 - 04.mkv"];
+
+		expect(pairRepairFiles(season2, sources, { absoluteOffset: 1 }).pairs.map((pair) => [pair.sourceName, pair.method, pair.offset])).toEqual([
+			["Show S2 - 02.mkv", "absolute", 1],
+			["Show S2 - 03.mkv", "absolute", 1],
+			["Show S2 - 04.mkv", "absolute", 1],
+		]);
+		const back = pairRepairFiles(season2, sources, { absoluteOffset: -1 });
+		expect(back.pairs.map((pair) => pair.sourceName)).toEqual(["", "Show S2 - 01.mkv", "Show S2 - 02.mkv"]);
+		expect(back.unmatchedSources).toEqual(["/src/Show S2 - 03.mkv", "/src/Show S2 - 04.mkv"]);
+	});
+
+	test("an offset given by hand leaves an encode number found twice unpaired", () => {
+		const both = ["/enc/Show - S01E01.mkv", "/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv"];
+		const { pairs } = pairRepairFiles(both, ["/src/Show - 01.mkv", "/src/Show - 02.mkv"], { absoluteOffset: 0 });
+
+		expect(pairs.map((pair) => [pair.targetName, pair.sourceName])).toEqual([
+			["Show - S01E01.mkv", ""],
+			["Show - S02E01.mkv", ""],
+			["Show - S02E02.mkv", "Show - 02.mkv"],
+		]);
+	});
+
 	test("reads whether a name gives its season", () => {
 		expect(parseEpisodeName("Show - S02E01.mkv")).toEqual({ season: 2, episode: 1 });
 		expect(parseEpisodeName("[Group] Show - 13v2 [1080p].mkv")).toEqual({ episode: 13 });
 		expect(parseEpisodeName("Show Episode 7.mkv")).toEqual({ episode: 7 });
+	});
+
+	test("reads a season named apart from the episode", () => {
+		expect(parseEpisodeName("[Fluff] ReZero kara Hajimeru Isekai Seikatsu S2 - 02 [BD 1920x1080 x264 FLAC].mkv")).toEqual({ season: 2, episode: 2 });
+		expect(parseEpisodeName("[Group] Show Season 3 - 05 [1080p].mkv")).toEqual({ season: 3, episode: 5 });
+		expect(parseEpisodeName("[Group] Show 2nd Season - 05 [1080p].mkv")).toEqual({ season: 2, episode: 5 });
+	});
+
+	test("pairs a season release that names its season apart from the episode", () => {
+		const targets = [1, 2, 3].map((e) => `/enc/Re - ZERO, Starting Life in Another World (2016) - S02E0${e} - T [Bluray-1080p][Opus 2.0][AV1]-Bunny.mkv`);
+		const sources = [1, 2, 3].map((e) => `/src/[Fluff] ReZero kara Hajimeru Isekai Seikatsu S2 - 0${e} [BD 1920x1080 x264 FLAC].mkv`);
+		const { pairs } = pairRepairFiles(targets, sources);
+
+		expect(pairs.map((pair) => [pair.sourceName.match(/ - (\d+) /)![1], pair.method])).toEqual([
+			["01", "episode"],
+			["02", "episode"],
+			["03", "episode"],
+		]);
+	});
+
+	test("pairs a later season with a release that numbers it from 1 without naming it", () => {
+		const season2 = ["/enc/Show - S02E01.mkv", "/enc/Show - S02E02.mkv", "/enc/Show - S02E03.mkv"];
+		const sources = ["/src/[Group] Show - 01.mkv", "/src/[Group] Show - 02.mkv", "/src/[Group] Show - 03.mkv"];
+		const { pairs } = pairRepairFiles(season2, sources);
+
+		expect(pairs.map((pair) => [pair.sourceName, pair.method, pair.offset])).toEqual([
+			["[Group] Show - 01.mkv", "episode", undefined],
+			["[Group] Show - 02.mkv", "episode", undefined],
+			["[Group] Show - 03.mkv", "episode", undefined],
+		]);
 	});
 });

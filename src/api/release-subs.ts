@@ -112,8 +112,8 @@ export function resolveReleaseFolders(raw: unknown, config: AppConfig): ReleaseF
 		if (seen.has(path)) continue;
 		seen.add(path);
 		const offset = folder.offset === undefined || folder.offset === null || folder.offset === "" ? undefined : Number(folder.offset);
-		if (offset !== undefined && (!Number.isInteger(offset) || offset < 1 || offset > 5000))
-			throw new Error("A numbering offset must be a whole number from 1 to 5000");
+		if (offset !== undefined && (!Number.isInteger(offset) || Math.abs(offset) > 5000))
+			throw new Error("A numbering offset must be a whole number from -5000 to 5000");
 		folders.push({ path, ...(offset !== undefined ? { offset } : {}) });
 	}
 	return folders;

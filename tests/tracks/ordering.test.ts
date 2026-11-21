@@ -18,7 +18,7 @@ const emit = (language: string, trackName: string, file: string) => ({
 
 describe("organization attribution", () => {
 	it("stamps the organization as the release group, not the source group", () => {
-		expect(buildSubtitleTrackName("full", "English (SubsPlease)", "RabbitCompany")).toBe("Full Subtitles [RabbitCompany]");
+		expect(buildSubtitleTrackName("full", "English (SubsHop)", "RabbitCompany")).toBe("Full Subtitles [RabbitCompany]");
 		expect(buildSubtitleTrackName("honorifics", undefined, "RabbitCompany")).toBe("Full Subtitles (Honorifics) [RabbitCompany]");
 	});
 });
@@ -53,7 +53,7 @@ describe("orderOutputSubtitles", () => {
 
 	it("interleaves translated tracks into the normal language-priority order", () => {
 		// Priority: eng, slv, deu, then wildcard. Native has only English.
-		const natives: NativeEmitItem[] = [{ stream: stream(0, "eng", "English [SubsPlease]"), emit: emit("eng", "Full Subtitles [SubsPlease]", "eng.ass") }];
+		const natives: NativeEmitItem[] = [{ stream: stream(0, "eng", "English [SubsHop]"), emit: emit("eng", "Full Subtitles [SubsHop]", "eng.ass") }];
 		const translated: TranslatedEmitItem[] = [
 			{ sourceIndex: 0, emit: emit("deu", "Full Subtitles [RabbitCompany]", "deu.ass") },
 			{ sourceIndex: 0, emit: emit("slv", "Full Subtitles [RabbitCompany]", "slv.ass") },
@@ -61,7 +61,7 @@ describe("orderOutputSubtitles", () => {
 		const ordered = orderOutputSubtitles(natives, translated, [stream(0, "eng")], sorter(["eng", "slv", "deu", "*"]));
 		expect(ordered.map((e) => e.language)).toEqual(["eng", "slv", "deu"]);
 		// The translated tracks carry the org tag; the native keeps its own group.
-		expect(ordered[0]!.trackName).toBe("Full Subtitles [SubsPlease]");
+		expect(ordered[0]!.trackName).toBe("Full Subtitles [SubsHop]");
 		expect(ordered[1]!.trackName).toBe("Full Subtitles [RabbitCompany]");
 	});
 

@@ -23,11 +23,11 @@ describe("extractBaseTitle", () => {
 
 describe("detectReleaseGroup", () => {
 	it("reads the group after the last tag block", () => {
-		expect(detectReleaseGroup("Show - S01E01 [Bluray-1080p][x265]-Judas")).toBe("Judas");
+		expect(detectReleaseGroup("Show - S01E01 [Bluray-1080p][x265]-Lepus")).toBe("Lepus");
 		expect(detectReleaseGroup("Show - S01E01 [WEBDL-1080p][x264]-Lolicons Anônimos")).toBe("Lolicons Anônimos");
 		expect(detectReleaseGroup("Show - S01E01 [WEBDL-1080p][x264]-Fansub Group")).toBe("Fansub Group");
 		expect(detectReleaseGroup("Show.S01E01.1080p.WEB-DL.x264-GRP.v2")).toBeNull();
-		expect(detectReleaseGroup("[SubsPlease] Show - 01 (1080p) [ABCD1234]")).toBeNull();
+		expect(detectReleaseGroup("[SubsHop] Show - 01 (1080p) [ABCD1234]")).toBeNull();
 	});
 
 	it("does not take a title for a group", () => {

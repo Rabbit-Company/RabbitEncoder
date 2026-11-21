@@ -708,6 +708,7 @@ export interface ReleaseScan {
 	columns: ReleaseColumn[];
 	rows: ReleaseRow[];
 	unmatchedSources: string[];
+	releaseFiles: string[];
 	tracks: ReleaseTrackSummary[];
 }
 
@@ -754,6 +755,7 @@ export interface ReleaseAudioScan {
 	columns: ReleaseColumn[];
 	rows: ReleaseAudioRow[];
 	unmatchedSources: string[];
+	releaseFiles: string[];
 }
 
 export type AudioTrackChoice = "auto" | "copy" | "encode" | "remove";

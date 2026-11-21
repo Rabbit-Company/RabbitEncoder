@@ -333,10 +333,12 @@ export interface ReleaseAudioScan {
 	columns: ReleaseAudioColumn[];
 	rows: ReleaseAudioRow[];
 	unmatchedSources: string[];
+	/** Every release file read, so a pairing can be changed to any of them. */
+	releaseFiles: string[];
 }
 
 /** One column per language and kind any file has, with every row holding a cell for each. */
-export function releaseAudioGrid(rows: ReleaseAudioRow[], languagePriority: string[] = []): Omit<ReleaseAudioScan, "unmatchedSources"> {
+export function releaseAudioGrid(rows: ReleaseAudioRow[], languagePriority: string[] = []): Omit<ReleaseAudioScan, "unmatchedSources" | "releaseFiles"> {
 	const seen = new Map<string, { key: string; language: string; kind: AudioTrackType }>();
 	for (const row of rows)
 		for (const cell of row.cells) if (!seen.has(cell.key)) seen.set(cell.key, { key: cell.key, language: cell.language, kind: cell.kind });
@@ -367,7 +369,7 @@ export async function scanReleaseAudio(input: {
 	signal?: AbortSignal;
 }): Promise<ReleaseAudioScan> {
 	const { targets, options, signal } = input;
-	const { pairedSources, unmatchedSources } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
+	const { pairedSources, unmatchedSources, releaseFiles } = pairReleaseFolders(targets, input.sourceDirs, input.overrides);
 	const files = [...new Set([...targets, ...[...pairedSources.values()].flat().map((s) => s.path)])];
 	const inspected = new Map<string, ReleaseAudioFile>();
 	await mapPool(files, 4, async (path) => {
@@ -382,7 +384,7 @@ export async function scanReleaseAudio(input: {
 		);
 		return { ...plan, targetName: basename(targetPath), sources };
 	});
-	return { ...releaseAudioGrid(rows, options.languagePriority), unmatchedSources };
+	return { ...releaseAudioGrid(rows, options.languagePriority), unmatchedSources, releaseFiles };
 }
 
 /** The job plan that carries out one target's plan, or null when there is nothing to add. */

@@ -74,7 +74,7 @@ describe("planTrackOrder", () => {
 		expect(existingSubtitleKind({ codec_id: "S_HDMV/PGS", forced_track: true })).toEqual({ kind: "forced", text: false });
 		expect(existingSubtitleKind({ codec_id: "S_TEXT/UTF8", track_name: "English SDH" })).toEqual({ kind: "sdh", text: true });
 		expect(existingSubtitleKind({ codec_id: "S_TEXT/ASS", track_name: "Signs & Songs" })).toEqual({ kind: "forced", text: true });
-		expect(existingSubtitleKind({ codec_id: "S_TEXT/ASS", track_name: "Full Subtitles [SubsPlease]" })).toEqual({ kind: "full", text: true });
+		expect(existingSubtitleKind({ codec_id: "S_TEXT/ASS", track_name: "Full Subtitles [SubsHop]" })).toEqual({ kind: "full", text: true });
 	});
 
 	it("appends when the file has no subtitles", () => {
