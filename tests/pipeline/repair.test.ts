@@ -6,6 +6,7 @@ import {
 	buildRepairAuditGroupPlans,
 	buildRepairLanguageRemovalPlans,
 	buildRepairSubtitleOrderPlans,
+	buildRepairTrimPlans,
 	groupRepairAuditFiles,
 	isMetadataOnlyRepair,
 	repairAuditGroupLabel,
@@ -258,6 +259,31 @@ describe("subtitle repair plans", () => {
 		]);
 		expect(buildRepairAuditGroupPlans(files, { ...edit, subtitleOrder: undefined, removeSubtitles: [0, 1, 2] })[0]!.tracks).toEqual([]);
 		expect(() => buildRepairAuditGroupPlans(files, { ...edit, removeSubtitles: [3] })).toThrow("must name subtitle tracks");
+	});
+
+	test("ends only the text subtitles that last longer than the video and keeps every track", () => {
+		const files = [
+			{
+				path: "/show/e01.mkv",
+				tracks: [
+					auditTrack("audio", "jpn", "Japanese", { id: 1, overrunSeconds: 5 }),
+					auditTrack("subtitles", "en", "Full", { id: 2 }),
+					auditTrack("subtitles", "pt-BR", "Full", { id: 3, overrunSeconds: 44 }),
+					auditTrack("subtitles", "ger", "PGS", { id: 4, codec: "HDMV PGS", overrunSeconds: 10 }),
+				],
+			},
+			{ path: "/show/e02.mkv", tracks: [auditTrack("subtitles", "pt-BR", "Full", { id: 3 })] },
+		];
+		const plans = buildRepairTrimPlans(files, { replaceTarget: true });
+		expect(plans.map((plan) => plan.targetPath)).toEqual(["/show/e01.mkv"]);
+		expect(plans[0]!.trimSubtitles).toEqual([3]);
+		expect(plans[0]!.tracks.map((track) => [track.trackId, track.mode, track.compression])).toEqual([
+			[2, "copy", "preserve"],
+			[3, "copy", "preserve"],
+			[4, "copy", "preserve"],
+		]);
+		expect(() => buildRepairTrimPlans([files[1]!], { replaceTarget: true })).toThrow("No file has text subtitles");
+		expect(() => sanitizeRepairPlan({ ...plans[0]!, trimSubtitles: [9] })).toThrow("not kept by the repair");
 	});
 
 	test("sanitizes metadata and gives every selected track a stable order", () => {

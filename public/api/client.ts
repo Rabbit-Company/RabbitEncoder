@@ -440,6 +440,18 @@ export async function orderRepairAuditSubtitles(order: RepairAuditSubtitleOrder)
 	return data;
 }
 
+/** Queues one repair per file whose subtitles last longer than the video, ending them with it. */
+export async function trimRepairAuditSubtitles(request: RepairAuditSubtitleOrder): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/trim-subtitles`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle trimming");
+	return data;
+}
+
 /** Queues one repair per file that rebuilds its fonts, optionally cutting every font to the characters used. */
 export async function rebuildRepairAuditFonts(request: { paths: string[]; subset: boolean; replaceTarget: boolean }): Promise<{ jobIds: string[] }> {
 	const response = await authFetch(`${API}/api/repair/audit/rebuild-fonts`, {

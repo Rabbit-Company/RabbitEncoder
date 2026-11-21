@@ -192,3 +192,48 @@ export function retimeDocument(doc: SubDocument, map: TimeMap, endMs?: number, o
 	}
 	return { format: "ass", content: out.join("\n") };
 }
+
+/**
+ * Ends a document at `endMs`, the video's length. Lines that start after it
+ * are removed and lines still showing at it end there. Every other line stays
+ * exactly as it was. Returns how many lines were removed and cut.
+ */
+export function trimDocument(doc: SubDocument, endMs: number): { doc: SubDocument; removed: number; cut: number } {
+	// ASS keeps centiseconds, so the end is rounded down to stay inside the video.
+	const limit = doc.format === "ass" ? Math.floor(endMs / 10) * 10 : Math.floor(endMs);
+	let removed = 0;
+	let cut = 0;
+	if (doc.format === "srt") {
+		const cues = parseSrt(doc.content);
+		if (!cues.some((cue) => cue.endMs > limit)) return { doc, removed, cut };
+		const kept = cues.flatMap((cue) => {
+			if (cue.startMs >= limit) {
+				removed++;
+				return [];
+			}
+			if (cue.endMs > limit) cut++;
+			return [{ ...cue, endMs: Math.min(cue.endMs, limit) }];
+		});
+		const out = kept.map((cue, i) => `${i + 1}\n${srtTime(cue.startMs)} --> ${srtTime(cue.endMs)}\n${cue.text}\n`);
+		return { doc: { format: "srt", content: out.join("\n") }, removed, cut };
+	}
+	const newline = doc.content.includes("\r\n") ? "\r\n" : "\n";
+	const out: string[] = [];
+	for (const line of doc.content.split(/\r?\n/)) {
+		const m = line.match(ASS_EVENT_RE);
+		const start = m ? parseAssTime(m[2]!) : null;
+		const end = m ? parseAssTime(m[3]!) : null;
+		if (!m || start === null || end === null || end <= limit) {
+			out.push(line);
+			continue;
+		}
+		if (start >= limit) {
+			removed++;
+			continue;
+		}
+		cut++;
+		out.push(`${m[1]}${m[2]},${assTime(limit)},${line.slice(m[0].length)}`);
+	}
+	if (!removed && !cut) return { doc, removed, cut };
+	return { doc: { format: "ass", content: out.join(newline) }, removed, cut };
+}

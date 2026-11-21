@@ -283,6 +283,7 @@ import {
 	handleRepairAuditInput,
 	handleRepairAuditLanguagesChange,
 	handleRepairAuditLanguagesClick,
+	handleRepairAuditOverrunsClick,
 	handleRepairAuditFontsClick,
 	handleRepairAuditFontsChange,
 	openRepairAuditJobs,
@@ -329,6 +330,7 @@ export function initEventListeners() {
 	byId("repair-audit-pick-folder-btn").addEventListener("click", openRepairAuditPicker);
 	byId("repair-audit-files").addEventListener("click", handleRepairAuditClick);
 	byId("repair-audit-groups").addEventListener("click", handleRepairAuditClick);
+	byId("repair-audit-overruns").addEventListener("click", handleRepairAuditOverrunsClick);
 	byId("repair-audit-languages").addEventListener("click", handleRepairAuditLanguagesClick);
 	byId("repair-audit-languages").addEventListener("change", handleRepairAuditLanguagesChange);
 	byId("repair-audit-fonts").addEventListener("click", handleRepairAuditFontsClick);

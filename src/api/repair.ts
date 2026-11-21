@@ -17,6 +17,7 @@ import {
 	buildRepairLanguageRemovalPlans,
 	buildRepairSubtitleOrderPlans,
 	buildRepairFontPlans,
+	buildRepairTrimPlans,
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
 	inspectRepairAuditFile,
@@ -394,6 +395,30 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 				"ordering subtitles",
 			);
 			if (c.req.signal.aborted) throw new Error("Subtitle ordering request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** Ends the subtitles of the audited files with their video, one repair job per file with subtitles longer than it. */
+	app.post("/api/repair/audit/trim-subtitles", async (c) => {
+		try {
+			const raw = (await c.req.json()) as RepairAuditSubtitleOrder;
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(String(path), config, "Audit file")))];
+			const inspected = await inspectAuditPaths(
+				paths.map((path) => ({ path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairTrimPlans(inspected.files, { replaceTarget: raw.replaceTarget === true });
+			assertNoPendingJobs(
+				plans.map((plan) => plan.targetPath),
+				"ending subtitles with the video",
+			);
+			if (c.req.signal.aborted) throw new Error("Subtitle trimming request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {

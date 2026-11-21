@@ -969,6 +969,8 @@ export interface RepairPlan {
 	 * the text the file has, and with `subset` every font cut to its characters.
 	 */
 	fonts?: { rebuild: true; subset: boolean };
+	/** Target subtitle track IDs to end at the video's end: later lines are removed and lines running past it are cut. */
+	trimSubtitles?: number[];
 }
 
 export interface RepairFontFix {

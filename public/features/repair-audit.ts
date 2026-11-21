@@ -17,6 +17,7 @@ import {
 	fetchFontOriginals,
 	type FontSavings,
 	removeRepairAuditLanguages,
+	trimRepairAuditSubtitles,
 } from "../api/client";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
@@ -148,6 +149,11 @@ function overrunText(track: RepairAuditTrack): string {
 
 function overrunTracks(file: RepairAuditFile): RepairAuditTrack[] {
 	return file.tracks.filter((track) => track.overrunSeconds);
+}
+
+/** Text subtitle tracks longer than the video, which can be ended with it. Picture subtitles cannot be cut. */
+function overrunSubtitles(file: RepairAuditFile): RepairAuditTrack[] {
+	return file.tracks.filter((track) => track.type === "subtitles" && track.overrunSeconds && /substation|subrip|srt|\bass\b|\bssa\b|s_text/i.test(track.codec));
 }
 
 function selectedFile(): RepairAuditFile | undefined {
@@ -302,6 +308,7 @@ function renderAudit(): void {
 			return `<span class="repair-audit-group-summary"><span class="repair-audit-group-badge ${groupClass(group.group)}">${escapeHtml(group.label)}</span>${group.count} file${group.count === 1 ? "" : "s"}${group.group === 0 ? " (majority)" : ""}<button class="btn btn-ghost btn-sm" type="button" data-audit-edit-group="${group.group}" ${canEdit ? "" : "disabled"}>Edit group</button></span>`;
 		})
 		.join("");
+	renderOverruns();
 	renderLanguages();
 	renderFonts();
 	renderFileList();
@@ -477,6 +484,75 @@ async function queueFontRebuild(): Promise<void> {
 		buttonById("repair-audit-pick-folder-btn").disabled = false;
 		if (audit === currentAudit) renderAudit();
 		void loadOriginals();
+	}
+}
+
+/** Ending subtitles that last longer than the video with it, in every file that has them. */
+function renderOverruns(): void {
+	const container = byId("repair-audit-overruns");
+	const files = audit?.files.filter((file) => overrunSubtitles(file).length) ?? [];
+	if (!files.length) {
+		container.innerHTML = "";
+		return;
+	}
+	const pending = files.filter((file) => !queuedPaths.has(file.path));
+	const tracks = pending.reduce((sum, file) => sum + overrunSubtitles(file).length, 0);
+	container.innerHTML = `<details class="settings-subsection repair-audit-overruns" open>
+		<summary>Subtitles longer than the video <span class="hdr-note">${files.length} file${files.length === 1 ? "" : "s"}</span></summary>
+		<div class="settings-subsection-body">
+			<p class="repair-audit-fonts-note">Lines that start after the video ends are removed. Lines still showing when it ends are cut short to end with it. Every other line stays as it is.</p>
+			<div class="repair-audit-language-actions">
+				<label class="repair-audit-save-mode">Save changes to
+					<select class="select-input" id="repair-audit-overruns-save-mode" ${queueingGroup ? "disabled" : ""}>
+						<option value="existing" selected>Existing MKV files</option>
+						<option value="copies">New .repaired.mkv copies</option>
+					</select>
+				</label>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-trim-subtitles ${pending.length && !queueingGroup ? "" : "disabled"}>
+					${pending.length ? `End ${tracks} track${tracks === 1 ? "" : "s"} in ${pending.length} file${pending.length === 1 ? "" : "s"} with the video` : "Changes are queued"}
+				</button>
+			</div>
+		</div>
+	</details>`;
+}
+
+export function handleRepairAuditOverrunsClick(event: MouseEvent): void {
+	if (queueingGroup || !audit) return;
+	const target = event.target instanceof Element ? event.target : null;
+	if (target?.closest("[data-audit-trim-subtitles]")) void queueSubtitleTrim();
+}
+
+async function queueSubtitleTrim(): Promise<void> {
+	if (!audit || queueingGroup) return;
+	const currentAudit = audit;
+	const files = audit.files.filter((file) => overrunSubtitles(file).length && !queuedPaths.has(file.path));
+	if (!files.length) return;
+	const replaceTarget = (byId("repair-audit-overruns-save-mode") as HTMLSelectElement).value === "existing";
+	const where = replaceTarget ? "The files are rewritten in place." : "New .repaired.mkv copies are written next to them.";
+	if (
+		!confirm(
+			`End the subtitles of ${files.length} file${files.length === 1 ? "" : "s"} with the video?\n\nLines after the end are removed and lines running past it are cut short. ${where}`,
+		)
+	)
+		return;
+	queueingGroup = true;
+	buttonById("repair-audit-pick-folder-btn").disabled = true;
+	renderOverruns();
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} file${files.length === 1 ? "" : "s"}...`;
+	try {
+		const result = await trimRepairAuditSubtitles({ paths: files.map((file) => file.path), replaceTarget });
+		if (audit === currentAudit) {
+			files.forEach((file) => queuedPaths.add(file.path));
+			byId("repair-audit-status").textContent =
+				`Queued ${result.jobIds.length} repair${result.jobIds.length === 1 ? "" : "s"} ending subtitles with the video. Follow their progress in the job list. Audit again after completion to see the updated tracks.`;
+		}
+		void update().catch(() => {});
+	} catch (error) {
+		if (audit === currentAudit) byId("repair-audit-status").textContent = errorMessage(error);
+	} finally {
+		queueingGroup = false;
+		buttonById("repair-audit-pick-folder-btn").disabled = false;
+		if (audit === currentAudit) renderAudit();
 	}
 }
 
@@ -664,6 +740,7 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	analyzing = null;
 	savings = null;
 	savingsError = "";
+	byId("repair-audit-overruns").innerHTML = "";
 	byId("repair-audit-languages").innerHTML = "";
 	byId("repair-audit-fonts").innerHTML = "";
 	void loadOriginals();

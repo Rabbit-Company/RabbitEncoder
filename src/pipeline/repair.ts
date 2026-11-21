@@ -73,6 +73,7 @@ import {
 	type InputFont,
 } from "./repair-fonts";
 import { buildReference, type ReferenceTimeline } from "../subsearch/reference";
+import { trimDocument, type SubFormat } from "../subsearch/cues";
 
 interface MkvTrackProperties {
 	codec_id?: string;
@@ -586,6 +587,50 @@ export function buildRepairFontPlans(files: Pick<RepairAuditFile, "path" | "trac
 	);
 }
 
+/** Text subtitles can be cut, picture ones cannot. */
+export function isTextSubtitleCodec(codec: string): boolean {
+	return /substation|subrip|srt|\bass\b|\bssa\b|s_text/i.test(codec);
+}
+
+/** The text subtitle tracks of a file that last longer than its video. */
+export function overrunningSubtitles(tracks: RepairAuditTrack[]): RepairAuditTrack[] {
+	return tracks.filter((track) => track.type === "subtitles" && track.overrunSeconds && isTextSubtitleCodec(track.codec));
+}
+
+/** One repair per file with subtitles longer than the video, ending those tracks at the video's end. Nothing else changes. */
+export function buildRepairTrimPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], options: { replaceTarget: boolean }): RepairPlan[] {
+	const plans = files.flatMap((file) => {
+		const overrunning = overrunningSubtitles(file.tracks);
+		if (!overrunning.length) return [];
+		return [
+			sanitizeRepairPlan({
+				targetPath: file.path,
+				replaceTarget: options.replaceTarget,
+				trimSubtitles: overrunning.map((track) => track.id),
+				tracks: file.tracks
+					.filter((track) => track.type === "subtitles")
+					.map((track, order) => ({
+						title: track.title,
+						language: track.language,
+						isDefault: track.isDefault,
+						isForced: track.isForced,
+						isEnabled: track.isEnabled,
+						isHearingImpaired: track.isHearingImpaired,
+						isOriginal: track.isOriginal,
+						isCommentary: track.isCommentary,
+						source: "target",
+						trackId: track.id,
+						mode: "copy",
+						order,
+						compression: "preserve",
+					})),
+			}),
+		];
+	});
+	if (!plans.length) throw new Error("No file has text subtitles longer than the video");
+	return plans;
+}
+
 function audioMetadataOf(track: RepairAuditTrack | RepairAudioTrackPlan): RepairAuditAudioMetadata {
 	return {
 		title: track.title,
@@ -690,6 +735,12 @@ export function durationSeconds(identified: MkvIdentification): number {
 	return media.length ? Math.max(...media) : (identified.container?.properties?.duration || 0) / 1_000_000_000;
 }
 
+/** Where the video ends, which subtitles are cut to. */
+export function videoEndSeconds(identified: MkvIdentification): number {
+	const video = (identified.tracks ?? []).filter((track) => track.type === "video").map((track) => tagSeconds(track.properties.tag_duration));
+	return Math.max(0, ...video);
+}
+
 function durationsAreCompatible(a: MkvIdentification, b: MkvIdentification): boolean {
 	const aSeconds = durationSeconds(a);
 	const bSeconds = durationSeconds(b);
@@ -780,6 +831,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	const audioOrder = sanitizeAudioOrder(raw.audioOrder);
 	const fontFix = sanitizeFontFix(raw.fontFix);
 	const fonts = raw.fonts ? { rebuild: true as const, subset: !!raw.fonts.subset } : null;
+	const trimSubtitles = sanitizeTrimSubtitles(raw.trimSubtitles, tracks);
 	return {
 		targetPath,
 		sourcePath,
@@ -791,7 +843,19 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...(audioOrder ? { audioOrder } : {}),
 		...(fontFix ? { fontFix } : {}),
 		...(fonts ? { fonts } : {}),
+		...(trimSubtitles.length ? { trimSubtitles } : {}),
 	};
+}
+
+function sanitizeTrimSubtitles(raw: unknown, tracks: RepairSubtitleTrackPlan[]): number[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_REPAIR_TRACKS) throw new Error("Invalid subtitle tracks to cut at the end of the video");
+	const ids = [...new Set(raw.map(Number))];
+	for (const id of ids) {
+		if (!tracks.some((track) => track.source === "target" && track.trackId === id))
+			throw new Error(`Subtitle track ${id} to cut at the end of the video is not kept by the repair`);
+	}
+	return ids;
 }
 
 function sanitizeFontFix(raw: unknown): RepairFontFix | null {
@@ -1248,6 +1312,14 @@ async function readCopiedAssText(
 		texts.push(readFileSync(out, "utf-8"));
 	}
 	return { texts, complete };
+}
+
+/** What ending subtitles with the video changed, for the job's step. */
+function trimmedSummary(trimmed: { removed: number; cut: number }): string {
+	if (!trimmed.removed && !trimmed.cut) return "Subtitles already end with the video";
+	const lines = (count: number) => `${count} line${count === 1 ? "" : "s"}`;
+	const parts = [trimmed.removed ? `${lines(trimmed.removed)} after the video removed` : "", trimmed.cut ? `${lines(trimmed.cut)} cut at the video's end` : ""];
+	return parts.filter(Boolean).join(", ");
 }
 
 /** What a font pass changed, for the job's step. */
@@ -1759,6 +1831,50 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				} else writeFileSync(item.path, renameAssFonts(readFileSync(item.path, "utf-8"), fixRenames), "utf-8");
 			}
 		}
+		// Subtitles longer than the video end with it.
+		const trimIds = new Set(plan.trimSubtitles ?? []);
+		let trimmed = { removed: 0, cut: 0 };
+		if (trimIds.size) {
+			setStep(S_PREPARE, { progress: 56, detail: "Ending subtitles with the video" });
+			const endMs = videoEndSeconds(targetId) * 1000;
+			if (endMs <= 0) throw new Error("The video length is unknown, so subtitles cannot be ended with it");
+			const trimText = (text: string, format: SubFormat): string => {
+				const result = trimDocument({ format, content: text }, endMs);
+				trimmed = { removed: trimmed.removed + result.removed, cut: trimmed.cut + result.cut };
+				return result.doc.content;
+			};
+			const trimsTrack = (track: RepairSubtitleTrackPlan) => track.source === "target" && trimIds.has(track.trackId);
+			for (const item of extracted.filter((item) => trimsTrack(item.plan))) {
+				if (item.rawText !== undefined) item.rawText = trimText(item.rawText, "ass");
+				else writeFileSync(item.path, trimText(readFileSync(item.path, "utf-8"), "srt"), "utf-8");
+			}
+			for (const trackPlan of plan.tracks.filter((track) => track.mode === "copy" && trimsTrack(track))) {
+				checkCancelled();
+				const track = findTrack(targetId, trackPlan);
+				if (!isRabbitProcessable(track)) {
+					warnings.push(`Subtitle track ${trackPlan.trackId} (${trackPlan.language}) holds pictures, so it was not ended with the video`);
+					continue;
+				}
+				const extension = extractedExtension(track);
+				const format = extension === ".ass" ? "ass" : "srt";
+				const item = prepared.find((p) => repairTrackKey(p.plan) === repairTrackKey(trackPlan));
+				if (item) {
+					writeFileSync(item.path, trimText(readFileSync(item.path, "utf-8"), format), "utf-8");
+					continue;
+				}
+				const out = join(tempDir, `${repairTrackKey(trackPlan).replace(":", "_")}.trimmed${extension}`);
+				const extract = await run(["mkvextract", plan.targetPath, "tracks", `${trackPlan.trackId}:${out}`], { signal });
+				checkCancelled();
+				if (extract.code !== 0) throw new Error(`Could not extract subtitle track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
+				const text = readFileSync(out, "utf-8");
+				const result = trimText(text, format);
+				// A track that already ends inside the video is copied as it is.
+				if (result === text) continue;
+				writeFileSync(out, result, "utf-8");
+				prepared.push({ plan: trackPlan, path: out });
+			}
+			Logger.info(`[repair] Ended subtitles of ${basename(plan.targetPath)} with the video: ${trimmed.removed} line(s) removed, ${trimmed.cut} cut`);
+		}
 		if (warnings.length) updateJob({ repairPlan: plan, warning: warnings.join(". ") });
 
 		// Pass 2 - work out which attachments survive. A font still referenced by
@@ -1878,9 +1994,11 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				? `${rabbitPlans.length} track(s) processed`
 				: timings.some(Boolean)
 					? "Source subtitles retimed"
-					: fontsChanged
-						? fontPassSummary(fontPass!)
-						: "No subtitle conversion needed",
+					: trimIds.size
+						? trimmedSummary(trimmed)
+						: fontsChanged
+							? fontPassSummary(fontPass!)
+							: "No subtitle conversion needed",
 		});
 
 		await resolveAutoCompression({
