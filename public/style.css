@@ -2571,6 +2571,8 @@ a.btn {
 
 .repair-audit-language-actions .repair-audit-save-mode {
 	margin-top: 0;
+	font-size: 0.82rem;
+	color: var(--text-2);
 }
 
 .repair-audit-fonts-note {
@@ -2578,6 +2580,65 @@ a.btn {
 	color: var(--text-2);
 	font-size: 0.82rem;
 	line-height: 1.45;
+}
+
+.repair-audit-timing-list {
+	display: grid;
+	gap: 6px;
+}
+
+.repair-audit-timing-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 12px;
+	padding: 6px 8px;
+	font-size: 0.75rem;
+	background: var(--bg-2);
+	border: 1px solid var(--border-subtle);
+	border-radius: 6px;
+}
+
+.repair-audit-timing-row.is-off {
+	border-color: var(--amber);
+}
+
+.repair-audit-timing-pick {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	cursor: pointer;
+}
+
+.repair-audit-timing-change {
+	font-variant-numeric: tabular-nums;
+}
+
+.repair-audit-timing-row.is-off .repair-audit-timing-change {
+	color: var(--amber);
+}
+
+.repair-audit-timing-row .repair-audit-language-count {
+	margin-left: 0;
+}
+
+.repair-audit-timing-extra {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+	color: var(--text-2);
+}
+
+.repair-audit-timing-extra input {
+	width: 80px;
+	padding: 3px 8px;
+}
+
+.repair-audit-timing-row small {
+	flex-basis: 100%;
+	color: var(--text-2);
 }
 
 .repair-audit-fonts-stored {

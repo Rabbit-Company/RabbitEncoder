@@ -3,6 +3,8 @@ import type {
 	RepairAuditFile,
 	RepairAuditLanguage,
 	RepairAuditSubtitleMetadata,
+	RepairAuditTimingFile,
+	RepairAuditTimingTrack,
 	RepairAuditTrack,
 	RepairFolderAudit,
 } from "../types";
@@ -18,7 +20,10 @@ import {
 	type FontSavings,
 	removeRepairAuditLanguages,
 	trimRepairAuditSubtitles,
+	checkRepairAuditTiming,
+	syncRepairAuditSubtitles,
 } from "../api/client";
+import { describeTimeMap, IDENTITY_TIME_MAP, isIdentityTimeMap, timingPatterns, withExtraShift } from "./audit-timing";
 import { buttonById, byId } from "../shared/dom";
 import { errorMessage } from "../shared/errors";
 import { openRepairFolderPicker, openRepairPaths } from "./repair";
@@ -309,6 +314,7 @@ function renderAudit(): void {
 		})
 		.join("");
 	renderOverruns();
+	renderTiming();
 	renderLanguages();
 	renderFonts();
 	renderFileList();
@@ -556,6 +562,291 @@ async function queueSubtitleTrim(): Promise<void> {
 	}
 }
 
+/** Timing results by file path, once a check ran. */
+let timing: Map<string, RepairAuditTimingFile> | null = null;
+let timingRun: AbortController | null = null;
+let timingChecked = 0;
+let timingTotal = 0;
+let timingError = "";
+let timingOpen = false;
+/** Tracks ticked to move, as `path\nid`. */
+const timingChosen = new Set<string>();
+/** Extra shift the user typed per track, in milliseconds. */
+const timingExtra = new Map<string, number>();
+
+const timingKey = (path: string, id: number) => `${path}\n${id}`;
+
+function resetTiming(): void {
+	timingRun?.abort();
+	timingRun = null;
+	timing = null;
+	timingChecked = 0;
+	timingTotal = 0;
+	timingError = "";
+	timingOpen = false;
+	timingChosen.clear();
+	timingExtra.clear();
+	byId("repair-audit-timing").innerHTML = "";
+}
+
+/** Tracks worth showing: everything that is not plainly in sync. */
+function timingRows(): Array<{ file: RepairAuditFile; result: RepairAuditTimingFile; track: RepairAuditTimingTrack }> {
+	if (!timing || !audit) return [];
+	return audit.files.flatMap((file) => {
+		const result = timing!.get(file.path);
+		if (!result || queuedPaths.has(file.path)) return [];
+		return result.tracks.filter((track) => track.status !== "synced").map((track) => ({ file, result, track }));
+	});
+}
+
+/** The map a ticked track is moved by: what the check found when it is off, plus any extra shift. */
+function chosenMap(path: string, track: RepairAuditTimingTrack): RepairAuditTimingTrack["map"] | null {
+	const key = timingKey(path, track.id);
+	if (!timingChosen.has(key)) return null;
+	const base = track.status === "off" && track.map ? track.map : IDENTITY_TIME_MAP;
+	const map = withExtraShift(base, timingExtra.get(key) ?? 0);
+	return isIdentityTimeMap(map) ? null : map;
+}
+
+function chosenTimingFiles(): Array<{ path: string; tracks: Array<{ trackId: number; map: NonNullable<RepairAuditTimingTrack["map"]> }> }> {
+	const byPath = new Map<string, Array<{ trackId: number; map: NonNullable<RepairAuditTimingTrack["map"]> }>>();
+	for (const { file, track } of timingRows()) {
+		const map = chosenMap(file.path, track);
+		if (!map) continue;
+		byPath.set(file.path, [...(byPath.get(file.path) ?? []), { trackId: track.id, map }]);
+	}
+	return [...byPath].map(([path, tracks]) => ({ path, tracks }));
+}
+
+function timingQueueLabel(): string {
+	const files = chosenTimingFiles();
+	const tracks = files.reduce((sum, file) => sum + file.tracks.length, 0);
+	return tracks ? `Move ${tracks} track${tracks === 1 ? "" : "s"} in ${files.length} file${files.length === 1 ? "" : "s"}` : "Tick tracks to move";
+}
+
+const percent = (value: number | undefined) => (value === undefined ? "?" : `${Math.round(value * 100)}%`);
+
+function timingRow(file: RepairAuditFile, track: RepairAuditTimingTrack, all: RepairAuditTimingTrack[]): string {
+	const key = timingKey(file.path, track.id);
+	const partner = track.follows !== undefined ? all.find((other) => other.id === track.follows) : undefined;
+	const name = `${track.language}${track.title ? ` ${track.title}` : ""}`;
+	let change = "";
+	if (track.status === "off" && track.map) change = `Move ${describeTimeMap(track.map)}`;
+	else if (track.status === "unsure" && track.map) change = `Maybe ${describeTimeMap(track.map)}`;
+	else change = track.status === "unsure" ? "Unsure" : "Not checked";
+	const fit = track.fitBefore !== undefined && track.fitAfter !== undefined && !partner ? `fit ${percent(track.fitBefore)} -> ${percent(track.fitAfter)}` : "";
+	const notes = [partner ? `Moves with ${partner.language}${partner.title ? ` ${partner.title}` : ""}` : "", track.note ?? ""].filter(Boolean).join(". ");
+	const extra = (timingExtra.get(key) ?? 0) / 1000;
+	return `<div class="repair-audit-timing-row is-${track.status}">
+		<label class="repair-audit-timing-pick">
+			<input type="checkbox" data-audit-timing-track="${escapeHtml(key)}" ${timingChosen.has(key) ? "checked" : ""} ${queueingGroup ? "disabled" : ""}>
+			<strong title="${escapeHtml(file.filename)}">${escapeHtml(shortFileName(file.filename))}</strong>
+			<span>${escapeHtml(name)}</span>
+		</label>
+		<span class="repair-audit-timing-change">${escapeHtml(change)}</span>
+		${fit ? `<span class="repair-audit-language-count">${escapeHtml(fit)}</span>` : ""}
+		<label class="repair-audit-timing-extra" title="Moves the track this much more. Negative shows lines earlier.">Extra
+			<input class="num-input" type="number" step="0.05" value="${extra || 0}" data-audit-timing-extra="${escapeHtml(key)}" ${queueingGroup ? "disabled" : ""}> s
+		</label>
+		${notes ? `<small>${escapeHtml(notes)}</small>` : ""}
+	</div>`;
+}
+
+function timingStatusText(): string {
+	if (timingRun) return `Checking ${timingChecked} of ${timingTotal} files. The audio is read for speech, so this takes a while. No file changes.`;
+	if (timingError) return timingError;
+	if (!timing) return "Compares each dialogue track with the speech in the audio. Nothing changes until you queue a fix.";
+	const results = [...timing.values()];
+	const failed = results.filter((file) => file.error).length;
+	const measured = results.reduce((sum, file) => sum + file.tracks.length, 0);
+	const synced = results.reduce((sum, file) => sum + file.tracks.filter((track) => track.status === "synced").length, 0);
+	const failedText = failed ? ` ${failed} file${failed === 1 ? "" : "s"} could not be checked.` : "";
+	return `${synced} of ${measured} text track${measured === 1 ? "" : "s"} in sync.${failedText}`;
+}
+
+/** Checking that subtitles follow the speech in the audio, and moving the ones that do not. */
+function renderTiming(): void {
+	const container = byId("repair-audit-timing");
+	const files = audit?.files.filter((file) => !queuedPaths.has(file.path)) ?? [];
+	if (!audit?.files.length) {
+		container.innerHTML = "";
+		return;
+	}
+	const previous = container.querySelector("details");
+	if (previous) timingOpen = previous.open;
+	const rows = timingRows();
+	const off = rows.filter((row) => row.track.status === "off").length;
+	const failed = audit.files.filter((file) => timing?.get(file.path)?.error && !queuedPaths.has(file.path));
+	const patterns = timingPatterns(rows.map((row) => row.track));
+	const note = !timing ? "Check whether subtitles follow the audio" : off ? `${off} track${off === 1 ? "" : "s"} off` : "No track needs moving";
+	const busy = queueingGroup || !!timingRun;
+	const resultsByFile = new Map(rows.map((row) => [row.file.path, row.result.tracks]));
+	container.innerHTML = `<details class="settings-subsection repair-audit-timing"${timingOpen || (timing && rows.length) ? " open" : ""}>
+		<summary>Subtitle timing <span class="hdr-note">${escapeHtml(note)}</span></summary>
+		<div class="settings-subsection-body">
+			<p class="repair-audit-fonts-note">Dialogue tracks are compared with the speech in the audio. Signs, songs and forced tracks show with on-screen text, not speech, so they are not measured. They move with the dialogue track of the same language. A track is only offered a fix when the moved track clearly fits the speech better. Picture subtitles are not checked.</p>
+			<div class="repair-audit-language-actions">
+				<span class="repair-audit-fonts-stored">${escapeHtml(timingStatusText())}</span>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-check-timing ${files.length && !queueingGroup ? "" : "disabled"}>${timingRun ? "Cancel" : timing ? "Check again" : "Check timing"}</button>
+			</div>
+			${patterns.length ? `<p class="repair-audit-fonts-note">The same change in several files: ${patterns.map((p) => `${escapeHtml(p.label)} in ${p.count} files`).join(", ")}.</p>` : ""}
+			${
+				rows.length
+					? `<div class="repair-audit-timing-list">${rows.map(({ file, track }) => timingRow(file, track, resultsByFile.get(file.path) ?? [])).join("")}</div>`
+					: ""
+			}
+			${failed.length ? `<p class="repair-audit-fonts-note">${failed.map((file) => `${escapeHtml(shortFileName(file.filename))}: ${escapeHtml(timing!.get(file.path)!.error!)}`).join("<br>")}</p>` : ""}
+			${
+				rows.length
+					? `<div class="repair-audit-language-actions">
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-timing-select-off ${off && !busy ? "" : "disabled"}>Select tracks that are off</button>
+				<button class="btn btn-ghost btn-sm" type="button" data-audit-timing-clear ${timingChosen.size && !busy ? "" : "disabled"}>Clear</button>
+				<label class="repair-audit-save-mode">Save changes to
+					<select class="select-input" id="repair-audit-timing-save-mode" ${busy ? "disabled" : ""}>
+						<option value="existing" selected>Existing MKV files</option>
+						<option value="copies">New .repaired.mkv copies</option>
+					</select>
+				</label>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-sync-subtitles ${chosenTimingFiles().length && !busy ? "" : "disabled"}>${timingQueueLabel()}</button>
+			</div>`
+					: ""
+			}
+		</div>
+	</details>`;
+}
+
+async function checkTiming(): Promise<void> {
+	if (timingRun) {
+		timingRun.abort();
+		return;
+	}
+	if (!audit) return;
+	const currentAudit = audit;
+	const controller = new AbortController();
+	const paths = audit.files.filter((file) => !queuedPaths.has(file.path)).map((file) => file.path);
+	const results = new Map<string, RepairAuditTimingFile>();
+	timingRun = controller;
+	timingChecked = 0;
+	timingTotal = paths.length;
+	timingError = "";
+	timingOpen = true;
+	timing = null;
+	timingChosen.clear();
+	timingExtra.clear();
+	renderTiming();
+	try {
+		for (let offset = 0; offset < paths.length; offset += 4) {
+			const batch = await checkRepairAuditTiming(paths.slice(offset, offset + 4), controller.signal);
+			if (audit !== currentAudit) return;
+			for (const file of batch.files) results.set(file.path, file);
+			timingChecked = Math.min(paths.length, offset + 4);
+			renderTiming();
+		}
+		timing = results;
+		for (const [path, file] of results) for (const track of file.tracks) if (track.status === "off") timingChosen.add(timingKey(path, track.id));
+	} catch (error) {
+		if (audit === currentAudit && !controller.signal.aborted) timingError = errorMessage(error);
+	} finally {
+		if (timingRun === controller) timingRun = null;
+		if (audit === currentAudit) renderTiming();
+	}
+}
+
+export function handleRepairAuditTimingClick(event: MouseEvent): void {
+	if (queueingGroup || !audit) return;
+	const target = event.target instanceof Element ? event.target : null;
+	if (target?.closest("[data-audit-check-timing]")) {
+		void checkTiming();
+		return;
+	}
+	if (timingRun) return;
+	if (target?.closest("[data-audit-timing-select-off]")) {
+		for (const { file, track } of timingRows()) if (track.status === "off") timingChosen.add(timingKey(file.path, track.id));
+		renderTiming();
+	}
+	if (target?.closest("[data-audit-timing-clear]")) {
+		timingChosen.clear();
+		renderTiming();
+	}
+	if (target?.closest("[data-audit-sync-subtitles]")) void queueSubtitleSync();
+}
+
+/** Keeps the queue button in step without redrawing, so typing in a field keeps its focus. */
+function refreshTimingActions(): void {
+	const button = byId("repair-audit-timing").querySelector<HTMLButtonElement>("[data-audit-sync-subtitles]");
+	if (button) {
+		button.textContent = timingQueueLabel();
+		button.disabled = !chosenTimingFiles().length || queueingGroup || !!timingRun;
+	}
+	const clear = byId("repair-audit-timing").querySelector<HTMLButtonElement>("[data-audit-timing-clear]");
+	if (clear) clear.disabled = !timingChosen.size || queueingGroup || !!timingRun;
+}
+
+export function handleRepairAuditTimingChange(event: Event): void {
+	const input = event.target instanceof HTMLInputElement ? event.target : null;
+	if (!input || queueingGroup) return;
+	const pick = input.dataset.auditTimingTrack;
+	if (pick !== undefined) {
+		if (input.checked) timingChosen.add(pick);
+		else timingChosen.delete(pick);
+		refreshTimingActions();
+	}
+}
+
+export function handleRepairAuditTimingInput(event: Event): void {
+	const input = event.target instanceof HTMLInputElement ? event.target : null;
+	const key = input?.dataset.auditTimingExtra;
+	if (!input || key === undefined || queueingGroup) return;
+	const seconds = Number(input.value);
+	const ms = Number.isFinite(seconds) ? Math.round(seconds * 1000) : 0;
+	if (ms) timingExtra.set(key, ms);
+	else timingExtra.delete(key);
+	// Typing a shift ticks the track, clearing it unticks a track that has nothing else to apply.
+	const [path, id] = key.split("\n");
+	const track = timing?.get(path!)?.tracks.find((candidate) => candidate.id === Number(id));
+	const box = byId("repair-audit-timing").querySelector<HTMLInputElement>(`[data-audit-timing-track="${CSS.escape(key)}"]`);
+	if (ms) timingChosen.add(key);
+	else if (track?.status !== "off") timingChosen.delete(key);
+	if (box) box.checked = timingChosen.has(key);
+	refreshTimingActions();
+}
+
+async function queueSubtitleSync(): Promise<void> {
+	if (!audit || queueingGroup) return;
+	const currentAudit = audit;
+	const files = chosenTimingFiles();
+	if (!files.length) return;
+	const tracks = files.reduce((sum, file) => sum + file.tracks.length, 0);
+	const replaceTarget = (byId("repair-audit-timing-save-mode") as HTMLSelectElement).value === "existing";
+	const where = replaceTarget ? "The files are rewritten in place." : "New .repaired.mkv copies are written next to them.";
+	if (
+		!confirm(
+			`Move ${tracks} subtitle track${tracks === 1 ? "" : "s"} in ${files.length} file${files.length === 1 ? "" : "s"} to fit the audio?\n\nOnly the timing of the chosen tracks changes. ${where}`,
+		)
+	)
+		return;
+	queueingGroup = true;
+	buttonById("repair-audit-pick-folder-btn").disabled = true;
+	renderTiming();
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} file${files.length === 1 ? "" : "s"}...`;
+	try {
+		const result = await syncRepairAuditSubtitles({ files, replaceTarget });
+		if (audit === currentAudit) {
+			files.forEach((file) => queuedPaths.add(file.path));
+			for (const key of [...timingChosen]) if (files.some((file) => key.startsWith(`${file.path}\n`))) timingChosen.delete(key);
+			byId("repair-audit-status").textContent =
+				`Queued ${result.jobIds.length} repair${result.jobIds.length === 1 ? "" : "s"} moving subtitles. Follow their progress in the job list. Audit again after completion to check the timing again.`;
+		}
+		void update().catch(() => {});
+	} catch (error) {
+		if (audit === currentAudit) byId("repair-audit-status").textContent = errorMessage(error);
+	} finally {
+		queueingGroup = false;
+		buttonById("repair-audit-pick-folder-btn").disabled = false;
+		if (audit === currentAudit) renderAudit();
+	}
+}
+
 const languageNames = (() => {
 	try {
 		return new Intl.DisplayNames(["en"], { type: "language" });
@@ -741,6 +1032,7 @@ async function loadAudit(options: { path?: string; jobIds?: string[] }, label?: 
 	savings = null;
 	savingsError = "";
 	byId("repair-audit-overruns").innerHTML = "";
+	resetTiming();
 	byId("repair-audit-languages").innerHTML = "";
 	byId("repair-audit-fonts").innerHTML = "";
 	void loadOriginals();

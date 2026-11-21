@@ -8,6 +8,8 @@ import {
 	type RepairAuditGroupEdit,
 	type RepairAuditLanguageRemoval,
 	type RepairAuditSubtitleOrder,
+	type RepairAuditSubtitleSync,
+	type RepairAuditTimingFile,
 	type RepairInspectionFile,
 	type RepairPlan,
 	type RepairSourceLayout,
@@ -17,6 +19,7 @@ import {
 	buildRepairLanguageRemovalPlans,
 	buildRepairSubtitleOrderPlans,
 	buildRepairFontPlans,
+	buildRepairRetimePlans,
 	buildRepairTrimPlans,
 	buildSourceReplacementPlan,
 	groupRepairAuditFiles,
@@ -33,6 +36,7 @@ import { mapPool } from "../core/concurrency";
 import { clearOriginals, originalPath, originalsUsage } from "../fonts/font-cut";
 import { estimateFontSavings } from "../fonts/rabbit-faces";
 import { pairRepairFiles } from "../pipeline/repair-pairing";
+import { analyzeSubtitleTiming } from "../pipeline/subtitle-timing";
 import { jobOutputRoot } from "../pipeline/output";
 import { buildLayoutRepairPlans, groupSourceLayouts, planToLayoutTracks } from "../pipeline/repair-layouts";
 import { addRepairJob, getAllJobs, getAppConfig, getJob } from "../queue/store";
@@ -419,6 +423,60 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 				"ending subtitles with the video",
 			);
 			if (c.req.signal.aborted) throw new Error("Subtitle trimming request was cancelled");
+			const jobs = plans.map((plan) => addRepairJob(plan));
+			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** How well the text subtitles of a few audited files follow their audio, without changing them. The client sends a folder in batches. */
+	app.post("/api/repair/audit/subtitle-timing", async (c) => {
+		try {
+			const raw = (await c.req.json()) as { paths?: unknown };
+			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 4) throw new Error("Choose between 1 and 4 files");
+			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(String(path), config, "Audit file")))];
+			const files = await mapPool(paths, 2, async (path): Promise<RepairAuditTimingFile> => {
+				if (c.req.signal.aborted) return { path, tracks: [] };
+				const workDir = join(config.tempDir, `subtitle-timing-${randomUUID()}`);
+				mkdirSync(workDir, { recursive: true });
+				try {
+					return await analyzeSubtitleTiming(path, workDir, c.req.signal);
+				} catch (error: any) {
+					if (!c.req.signal.aborted) Logger.warn(`[repair] Could not check the subtitle timing of ${basename(path)}: ${error?.message || error}`);
+					return { path, tracks: [], error: error?.message || String(error) };
+				} finally {
+					rmSync(workDir, { recursive: true, force: true });
+				}
+			});
+			if (c.req.signal.aborted) throw new Error("Subtitle timing check was cancelled");
+			return c.json({ files });
+		} catch (error: any) {
+			return c.json({ error: error?.message || String(error) }, 400);
+		}
+	});
+
+	/** Moves chosen text subtitles of the audited files to fit their audio, one repair job per file. */
+	app.post("/api/repair/audit/sync-subtitles", async (c) => {
+		try {
+			const raw = (await c.req.json()) as RepairAuditSubtitleSync;
+			if (!Array.isArray(raw?.files) || !raw.files.length || raw.files.length > 500) throw new Error("Choose between 1 and 500 files");
+			const requested = raw.files.map((file) => ({
+				path: resolveAllowedMkv(String(file?.path), config, "Audit file"),
+				tracks: Array.isArray(file?.tracks) ? file.tracks : [],
+			}));
+			if (new Set(requested.map((file) => file.path)).size !== requested.length) throw new Error("Files must not contain duplicate paths");
+			const inspected = await inspectAuditPaths(
+				requested.map((file) => ({ path: file.path })),
+				undefined,
+				c.req.signal,
+			);
+			const plans = buildRepairRetimePlans(inspected.files, { files: requested, replaceTarget: raw.replaceTarget === true });
+			assertNoPendingJobs(
+				plans.map((plan) => plan.targetPath),
+				"moving subtitles",
+			);
+			if (c.req.signal.aborted) throw new Error("Subtitle sync request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {

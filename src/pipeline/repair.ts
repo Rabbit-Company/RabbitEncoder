@@ -14,12 +14,14 @@ import type {
 	RepairAuditGroupEdit,
 	RepairAuditLanguage,
 	RepairAuditLanguageRemoval,
+	RepairAuditSubtitleSync,
 	RepairFolderAudit,
 	RepairPlan,
 	RepairSource,
 	RepairSubtitleTrack,
 	RepairSubtitleTrackPlan,
 	SubtitleStyle,
+	SubtitleTimeMap,
 	JobSettings,
 } from "../core/types";
 import { Logger } from "../core/logger";
@@ -73,7 +75,7 @@ import {
 	type InputFont,
 } from "./repair-fonts";
 import { buildReference, type ReferenceTimeline } from "../subsearch/reference";
-import { trimDocument, type SubFormat } from "../subsearch/cues";
+import { retimeDocument, trimDocument, type SubFormat, type TimeMap } from "../subsearch/cues";
 
 interface MkvTrackProperties {
 	codec_id?: string;
@@ -607,28 +609,73 @@ export function buildRepairTrimPlans(files: Pick<RepairAuditFile, "path" | "trac
 				targetPath: file.path,
 				replaceTarget: options.replaceTarget,
 				trimSubtitles: overrunning.map((track) => track.id),
-				tracks: file.tracks
-					.filter((track) => track.type === "subtitles")
-					.map((track, order) => ({
-						title: track.title,
-						language: track.language,
-						isDefault: track.isDefault,
-						isForced: track.isForced,
-						isEnabled: track.isEnabled,
-						isHearingImpaired: track.isHearingImpaired,
-						isOriginal: track.isOriginal,
-						isCommentary: track.isCommentary,
-						source: "target",
-						trackId: track.id,
-						mode: "copy",
-						order,
-						compression: "preserve",
-					})),
+				tracks: unchangedSubtitles(file.tracks),
 			}),
 		];
 	});
 	if (!plans.length) throw new Error("No file has text subtitles longer than the video");
 	return plans;
+}
+
+/** Every subtitle track of a file, copied with its metadata, compression and place. */
+function unchangedSubtitles(tracks: RepairAuditTrack[]): RepairSubtitleTrackPlan[] {
+	return tracks
+		.filter((track) => track.type === "subtitles")
+		.map((track, order) => ({
+			title: track.title,
+			language: track.language,
+			isDefault: track.isDefault,
+			isForced: track.isForced,
+			isEnabled: track.isEnabled,
+			isHearingImpaired: track.isHearingImpaired,
+			isOriginal: track.isOriginal,
+			isCommentary: track.isCommentary,
+			source: "target",
+			trackId: track.id,
+			mode: "copy",
+			order,
+			compression: "preserve",
+		}));
+}
+
+/** One repair per file with text subtitles to move, each by the map its timing check found. Nothing else changes. */
+export function buildRepairRetimePlans(files: Pick<RepairAuditFile, "path" | "tracks">[], sync: RepairAuditSubtitleSync): RepairPlan[] {
+	const plans = sync.files.flatMap((request) => {
+		const file = files.find((candidate) => candidate.path === request.path);
+		if (!file) throw new Error(`${basename(request.path)} is not part of the audit`);
+		const retimeSubtitles = request.tracks.flatMap((item) => {
+			const track = file.tracks.find((candidate) => candidate.type === "subtitles" && candidate.id === Number(item.trackId));
+			if (!track) throw new Error(`${basename(file.path)} has no subtitle track ${item.trackId}`);
+			if (!isTextSubtitleCodec(track.codec)) throw new Error(`Subtitle track ${track.id} of ${basename(file.path)} holds pictures, so it cannot be moved`);
+			const map = sanitizeTimeMap(item.map);
+			return isIdentityMap(map) ? [] : [{ trackId: track.id, map }];
+		});
+		if (!retimeSubtitles.length) return [];
+		return [sanitizeRepairPlan({ targetPath: file.path, replaceTarget: sync.replaceTarget, retimeSubtitles, tracks: unchangedSubtitles(file.tracks) })];
+	});
+	if (!plans.length) throw new Error("No subtitle track needs moving");
+	return plans;
+}
+
+/** Further than this is not a desync inside one file but another video. */
+const MAX_RETIME_OFFSET_MS = 600_000;
+
+function isIdentityMap(map: SubtitleTimeMap): boolean {
+	return map.scale === 1 && map.pieces.every((piece) => piece.offsetMs === 0);
+}
+
+function sanitizeTimeMap(raw: unknown): SubtitleTimeMap {
+	const map = raw as SubtitleTimeMap | undefined;
+	const scale = Number(map?.scale);
+	if (!Number.isFinite(scale) || scale < 0.9 || scale > 1.1) throw new Error("Invalid subtitle speed change");
+	if (!Array.isArray(map?.pieces) || !map.pieces.length || map.pieces.length > 16) throw new Error("Invalid subtitle shift");
+	const pieces = map.pieces.map((piece) => ({ fromMs: Math.round(Number(piece?.fromMs)), offsetMs: Math.round(Number(piece?.offsetMs)) }));
+	for (const [index, piece] of pieces.entries()) {
+		if (!Number.isFinite(piece.fromMs) || !Number.isFinite(piece.offsetMs) || piece.fromMs < 0 || Math.abs(piece.offsetMs) > MAX_RETIME_OFFSET_MS)
+			throw new Error("Invalid subtitle shift");
+		if (index === 0 ? piece.fromMs !== 0 : piece.fromMs <= pieces[index - 1]!.fromMs) throw new Error("Invalid subtitle shift");
+	}
+	return { scale, pieces };
 }
 
 function audioMetadataOf(track: RepairAuditTrack | RepairAudioTrackPlan): RepairAuditAudioMetadata {
@@ -832,6 +879,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	const fontFix = sanitizeFontFix(raw.fontFix);
 	const fonts = raw.fonts ? { rebuild: true as const, subset: !!raw.fonts.subset } : null;
 	const trimSubtitles = sanitizeTrimSubtitles(raw.trimSubtitles, tracks);
+	const retimeSubtitles = sanitizeRetimeSubtitles(raw.retimeSubtitles, tracks);
 	return {
 		targetPath,
 		sourcePath,
@@ -844,7 +892,22 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...(fontFix ? { fontFix } : {}),
 		...(fonts ? { fonts } : {}),
 		...(trimSubtitles.length ? { trimSubtitles } : {}),
+		...(retimeSubtitles.length ? { retimeSubtitles } : {}),
 	};
+}
+
+function sanitizeRetimeSubtitles(raw: unknown, tracks: RepairSubtitleTrackPlan[]): Array<{ trackId: number; map: SubtitleTimeMap }> {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_REPAIR_TRACKS) throw new Error("Invalid subtitle tracks to move");
+	const seen = new Set<number>();
+	return raw.map((item) => {
+		const trackId = Number(item?.trackId);
+		if (!tracks.some((track) => track.source === "target" && track.trackId === trackId))
+			throw new Error(`Subtitle track ${item?.trackId} to move is not kept by the repair`);
+		if (seen.has(trackId)) throw new Error(`Subtitle track ${trackId} is moved twice`);
+		seen.add(trackId);
+		return { trackId, map: sanitizeTimeMap(item.map) };
+	});
 }
 
 function sanitizeTrimSubtitles(raw: unknown, tracks: RepairSubtitleTrackPlan[]): number[] {
@@ -1831,6 +1894,43 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				} else writeFileSync(item.path, renameAssFonts(readFileSync(item.path, "utf-8"), fixRenames), "utf-8");
 			}
 		}
+		// Subtitles that do not follow the audio are moved, before any are ended with the video.
+		const retimes = new Map<number, TimeMap>((plan.retimeSubtitles ?? []).map((item) => [item.trackId, item.map]));
+		let retimedCount = 0;
+		if (retimes.size) {
+			setStep(S_PREPARE, { progress: 55, detail: "Moving subtitles to fit the audio" });
+			const endMs = videoEndSeconds(targetId) * 1000;
+			const retimeText = (text: string, format: SubFormat, map: TimeMap) =>
+				retimeDocument({ format, content: text.replace(/^\uFEFF/, "") }, map, endMs > 0 ? endMs : undefined).content;
+			const mapOf = (track: RepairSubtitleTrackPlan) => (track.source === "target" ? retimes.get(track.trackId) : undefined);
+			for (const item of extracted) {
+				const map = mapOf(item.plan);
+				if (!map) continue;
+				if (item.rawText !== undefined) item.rawText = retimeText(item.rawText, "ass", map);
+				else writeFileSync(item.path, retimeText(readFileSync(item.path, "utf-8"), "srt", map), "utf-8");
+				retimedCount++;
+			}
+			for (const trackPlan of plan.tracks.filter((track) => track.mode === "copy" && mapOf(track))) {
+				checkCancelled();
+				const track = findTrack(targetId, trackPlan);
+				if (!isRabbitProcessable(track)) {
+					warnings.push(`Subtitle track ${trackPlan.trackId} (${trackPlan.language}) holds pictures, so it was not moved`);
+					continue;
+				}
+				const extension = extractedExtension(track);
+				let item = prepared.find((p) => repairTrackKey(p.plan) === repairTrackKey(trackPlan));
+				if (!item) {
+					const out = join(tempDir, `${repairTrackKey(trackPlan).replace(":", "_")}.retimed${extension}`);
+					const extract = await run(["mkvextract", plan.targetPath, "tracks", `${trackPlan.trackId}:${out}`], { signal });
+					checkCancelled();
+					if (extract.code !== 0) throw new Error(`Could not extract subtitle track ${trackPlan.trackId}: ${(extract.stderr || extract.stdout).slice(-500)}`);
+					prepared.push((item = { plan: trackPlan, path: out }));
+				}
+				writeFileSync(item.path, retimeText(readFileSync(item.path, "utf-8"), extension === ".ass" ? "ass" : "srt", mapOf(trackPlan)!), "utf-8");
+				retimedCount++;
+			}
+			Logger.info(`[repair] Moved ${retimedCount} subtitle track(s) of ${basename(plan.targetPath)} to fit the audio`);
+		}
 		// Subtitles longer than the video end with it.
 		const trimIds = new Set(plan.trimSubtitles ?? []);
 		let trimmed = { removed: 0, cut: 0 };
@@ -1994,11 +2094,13 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				? `${rabbitPlans.length} track(s) processed`
 				: timings.some(Boolean)
 					? "Source subtitles retimed"
-					: trimIds.size
-						? trimmedSummary(trimmed)
-						: fontsChanged
-							? fontPassSummary(fontPass!)
-							: "No subtitle conversion needed",
+					: retimedCount
+						? `${retimedCount} track${retimedCount === 1 ? "" : "s"} moved to fit the audio`
+						: trimIds.size
+							? trimmedSummary(trimmed)
+							: fontsChanged
+								? fontPassSummary(fontPass!)
+								: "No subtitle conversion needed",
 		});
 
 		await resolveAutoCompression({

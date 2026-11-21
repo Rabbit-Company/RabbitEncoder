@@ -19,7 +19,7 @@ export interface ReferenceTimeline {
 /** A text track with fewer dialogue cues is too sparse to sync against. */
 const MIN_REFERENCE_CUES = 80;
 const BITMAP_CODECS = new Set(["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"]);
-const NOT_DIALOGUE_TITLE = /sign|song|forced|commentary|karaoke|storyboard|\bs&s\b/i;
+export const NOT_DIALOGUE_TITLE = /sign|song|forced|commentary|karaoke|storyboard|\bs&s\b/i;
 
 function dialogueTrack(s: SubtitleStreamInfo): boolean {
 	return !s.isForced && !NOT_DIALOGUE_TITLE.test(s.title ?? "");
@@ -135,7 +135,7 @@ export function speechFromLoudness(db: Float32Array): Interval[] {
 }
 
 /** Decodes one audio track at 8 kHz and measures every 20 ms of it. Surround tracks use the centre channel, where dialogue sits. */
-async function audioReference(inputPath: string, probe: ProbeResult, signal?: AbortSignal): Promise<ReferenceTimeline | null> {
+export async function audioReference(inputPath: string, probe: ProbeResult, signal?: AbortSignal): Promise<ReferenceTimeline | null> {
 	const audio = probe.audioStreams.find((a) => a.isOriginal) ?? probe.audioStreams[0];
 	if (!audio) return null;
 	const centre = audio.channels >= 3 && /\bFC\b|5\.1|7\.1|3\.0|3\.1|4\.1|6\.1/i.test(audio.channelLayout || `${audio.channels}`) ? "pan=mono|c0=FC," : "";

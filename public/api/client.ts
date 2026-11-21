@@ -23,6 +23,8 @@ import type {
 	RepairAuditGroupEdit,
 	RepairAuditLanguageRemoval,
 	RepairAuditSubtitleOrder,
+	RepairAuditSubtitleSync,
+	RepairAuditTimingFile,
 	RepairSubtitleTrackPlan,
 	ReleaseCheck,
 	ReleaseScan,
@@ -449,6 +451,31 @@ export async function trimRepairAuditSubtitles(request: RepairAuditSubtitleOrder
 	});
 	const data = await response.json();
 	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle trimming");
+	return data;
+}
+
+/** How well the text subtitles of up to 4 files follow their audio, without changing them. */
+export async function checkRepairAuditTiming(paths: string[], signal?: AbortSignal): Promise<{ files: RepairAuditTimingFile[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/subtitle-timing`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ paths }),
+		signal,
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not check the subtitle timing");
+	return data;
+}
+
+/** Queues one repair per file that moves the chosen subtitle tracks to fit the audio. */
+export async function syncRepairAuditSubtitles(request: RepairAuditSubtitleSync): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/sync-subtitles`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+	});
+	const data = await response.json();
+	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle sync");
 	return data;
 }
 

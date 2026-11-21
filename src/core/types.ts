@@ -971,6 +971,8 @@ export interface RepairPlan {
 	fonts?: { rebuild: true; subset: boolean };
 	/** Target subtitle track IDs to end at the video's end: later lines are removed and lines running past it are cut. */
 	trimSubtitles?: number[];
+	/** Target subtitle tracks to move to fit the audio, each by its map. Applied before `trimSubtitles`. */
+	retimeSubtitles?: Array<{ trackId: number; map: SubtitleTimeMap }>;
 }
 
 export interface RepairFontFix {
@@ -1091,6 +1093,47 @@ export interface RepairAuditLanguageRemoval {
 
 export interface RepairAuditSubtitleOrder {
 	paths: string[];
+	replaceTarget: boolean;
+}
+
+/** How a subtitle track's lines move: scaled for a frame rate change, then shifted by the piece their start falls in. */
+export interface SubtitleTimeMap {
+	scale: number;
+	pieces: Array<{ fromMs: number; offsetMs: number }>;
+}
+
+/**
+ * - `synced`: the dialogue follows the speech in the audio.
+ * - `off`: it does not, and moving it by `map` makes it follow the speech.
+ * - `unsure`: it may be off, but the audio does not back a change.
+ * - `unchecked`: it could not be measured, such as a signs track without a dialogue track to follow.
+ */
+export type SubtitleTimingStatus = "synced" | "off" | "unsure" | "unchecked";
+
+export interface RepairAuditTimingTrack {
+	id: number;
+	language: string;
+	title: string;
+	status: SubtitleTimingStatus;
+	/** How to move the track to fit the audio, when it is off or unsure. */
+	map?: SubtitleTimeMap;
+	/** How well the dialogue fits the speech, 0 to 1, as it is and after moving it. */
+	fitBefore?: number;
+	fitAfter?: number;
+	/** A signs, songs or forced track moves with this dialogue track of the same language. */
+	follows?: number;
+	note?: string;
+}
+
+export interface RepairAuditTimingFile {
+	path: string;
+	/** Text subtitle tracks. Picture tracks are not measured. */
+	tracks: RepairAuditTimingTrack[];
+	error?: string;
+}
+
+export interface RepairAuditSubtitleSync {
+	files: Array<{ path: string; tracks: Array<{ trackId: number; map: SubtitleTimeMap }> }>;
 	replaceTarget: boolean;
 }
 
