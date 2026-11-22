@@ -165,7 +165,7 @@ export async function remuxDiscRange(
 		if (merged.code === 1) Logger.warn(`[disc] mkvmerge completed with warnings: ${(merged.stderr || merged.stdout).slice(-500)}`);
 		if (!existsSync(outputPath)) throw new Error("mkvmerge wrote no file");
 
-		if (retime) await makeConstantFrameRate(outputPath, retime.rate, dirname(outputPath), (detail) => report(null, detail), signal);
+		await fixRemuxTiming(outputPath, retime?.rate, dirname(outputPath), (detail) => report(null, detail), signal);
 
 		const got = durationSeconds(await identifyMatroska(outputPath, signal));
 		const wanted = plan.end - plan.start;
@@ -327,12 +327,31 @@ export async function runDiscJob(job: Job, config: AppConfig, updateJob: (partia
 }
 
 /**
- * mkvmerge keeps the jumps of a few milliseconds where clips join when it
- * reads a playlist, which the encode would take for variable frame rate.
- * Read from the remux, it puts every frame on the rate's grid.
+ * The mkvmerge pass that fixes the timing of a remux. Cut from the middle of
+ * a playlist, every track starts some hundreds of milliseconds late, which the
+ * encode would drop from the video only, so every track moves back by
+ * `leadMs`. A rate puts every frame on its grid, which also starts the video
+ * at 0.
  */
-async function makeConstantFrameRate(path: string, rate: string, dir: string, report: (detail: string) => void, signal?: AbortSignal): Promise<void> {
-	const video = (await identifyMatroska(path, signal)).tracks?.find((t) => t.type === "video");
+export function buildTimingFixArgs(inputPath: string, outputPath: string, tracks: { id: number; type: string }[], leadMs: number, rate?: string): string[] {
+	const args = ["mkvmerge", "-o", outputPath];
+	for (const track of tracks) {
+		if (rate && track.type === "video") args.push("--default-duration", `${track.id}:${rate}`);
+		else if (leadMs > 0) args.push("--sync", `${track.id}:${-leadMs}`);
+	}
+	args.push(inputPath);
+	return args;
+}
+
+/**
+ * mkvmerge keeps the jumps of a few milliseconds where clips join when it
+ * reads a playlist, which the encode would take for variable frame rate. A
+ * range cut after the first clip also starts late on every track. Read from
+ * the remux, the video is put on the rate's grid and every track starts at 0.
+ */
+async function fixRemuxTiming(path: string, rate: string | undefined, dir: string, report: (detail: string) => void, signal?: AbortSignal): Promise<void> {
+	const tracks = (await identifyMatroska(path, signal)).tracks ?? [];
+	const video = tracks.find((t) => t.type === "video");
 	if (!video) return;
 	const timecodes = join(dir, `${basename(path)}.timestamps.txt`);
 	const retimed = join(dir, `${basename(path)}.cfr.mkv`);
@@ -340,19 +359,27 @@ async function makeConstantFrameRate(path: string, rate: string, dir: string, re
 		report("Checking frame timing");
 		const extracted = await run(["mkvextract", path, "timestamps_v2", `${video.id}:${timecodes}`], { signal });
 		if (signal?.aborted) throw new CancelledError();
-		if (extracted.code !== 0 || !onlyJoinJitter(readTimecodes(timecodes), frameMsOf(rate))) return;
+		if (extracted.code !== 0) return;
+		const stamps = readTimecodes(timecodes);
+		// Rounded down, so the first frame is not shifted below 0 and dropped.
+		const first = stamps.reduce((min, t) => (t < min ? t : min), Infinity);
+		const leadMs = Number.isFinite(first) ? Math.max(0, Math.floor(first)) : 0;
+		const cfr = rate && onlyJoinJitter(stamps, frameMsOf(rate)) ? rate : undefined;
+		if (!cfr && !leadMs) return;
 		const stats = statfsSync(dir);
 		if (stats.bavail * stats.bsize < statSync(path).size + 1024 ** 3) {
+			if (leadMs) throw new Error(`The temp folder lacks the room to start ${basename(path)} at 0, and the audio would be ${leadMs} ms late`);
 			Logger.warn(`[disc] Not enough temp space to make ${basename(path)} constant frame rate, keeping the disc's timing`);
 			return;
 		}
-		report("Making the frame rate constant");
-		const merged = await run(["mkvmerge", "-o", retimed, "--default-duration", `${video.id}:${rate}`, path], { signal });
+		report(cfr ? "Making the frame rate constant" : "Starting the tracks at 0");
+		const merged = await run(buildTimingFixArgs(path, retimed, tracks, leadMs, cfr), { signal });
 		if (signal?.aborted) throw new CancelledError();
 		if (merged.code !== 0 && merged.code !== 1)
 			throw new Error(`mkvmerge could not retime the remux (exit ${merged.code}): ${(merged.stderr || merged.stdout).slice(-500)}`);
 		renameSync(retimed, path);
-		Logger.info(`[disc] Retimed ${basename(path)} to a constant ${rate.replace(/p$/, "")} fps`);
+		if (cfr) Logger.info(`[disc] Retimed ${basename(path)} to a constant ${cfr.replace(/p$/, "")} fps`);
+		if (leadMs) Logger.info(`[disc] Moved every track of ${basename(path)} back ${leadMs} ms, so the range starts at 0`);
 	} finally {
 		rmSync(timecodes, { force: true });
 		rmSync(retimed, { force: true });

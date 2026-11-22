@@ -5,7 +5,7 @@ import { join } from "path";
 import { findDiscFolders, groupDiscSets, guessDiscTitle, guessDiscYear, readDisc } from "../../src/bdmv/disc";
 import { scanDiscSet } from "../../src/bdmv/plan";
 import { DEFAULT_NAMING_FORMATS } from "../../src/bdmv/naming";
-import { buildDiscExtractArgs, constantFrameRate, onlyJoinJitter, splitTimestamp } from "../../src/pipeline/disc-extract";
+import { buildDiscExtractArgs, buildTimingFixArgs, constantFrameRate, onlyJoinJitter, splitTimestamp } from "../../src/pipeline/disc-extract";
 import { parseMpls } from "../../src/bdmv/mpls";
 import { buildMpls, type BuildItem } from "./mpls-builder";
 
@@ -146,5 +146,45 @@ describe("disc remux timing", () => {
 				frame,
 			),
 		).toBe(false);
+	});
+	test("moves every track of a range cut after the first clip back to 0", () => {
+		const tracks = [
+			{ id: 0, type: "video" },
+			{ id: 1, type: "audio" },
+			{ id: 2, type: "subtitles" },
+		];
+		expect(buildTimingFixArgs("/t/in.mkv", "/t/out.mkv", tracks, 334)).toEqual([
+			"mkvmerge",
+			"-o",
+			"/t/out.mkv",
+			"--sync",
+			"0:-334",
+			"--sync",
+			"1:-334",
+			"--sync",
+			"2:-334",
+			"/t/in.mkv",
+		]);
+		// The rate already starts the video at 0, so only the other tracks move.
+		expect(buildTimingFixArgs("/t/in.mkv", "/t/out.mkv", tracks, 334, "24000/1001p")).toEqual([
+			"mkvmerge",
+			"-o",
+			"/t/out.mkv",
+			"--default-duration",
+			"0:24000/1001p",
+			"--sync",
+			"1:-334",
+			"--sync",
+			"2:-334",
+			"/t/in.mkv",
+		]);
+		expect(buildTimingFixArgs("/t/in.mkv", "/t/out.mkv", tracks, 0, "24000/1001p")).toEqual([
+			"mkvmerge",
+			"-o",
+			"/t/out.mkv",
+			"--default-duration",
+			"0:24000/1001p",
+			"/t/in.mkv",
+		]);
 	});
 });
