@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getDefaultJobSettings } from "../../src/core/config";
 import type { JobSettings } from "../../src/core/types";
-import { combineCumulativeSettings, encodeSettingsCode, decodeSettingsCode } from "../../src/settings/settings-code";
+import { combineCumulativeCode, combineCumulativeSettings, encodeSettingsCode, decodeSettingsCode } from "../../src/settings/settings-code";
 
 describe("settings code — Essential quality presets", () => {
 	for (const quality of ["lower", "low", "medium", "high", "higher"] as const) {
@@ -272,6 +272,39 @@ describe("settings code — cumulative settings", () => {
 
 		const combined = combineCumulativeSettings(decodeSettingsCode(encodeSettingsCode(prior)), current);
 		expect(combined.cropLimit).toBe(current.cropLimit);
+	});
+
+	it("keeps the denoise of a prior pass when the current pass does not denoise", () => {
+		const prior: JobSettings = {
+			...getDefaultJobSettings(),
+			videoEncode: "off",
+			denoise: "auto",
+			denoiseEngine: "rabbit-denoise",
+			autoDenoiseMetric: "grain",
+			autoDenoiseGrainThresholds: { light: 2, medium: 3, heavy: 4 },
+		};
+		const priorCode = encodeSettingsCode(prior);
+		const current: JobSettings = { ...getDefaultJobSettings(), denoiseEngine: "nlmeans", autoDenoiseMetric: "noise" };
+
+		const code = combineCumulativeCode(priorCode, decodeSettingsCode(priorCode), current);
+		const decoded = decodeSettingsCode(code);
+		expect(decoded.denoise).toBe("auto");
+		expect(decoded.denoiseEngine).toBe("rabbit-denoise");
+		expect(decoded.autoDenoiseMetric).toBe("grain");
+		expect(decoded.autoDenoiseGrainThresholds).toEqual({ light: 2, medium: 3, heavy: 4 });
+	});
+
+	it("copies a prior denoise section this build cannot read as it was written", () => {
+		const priorCode = "RE1|c~v=off|dn~m=a,e=zz,new=5|db~m=l";
+		const code = combineCumulativeCode(priorCode, decodeSettingsCode(priorCode), getDefaultJobSettings());
+		expect(code).toBe("RE1|dn~m=a,e=zz,new=5|db~m=l");
+	});
+
+	it("writes the current denoise when the current pass denoises", () => {
+		const priorCode = "RE1|dn~m=a,e=rd";
+		const current: JobSettings = { ...getDefaultJobSettings(), denoise: "light", denoiseEngine: "avd-nl4d" };
+		const code = combineCumulativeCode(priorCode, decodeSettingsCode(priorCode), current);
+		expect(decodeSettingsCode(code).denoiseEngine).toBe("avd-nl4d");
 	});
 });
 

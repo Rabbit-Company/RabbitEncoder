@@ -965,9 +965,15 @@ export function combineCumulativeSettings(prior: Partial<JobSettings> | null | u
 		combined.denoise = prior.denoise;
 		if (prior.denoiseEngine) combined.denoiseEngine = prior.denoiseEngine;
 		if (prior.avdParams) combined.avdParams = prior.avdParams;
+		if (prior.nlmeansParams) combined.nlmeansParams = prior.nlmeansParams;
+		if (prior.autoDenoiseMetric) combined.autoDenoiseMetric = prior.autoDenoiseMetric;
+		if (prior.autoDenoiseThresholds) combined.autoDenoiseThresholds = prior.autoDenoiseThresholds;
+		if (prior.autoDenoiseBitrateThresholds) combined.autoDenoiseBitrateThresholds = prior.autoDenoiseBitrateThresholds;
+		if (prior.autoDenoiseGrainThresholds) combined.autoDenoiseGrainThresholds = prior.autoDenoiseGrainThresholds;
 	}
 	if ((current.deband ?? "off") === "off" && prior.deband && prior.deband !== "off") {
 		combined.deband = prior.deband;
+		if (prior.gradfunParams) combined.gradfunParams = prior.gradfunParams;
 	}
 
 	if ((current.crop ?? "off") === "off" && prior.crop && prior.crop !== "off") {
@@ -978,4 +984,41 @@ export function combineCumulativeSettings(prior: Partial<JobSettings> | null | u
 	combined.downscale = !!current.downscale || !!prior.downscale;
 
 	return combined;
+}
+
+const SECTION_ORDER = ["c", "dn", "db", "fg", "ab", "al", "sl", "sd", "sm", "st", "am", "vs"];
+
+function sectionTag(section: string): string {
+	const t = section.indexOf("~");
+	return t < 0 ? "" : section.slice(0, t);
+}
+
+/**
+ * The settings code of a pass over a file Rabbit already processed. A denoise or deband
+ * section of the prior pass is kept as it was written when this pass does not do that step,
+ * so a build that does not know a newer engine or option cannot rewrite it.
+ */
+export function combineCumulativeCode(priorCode: string | null | undefined, prior: Partial<JobSettings> | null | undefined, current: JobSettings): string {
+	const sections = encodeSettingsCode(combineCumulativeSettings(prior, current)).split("|");
+	const priorSections = (priorCode ?? "").trim().split("|");
+	if (priorSections[0] !== SETTINGS_CODE_PREFIX) return sections.join("|");
+
+	const carried = [
+		{ tag: "dn", off: (current.denoise ?? "off") === "off" },
+		{ tag: "db", off: (current.deband ?? "off") === "off" },
+	];
+	for (const { tag, off } of carried) {
+		if (!off) continue;
+		const raw = priorSections.find((s) => sectionTag(s) === tag);
+		if (!raw) continue;
+		const at = sections.findIndex((s, i) => i > 0 && sectionTag(s) === tag);
+		if (at >= 0) {
+			sections[at] = raw;
+			continue;
+		}
+		const rank = SECTION_ORDER.indexOf(tag);
+		const before = sections.findIndex((s, i) => i > 0 && SECTION_ORDER.indexOf(sectionTag(s)) > rank);
+		sections.splice(before < 0 ? sections.length : before, 0, raw);
+	}
+	return sections.join("|");
 }

@@ -58,7 +58,7 @@ import { FFV1_ENCODE_ARGS, autoThresholdsFor, runAnalysisPass, runSegmentedAutoD
 import { assertAvdDeviceUsable, runAvdPass, runSegmentedAutoDenoiseAvd } from "../video/avd";
 import { formatVsProgressDetail, runVsPass, vsRegistry } from "../video/vs-filters";
 import { applyColorMetadata, svtColorParamsFromProbe } from "../video/color-metadata";
-import { combineCumulativeSettings, encodeSettingsCode } from "../settings/settings-code";
+import { combineCumulativeCode } from "../settings/settings-code";
 import { decodePriorSettings, discOriginTagLines } from "../core/mkv-tags";
 import { cpus } from "os";
 import { getEncoder } from "../core/encoders";
@@ -2307,8 +2307,7 @@ export async function encodeJob(
 		const discOrigin = job.discOrigin ?? probe.priorDisc ?? null;
 
 		const priorSettings = decodePriorSettings(probe.priorRabbitSettings);
-		const cumulativeSettings = combineCumulativeSettings(priorSettings, job.settings);
-		const settingsCode = encodeSettingsCode(cumulativeSettings);
+		const settingsCode = combineCumulativeCode(probe.priorRabbitSettings, priorSettings, job.settings);
 
 		const xmlTags = [
 			'<?xml version="1.0" encoding="UTF-8"?>',
