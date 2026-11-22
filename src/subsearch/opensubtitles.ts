@@ -165,6 +165,12 @@ export function searchParams(identity: MediaIdentity, languages: string[], hash:
 	return params;
 }
 
+/** Some subtitles come without a url, but their page is still at the slug. */
+function pageUrl(a: any): string {
+	if (typeof a.url === "string" && a.url) return a.url;
+	return typeof a.slug === "string" && a.slug ? `https://www.opensubtitles.com/en/subtitles/${encodeURIComponent(a.slug)}` : "";
+}
+
 function listing(item: any): SubtitleListing[] {
 	const a = item?.attributes ?? {};
 	const files: any[] = Array.isArray(a.files) ? a.files : [];
@@ -183,7 +189,7 @@ function listing(item: any): SubtitleListing[] {
 		hashMatch: !!a.moviehash_match,
 		fps: Number(a.fps ?? 0) || 0,
 		uploader: String(a.uploader?.name ?? ""),
-		url: String(a.url ?? ""),
+		url: pageUrl(a),
 		featureTitle: String(a.feature_details?.movie_name ?? a.feature_details?.title ?? ""),
 	}));
 }
