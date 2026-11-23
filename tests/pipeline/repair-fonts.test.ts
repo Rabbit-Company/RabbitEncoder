@@ -172,6 +172,22 @@ const NOTO_SERIF = join(import.meta.dir, "../../fonts/Noto Serif/latin.ttf");
 		expect(rows.every((row) => row.startsWith("Noto Sans 2|"))).toBe(true);
 	});
 
+	it("renames to a Japanese family a font with Mac Roman names", async () => {
+		const mac = join(root, "mac.ttf");
+		const made = await run([
+			"python3",
+			"-c",
+			"import sys\nfrom fontTools.ttLib import TTFont\nf = TTFont(sys.argv[1])\nfor i in (1, 4): f['name'].setName('EPSON Kaku', i, 1, 0, 0)\nf.save(sys.argv[2])",
+			NOTO_SANS,
+			mac,
+		]);
+		expect(made.code).toBe(0);
+		const out = join(root, "mac-renamed.ttf");
+		expect(await renameFontFamily(mac, out, "Noto Sans", "EPSON 太角ゴシック体Ｂ 2")).toBe(true);
+		const scanned = await run(["fc-scan", "--format", "%{family}\n", out]);
+		expect(scanned.stdout).toContain("EPSON 太角ゴシック体Ｂ 2");
+	});
+
 	it("does not rename a font collection", async () => {
 		expect(await renameFontFamily("/tmp/x.ttc", join(root, "x.ttc"), "X", "X 2")).toBe(false);
 	});

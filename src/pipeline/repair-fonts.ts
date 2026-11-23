@@ -142,6 +142,7 @@ if "fvar" in f:
     for inst in f["fvar"].instances:
         if getattr(inst, "postscriptNameID", 0xFFFF) != 0xFFFF:
             ps_ids.add(inst.postscriptNameID)
+drop = []
 for r in nm.names:
     if r.nameID not in (1, 3, 4, 16, 18, 21) and r.nameID not in ps_ids:
         continue
@@ -165,6 +166,13 @@ for r in nm.names:
     else:
         continue
     r.string = t
+    # A Mac record in a legacy encoding cannot hold a Japanese family name, so it goes.
+    try:
+        r.toBytes()
+    except Exception:
+        drop.append(r)
+for r in drop:
+    nm.names.remove(r)
 f.save(out)
 `;
 

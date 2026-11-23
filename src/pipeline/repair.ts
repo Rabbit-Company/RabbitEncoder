@@ -133,6 +133,28 @@ export async function identifyMatroska(path: string, signal?: AbortSignal): Prom
 	}
 }
 
+/**
+ * A copy mkvextract can open of a source whose element layout it refuses as
+ * corrupted, such as a void that overlaps the attachments. mkvmerge still
+ * reads such a file, and a full remux keeps every track ID. Null when the
+ * source opens as it is.
+ */
+async function readableSourceCopy(path: string, dir: string, onRemux: () => void, signal?: AbortSignal): Promise<string | null> {
+	mkdirSync(dir, { recursive: true });
+	const probe = await run(["mkvextract", path, "chapters", join(dir, "chapters-probe.xml")], { signal });
+	if (signal?.aborted) throw new CancelledError();
+	if (probe.code === 0 || !/corrupt/i.test(probe.stderr + probe.stdout)) return null;
+	const out = join(dir, basename(path));
+	Logger.warn(`[repair] mkvextract refuses ${basename(path)} as corrupted, remuxing it to read its subtitles and fonts`);
+	onRemux();
+	const remux = await run(["mkvmerge", "-q", "-o", out, path], { signal });
+	if (signal?.aborted) throw new CancelledError();
+	// mkvmerge exits 1 on warnings with the file written.
+	if (remux.code > 1 || !existsSync(out))
+		throw new Error(`${basename(path)} is damaged and could not be remuxed: ${(remux.stderr || remux.stdout).slice(-300)}`);
+	return out;
+}
+
 export async function inspectRepairFile(path: string, signal?: AbortSignal): Promise<RepairInspectionFile> {
 	const identified = await identifyMatroska(path, signal);
 	const subtitles: RepairSubtitleTrack[] = (identified.tracks || [])
@@ -1656,6 +1678,30 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 		setStep(0, { status: "active", progress: 10 });
 		updateJob({ status: "probing" });
 
+		// Damaged sources are read from a remuxed copy, while the saved plan keeps their real paths.
+		const readable = new Map<string, string>();
+		for (const [index, source] of repairSources(plan).entries()) {
+			if (!plan.replaceFromSource && !plan.tracks.some((track) => sourceIndexOf(track) === index)) continue;
+			const copy = await readableSourceCopy(
+				source.path,
+				join(tempDir, `readable${index}`),
+				() => setStep(0, { progress: 15, detail: `Remuxing ${basename(source.path)}, which mkvextract cannot read` }),
+				signal,
+			);
+			if (copy) readable.set(source.path, copy);
+		}
+		const swapSources = (p: RepairPlan, paths: Map<string, string>): RepairPlan =>
+			paths.size
+				? {
+						...p,
+						...(p.sourcePath ? { sourcePath: paths.get(p.sourcePath) ?? p.sourcePath } : {}),
+						...(p.extraSources ? { extraSources: p.extraSources.map((s) => ({ ...s, path: paths.get(s.path) ?? s.path })) } : {}),
+					}
+				: p;
+		const originalPaths = new Map([...readable].map(([path, copy]) => [copy, path]));
+		const savedPlan = (p: RepairPlan) => swapSources(p, originalPaths);
+		plan = swapSources(plan, readable);
+
 		// Batch replacement queues jobs without a track list: building one means
 		// analysing the source, which belongs in the job, not in the request that
 		// queued dozens of them.
@@ -1674,7 +1720,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			});
 			if (alignSource) plan.alignSource = true;
 			checkCancelled();
-			updateJob({ repairPlan: plan });
+			updateJob({ repairPlan: savedPlan(plan) });
 		}
 
 		const sources = repairSources(plan);
@@ -1975,7 +2021,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			}
 			Logger.info(`[repair] Ended subtitles of ${basename(plan.targetPath)} with the video: ${trimmed.removed} line(s) removed, ${trimmed.cut} cut`);
 		}
-		if (warnings.length) updateJob({ repairPlan: plan, warning: warnings.join(". ") });
+		if (warnings.length) updateJob({ repairPlan: savedPlan(plan), warning: warnings.join(". ") });
 
 		// Pass 2 - work out which attachments survive. A font still referenced by
 		// a copied or partly-restyled track is kept and keeps its family name; the
