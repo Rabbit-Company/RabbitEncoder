@@ -4,7 +4,7 @@ services:
       context: .
       args:
         SVTAV1ESSENTIAL_REPO: https://github.com/nekotrix/SVT-AV1-Essential.git
-        SVTAV1ESSENTIAL_REF: v4.0.1-Essential
+        SVTAV1ESSENTIAL_REF: v4.3.1-Essential
     container_name: rabbit-svt-av1-essential-builder
     volumes:
       - ./svt-av1-essential-dist:/out
