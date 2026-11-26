@@ -72,7 +72,7 @@ import { subtitleDownloadEnabled } from "../subsearch/auto";
 import { ocrEnabled } from "../ocr/ocr";
 import { finishAddedTracks } from "../subtitles/added-tracks";
 import { seriesNotesDir } from "../translate/series-notes";
-import { finalizeOutput, formatTransferDetail, moveFileWithProgress, stageFileWithProgress } from "./output";
+import { finalizeOutput, fitFilename, formatTransferDetail, moveFileWithProgress, stageFileWithProgress } from "./output";
 import { computeDisplayDimensions, isPlausibleDar, resolveSourceSar } from "../video/aspect";
 import { writeEncoderFilmGrainTable } from "../video/film-grain-table";
 import { grainIso, isoResolution, syntheticGrainActive, syntheticGrainMode } from "../core/film-grain-iso";
@@ -2302,7 +2302,7 @@ export async function encodeJob(
 		const resTag = getResolutionTag(encodedDims.width, encodedDims.height);
 		const videoCodecTag = skipVideoEncode ? "FFV1" : "AV1";
 		const audioCodecTag = skipAudioEncode ? "Source" : audioLabel;
-		const outputFilename = `${baseTitle} [${sourceTag}-${resTag}][${audioCodecTag}][${videoCodecTag}]-${config.organization}.mkv`;
+		const outputFilename = fitFilename(baseTitle, ` [${sourceTag}-${resTag}][${audioCodecTag}][${videoCodecTag}]-${config.organization}.mkv`);
 		const finalOutput = join(tempDir, "final.mkv");
 
 		const effectiveSourceTag = probe.priorSource ?? job.sourceLabel ?? releaseGroup;

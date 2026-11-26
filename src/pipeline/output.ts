@@ -42,6 +42,28 @@ export function cleanupAssociatedFiles(videoPath: string): void {
 	} catch {}
 }
 
+/** Most filesystems (ext4, btrfs, xfs, NTFS via most drivers) cap a single name at 255 bytes. */
+export const MAX_NAME_BYTES = 255;
+
+/** Cut text to at most `maxBytes` of UTF-8 without splitting a character. */
+export function truncateUtf8(text: string, maxBytes: number): string {
+	if (Buffer.byteLength(text) <= maxBytes) return text;
+	let bytes = 0;
+	let end = 0;
+	for (const char of text) {
+		const size = Buffer.byteLength(char);
+		if (bytes + size > maxBytes) break;
+		bytes += size;
+		end += char.length;
+	}
+	return text.slice(0, end);
+}
+
+/** Shorten the stem of `stem + suffix` so the whole name fits in one path component. */
+export function fitFilename(stem: string, suffix: string): string {
+	return truncateUtf8(stem, Math.max(0, MAX_NAME_BYTES - Buffer.byteLength(suffix))).trimEnd() + suffix;
+}
+
 /**
  * Resolve a non-colliding absolute output path.
  *
@@ -57,10 +79,10 @@ export function resolveUniqueOutputPath(dir: string, filename: string, ignorePat
 	const stem = filename.slice(0, filename.length - ext.length);
 	const ignore = ignorePath ? resolve(ignorePath) : null;
 
-	let candidate = join(dir, filename);
+	let candidate = join(dir, fitFilename(stem, ext));
 	let n = 2;
 	while (existsSync(candidate) && resolve(candidate) !== ignore) {
-		candidate = join(dir, `${stem} (${n})${ext}`);
+		candidate = join(dir, fitFilename(stem, ` (${n})${ext}`));
 		n++;
 	}
 	return candidate;
@@ -125,7 +147,8 @@ async function transferFileWithProgress(
 	if (signal?.aborted) throw new CancelledError();
 	const sourceStat = statSync(source);
 	const total = sourceStat.size;
-	const partial = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.part`);
+	const tail = `.${randomUUID()}.part`;
+	const partial = join(dirname(destination), `.${truncateUtf8(basename(destination), MAX_NAME_BYTES - 1 - tail.length)}${tail}`);
 	let copied = 0;
 	let lastReported = performance.now();
 	const samples = [{ at: lastReported, copied: 0 }];

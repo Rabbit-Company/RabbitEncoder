@@ -3,7 +3,16 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "os";
 import { join } from "path";
 import type { AppConfig, Job } from "../../src/core/types";
-import { copyFileWithProgress, finalizeOutput, formatTransferDetail, formatTransferRate, stageFileWithProgress } from "../../src/pipeline/output";
+import {
+	copyFileWithProgress,
+	finalizeOutput,
+	fitFilename,
+	formatTransferDetail,
+	formatTransferRate,
+	resolveUniqueOutputPath,
+	stageFileWithProgress,
+	truncateUtf8,
+} from "../../src/pipeline/output";
 
 describe("finalizeOutput for library jobs", () => {
 	let root: string;
@@ -108,6 +117,16 @@ describe("output transfer progress", () => {
 		expect(readdirSync(root)).toEqual(["output.mkv"]);
 	});
 
+	test("a destination name near the filesystem limit still gets a hidden temporary file", async () => {
+		const source = join(root, "source.mkv");
+		const name = `${"a".repeat(251)}.mkv`;
+		writeFileSync(source, "data");
+
+		await copyFileWithProgress(source, join(root, name));
+
+		expect(readdirSync(root)).toEqual([name]);
+	});
+
 	test("cancellation keeps the source and removes the incomplete destination", async () => {
 		const source = join(root, "source.mkv");
 		const destination = join(root, "output.mkv");
@@ -141,5 +160,33 @@ describe("output transfer progress", () => {
 		expect(formatTransferRate(156_250_000)).toBe("1.25 Gbps");
 		expect(formatTransferDetail("Writing output", 524_288, 1_048_576, 12_500_000)).toBe("Writing output 512.00 KiB / 1.00 MiB (100.0 Mbps)");
 		expect(formatTransferDetail("Downloading source", 0, 1_048_576)).toBe("Downloading source 0.00 B / 1.00 MiB");
+	});
+});
+
+describe("output names", () => {
+	test("truncateUtf8 never splits a character", () => {
+		expect(truncateUtf8("abc", 3)).toBe("abc");
+		expect(truncateUtf8("aé", 2)).toBe("a");
+		expect(truncateUtf8("日本語", 7)).toBe("日本");
+	});
+
+	test("fitFilename shortens the title and keeps the tags", () => {
+		const name = fitFilename("T".repeat(300), " [Bluray-1080p][Opus 2.0][AV1]-Group.mkv");
+		expect(Buffer.byteLength(name)).toBe(255);
+		expect(name.endsWith(" [Bluray-1080p][Opus 2.0][AV1]-Group.mkv")).toBe(true);
+	});
+
+	test("resolveUniqueOutputPath keeps a numbered name within the limit", () => {
+		const dir = mkdtempSync(join(tmpdir(), "rabbit-names-"));
+		try {
+			const name = `${"a".repeat(251)}.mkv`;
+			writeFileSync(join(dir, name), "");
+			const path = resolveUniqueOutputPath(dir, name);
+			const file = path.slice(dir.length + 1);
+			expect(Buffer.byteLength(file)).toBe(255);
+			expect(file.endsWith(" (2).mkv")).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
