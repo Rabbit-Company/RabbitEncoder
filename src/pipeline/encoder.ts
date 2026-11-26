@@ -25,6 +25,8 @@ import {
 	escapeXml,
 	describeExitCode,
 	isTimecodesVFR,
+	frameRateDefaultDuration,
+	medianTimecodeGap,
 	countTimecodes,
 	readTimecodes,
 	computeFps,
@@ -2361,7 +2363,8 @@ export async function encodeJob(
 
 		const mkvArgs = ["mkvmerge", "-o", finalOutput, "--title", baseTitle, "--global-tags", xmlPath, "--no-audio", "--no-subtitles"];
 
-		if (!cfrNormalized && existsSync(timecodesFile) && isTimecodesVFR(timecodesFile)) {
+		const vfrTimestamps = !cfrNormalized && existsSync(timecodesFile) && isTimecodesVFR(timecodesFile);
+		if (vfrTimestamps) {
 			const timecodeCount = countTimecodes(timecodesFile);
 			const encodedFrames = await probeVideoFrameCount(videoMkv!, signal);
 			if (encodedFrames === null) {
@@ -2583,6 +2586,15 @@ export async function encodeJob(
 		checkCancelled();
 		if (mergeRes.code !== 0 && mergeRes.code !== 1) {
 			throw new Error(`mkvmerge failed: ${mergeRes.stderr || mergeRes.stdout}`);
+		}
+
+		// mkvmerge sets the default duration from the most common gap in a timestamps file, rounded to the
+		// millisecond, so a 23.976 fps source would be stated as 23.810 fps. Only that rounding is undone,
+		// as a source without a stated rate gets one guessed by ffprobe that can be far from its frames.
+		const defaultDuration = vfrTimestamps ? frameRateDefaultDuration(probe.videoFrameRate) : null;
+		if (defaultDuration && Math.abs(defaultDuration / 1e6 - medianTimecodeGap(readTimecodes(timecodesFile))) < 1) {
+			const res = await run(["mkvpropedit", finalOutput, "--edit", "track:v1", "--set", `default-duration=${defaultDuration}`], { signal });
+			if (res.code !== 0 && res.code !== 1) Logger.warn(`[mux] Could not keep the source frame rate: ${(res.stderr || res.stdout).slice(-500)}`);
 		}
 
 		setStep(S_MUX, { progress: 90, detail: "Applying color metadata" });

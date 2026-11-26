@@ -195,6 +195,7 @@ async function generate(
 				sampling,
 				range,
 				justEnough,
+				allowVfr: true,
 				signal,
 				onProgress,
 			}),

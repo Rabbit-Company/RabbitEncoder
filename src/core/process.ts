@@ -152,3 +152,19 @@ export function isTimecodesVFR(timecodesPath: string, toleranceMs = 2): boolean 
 	const median = deltas.toSorted((a, b) => a - b)[Math.floor(deltas.length / 2)];
 	return deltas.some((d) => Math.abs(d - median!) > toleranceMs);
 }
+
+/** The median gap in milliseconds between the timestamps of a timestamps file. */
+export function medianTimecodeGap(timestamps: number[]): number {
+	const gaps = timestamps
+		.slice(1)
+		.map((t, i) => t - timestamps[i]!)
+		.toSorted((a, b) => a - b);
+	return gaps[Math.floor(gaps.length / 2)] ?? 0;
+}
+
+/** The Matroska default duration in nanoseconds of a frame rate such as "24000/1001", or null for one that cannot be read. */
+export function frameRateDefaultDuration(frameRate: string): number | null {
+	const [num, den = 1] = frameRate.split("/").map(Number);
+	if (!num || !den || !Number.isFinite(num) || !Number.isFinite(den) || num <= 0 || den <= 0) return null;
+	return Math.round((1e9 * den) / num);
+}
