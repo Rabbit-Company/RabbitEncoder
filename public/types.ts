@@ -930,6 +930,12 @@ export interface RepairAuditSubtitleOrder {
 	replaceTarget: boolean;
 }
 
+/** Which tracks longer than the video to end with it. */
+export interface RepairAuditTrim extends RepairAuditSubtitleOrder {
+	subtitles: boolean;
+	audio: boolean;
+}
+
 /** How a subtitle track's lines move: scaled for a frame rate change, then shifted by the piece their start falls in. */
 export interface SubtitleTimeMap {
 	scale: number;

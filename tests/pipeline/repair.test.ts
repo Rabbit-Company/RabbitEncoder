@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyAutoCompression,
+	buildAudioTrimArgs,
 	buildRepairMkvmergeArgs,
 	buildRepairMkvpropeditArgs,
 	buildRepairAuditGroupPlans,
@@ -284,6 +285,51 @@ describe("subtitle repair plans", () => {
 		]);
 		expect(() => buildRepairTrimPlans([files[1]!], { replaceTarget: true })).toThrow("No file has text subtitles");
 		expect(() => sanitizeRepairPlan({ ...plans[0]!, trimSubtitles: [9] })).toThrow("not kept by the repair");
+
+		const both = buildRepairTrimPlans(files, { replaceTarget: true, audio: true, subtitles: true });
+		expect([both[0]!.trimAudio, both[0]!.trimSubtitles]).toEqual([[1], [3]]);
+		const audioOnly = buildRepairTrimPlans(files, { replaceTarget: false, audio: true, subtitles: false });
+		expect([audioOnly[0]!.trimAudio, audioOnly[0]!.trimSubtitles]).toEqual([[1], undefined]);
+		expect(() => buildRepairTrimPlans([files[1]!], { replaceTarget: true, audio: true, subtitles: false })).toThrow("No file has audio");
+		expect(() => buildRepairTrimPlans(files, { replaceTarget: true, audio: false, subtitles: false })).toThrow("Choose subtitles, audio or both");
+	});
+
+	test("muxes a cut audio track in the place of the original with its new metadata", () => {
+		const target = {
+			tracks: [
+				{ id: 0, type: "video", codec: "AV1", properties: {} },
+				{ id: 1, type: "audio", codec: "Opus", properties: {} },
+				{ id: 2, type: "audio", codec: "FLAC", properties: {} },
+				{ id: 3, type: "subtitles", codec: "SubRip/SRT", properties: {} },
+			],
+		} as any;
+		const plan = sanitizeRepairPlan({
+			targetPath: "/show/e01.mkv",
+			replaceTarget: true,
+			trimAudio: [1],
+			audioTracks: [
+				{
+					trackId: 1,
+					title: "Main",
+					language: "en",
+					isDefault: true,
+					isForced: false,
+					isEnabled: true,
+					isHearingImpaired: false,
+					isVisualImpaired: false,
+					isOriginal: false,
+					isCommentary: false,
+				},
+			],
+			tracks: [{ source: "target", trackId: 3, mode: "copy", order: 0, title: "", language: "en", compression: "preserve" }],
+		} as any);
+		const args = buildRepairMkvmergeArgs({ outputPath: "/tmp/out.mkv", plan, target, prepared: [], trimmedAudio: [{ trackId: 1, path: "/tmp/audio_1.mka" }] });
+		expect(args[args.indexOf("--track-order") + 1]).toBe("0:0,1:0,0:2,0:3");
+		expect(args[args.indexOf("--audio-tracks") + 1]).toBe("2");
+		expect(args).not.toContain("1:Main");
+		expect(args.slice(args.indexOf("/show/e01.mkv") + 1)).toContain("0:Main");
+		expect(args.at(-1)).toBe("/tmp/audio_1.mka");
+		expect(buildAudioTrimArgs("/show/e01.mkv", 1, 1481.0634, "/tmp/a.mka")).toContain("parts:00:00:00.000-00:24:41.064");
 	});
 
 	test("sanitizes metadata and gives every selected track a stable order", () => {

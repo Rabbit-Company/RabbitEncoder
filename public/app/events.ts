@@ -284,6 +284,7 @@ import {
 	handleRepairAuditLanguagesChange,
 	handleRepairAuditLanguagesClick,
 	handleRepairAuditOverrunsClick,
+	handleRepairAuditOverrunsChange,
 	handleRepairAuditTimingClick,
 	handleRepairAuditTimingChange,
 	handleRepairAuditTimingInput,
@@ -334,6 +335,7 @@ export function initEventListeners() {
 	byId("repair-audit-files").addEventListener("click", handleRepairAuditClick);
 	byId("repair-audit-groups").addEventListener("click", handleRepairAuditClick);
 	byId("repair-audit-overruns").addEventListener("click", handleRepairAuditOverrunsClick);
+	byId("repair-audit-overruns").addEventListener("change", handleRepairAuditOverrunsChange);
 	byId("repair-audit-timing").addEventListener("click", handleRepairAuditTimingClick);
 	byId("repair-audit-timing").addEventListener("change", handleRepairAuditTimingChange);
 	byId("repair-audit-timing").addEventListener("input", handleRepairAuditTimingInput);

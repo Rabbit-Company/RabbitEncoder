@@ -8,6 +8,7 @@ import {
 	type RepairAuditGroupEdit,
 	type RepairAuditLanguageRemoval,
 	type RepairAuditSubtitleOrder,
+	type RepairAuditTrim,
 	type RepairAuditSubtitleSync,
 	type RepairAuditTimingFile,
 	type RepairInspectionFile,
@@ -406,10 +407,10 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 		}
 	});
 
-	/** Ends the subtitles of the audited files with their video, one repair job per file with subtitles longer than it. */
-	app.post("/api/repair/audit/trim-subtitles", async (c) => {
+	/** Ends the subtitles, audio or both of the audited files with their video, one repair job per file with such tracks longer than it. */
+	app.post("/api/repair/audit/trim-tracks", async (c) => {
 		try {
-			const raw = (await c.req.json()) as RepairAuditSubtitleOrder;
+			const raw = (await c.req.json()) as Partial<RepairAuditTrim>;
 			if (!Array.isArray(raw?.paths) || !raw.paths.length || raw.paths.length > 500) throw new Error("Choose between 1 and 500 files");
 			const paths = [...new Set(raw.paths.map((path) => resolveAllowedMkv(String(path), config, "Audit file")))];
 			const inspected = await inspectAuditPaths(
@@ -417,12 +418,16 @@ export function registerRepairRoutes(app: Web, config: AppConfig): void {
 				undefined,
 				c.req.signal,
 			);
-			const plans = buildRepairTrimPlans(inspected.files, { replaceTarget: raw.replaceTarget === true });
+			const plans = buildRepairTrimPlans(inspected.files, {
+				replaceTarget: raw.replaceTarget === true,
+				subtitles: raw.subtitles !== false,
+				audio: raw.audio === true,
+			});
 			assertNoPendingJobs(
 				plans.map((plan) => plan.targetPath),
-				"ending subtitles with the video",
+				"ending tracks with the video",
 			);
-			if (c.req.signal.aborted) throw new Error("Subtitle trimming request was cancelled");
+			if (c.req.signal.aborted) throw new Error("Track trimming request was cancelled");
 			const jobs = plans.map((plan) => addRepairJob(plan));
 			return c.json({ jobIds: jobs.map((job) => job.id) }, 201);
 		} catch (error: any) {

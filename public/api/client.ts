@@ -23,6 +23,7 @@ import type {
 	RepairAuditGroupEdit,
 	RepairAuditLanguageRemoval,
 	RepairAuditSubtitleOrder,
+	RepairAuditTrim,
 	RepairAuditSubtitleSync,
 	RepairAuditTimingFile,
 	RepairSubtitleTrackPlan,
@@ -442,15 +443,15 @@ export async function orderRepairAuditSubtitles(order: RepairAuditSubtitleOrder)
 	return data;
 }
 
-/** Queues one repair per file whose subtitles last longer than the video, ending them with it. */
-export async function trimRepairAuditSubtitles(request: RepairAuditSubtitleOrder): Promise<{ jobIds: string[] }> {
-	const response = await authFetch(`${API}/api/repair/audit/trim-subtitles`, {
+/** Queues one repair per file whose subtitles or audio last longer than the video, ending them with it. */
+export async function trimRepairAuditTracks(request: RepairAuditTrim): Promise<{ jobIds: string[] }> {
+	const response = await authFetch(`${API}/api/repair/audit/trim-tracks`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 	});
 	const data = await response.json();
-	if (!response.ok) throw new Error(data?.error || "Could not queue the subtitle trimming");
+	if (!response.ok) throw new Error(data?.error || "Could not queue the track trimming");
 	return data;
 }
 

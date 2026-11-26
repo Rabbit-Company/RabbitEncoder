@@ -971,6 +971,8 @@ export interface RepairPlan {
 	fonts?: { rebuild: true; subset: boolean };
 	/** Target subtitle track IDs to end at the video's end: later lines are removed and lines running past it are cut. */
 	trimSubtitles?: number[];
+	/** Target audio track IDs to end at the video's end. Their blocks after it are dropped. */
+	trimAudio?: number[];
 	/** Target subtitle tracks to move to fit the audio, each by its map. Applied before `trimSubtitles`. */
 	retimeSubtitles?: Array<{ trackId: number; map: SubtitleTimeMap }>;
 }
@@ -1094,6 +1096,12 @@ export interface RepairAuditLanguageRemoval {
 export interface RepairAuditSubtitleOrder {
 	paths: string[];
 	replaceTarget: boolean;
+}
+
+/** Which tracks longer than the video to end with it. */
+export interface RepairAuditTrim extends RepairAuditSubtitleOrder {
+	subtitles: boolean;
+	audio: boolean;
 }
 
 /** How a subtitle track's lines move: scaled for a frame rate change, then shifted by the piece their start falls in. */

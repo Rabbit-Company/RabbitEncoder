@@ -19,7 +19,7 @@ import {
 	fetchFontOriginals,
 	type FontSavings,
 	removeRepairAuditLanguages,
-	trimRepairAuditSubtitles,
+	trimRepairAuditTracks,
 	checkRepairAuditTiming,
 	syncRepairAuditSubtitles,
 } from "../api/client";
@@ -493,30 +493,58 @@ async function queueFontRebuild(): Promise<void> {
 	}
 }
 
-/** Ending subtitles that last longer than the video with it, in every file that has them. */
+/** Which kinds of tracks longer than the video get ended with it, and where the result goes. */
+let trimSubtitlesChosen = true;
+let trimAudioChosen = true;
+let trimReplaceTarget = true;
+
+function overrunAudio(file: RepairAuditFile): RepairAuditTrack[] {
+	return file.tracks.filter((track) => track.type === "audio" && track.overrunSeconds);
+}
+
+/** The tracks of a file the trim would end, by the kinds chosen. */
+function chosenOverruns(file: RepairAuditFile): RepairAuditTrack[] {
+	return [...(trimAudioChosen ? overrunAudio(file) : []), ...(trimSubtitlesChosen ? overrunSubtitles(file) : [])];
+}
+
+const countText = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** Ending audio and subtitles that last longer than the video with it, in every file that has them. */
 function renderOverruns(): void {
 	const container = byId("repair-audit-overruns");
-	const files = audit?.files.filter((file) => overrunSubtitles(file).length) ?? [];
+	const files = audit?.files.filter((file) => overrunSubtitles(file).length || overrunAudio(file).length) ?? [];
 	if (!files.length) {
 		container.innerHTML = "";
 		return;
 	}
 	const pending = files.filter((file) => !queuedPaths.has(file.path));
-	const tracks = pending.reduce((sum, file) => sum + overrunSubtitles(file).length, 0);
+	const audioTracks = pending.reduce((sum, file) => sum + overrunAudio(file).length, 0);
+	const subtitleTracks = pending.reduce((sum, file) => sum + overrunSubtitles(file).length, 0);
+	const chosenFiles = pending.filter((file) => chosenOverruns(file).length);
+	const chosenTracks = chosenFiles.reduce((sum, file) => sum + chosenOverruns(file).length, 0);
+	const kind = (field: "audio" | "subtitles", label: string, count: number, checked: boolean) =>
+		count
+			? `<label class="repair-audit-fonts-cut"><input type="checkbox" data-audit-trim-kind="${field}" ${checked ? "checked" : ""} ${queueingGroup ? "disabled" : ""}> ${label} <span class="hdr-note">${countText(count, "track")}</span></label>`
+			: "";
+	const button = !pending.length
+		? "Changes are queued"
+		: chosenTracks
+			? `End ${countText(chosenTracks, "track")} in ${countText(chosenFiles.length, "file")} with the video`
+			: "Choose audio or subtitles";
 	container.innerHTML = `<details class="settings-subsection repair-audit-overruns" open>
-		<summary>Subtitles longer than the video <span class="hdr-note">${files.length} file${files.length === 1 ? "" : "s"}</span></summary>
+		<summary>Tracks longer than the video <span class="hdr-note">${countText(files.length, "file")}</span></summary>
 		<div class="settings-subsection-body">
-			<p class="repair-audit-fonts-note">Lines that start after the video ends are removed. Lines still showing when it ends are cut short to end with it. Every other line stays as it is.</p>
+			<p class="repair-audit-fonts-note">Audio is cut where the video ends without being encoded again. Subtitle lines that start after the video ends are removed and lines still showing when it ends are cut short. Everything else stays as it is.</p>
+			${kind("audio", "Audio", audioTracks, trimAudioChosen)}
+			${kind("subtitles", "Text subtitles", subtitleTracks, trimSubtitlesChosen)}
 			<div class="repair-audit-language-actions">
 				<label class="repair-audit-save-mode">Save changes to
 					<select class="select-input" id="repair-audit-overruns-save-mode" ${queueingGroup ? "disabled" : ""}>
-						<option value="existing" selected>Existing MKV files</option>
-						<option value="copies">New .repaired.mkv copies</option>
+						<option value="existing" ${trimReplaceTarget ? "selected" : ""}>Existing MKV files</option>
+						<option value="copies" ${trimReplaceTarget ? "" : "selected"}>New .repaired.mkv copies</option>
 					</select>
 				</label>
-				<button class="btn btn-primary btn-sm" type="button" data-audit-trim-subtitles ${pending.length && !queueingGroup ? "" : "disabled"}>
-					${pending.length ? `End ${tracks} track${tracks === 1 ? "" : "s"} in ${pending.length} file${pending.length === 1 ? "" : "s"} with the video` : "Changes are queued"}
-				</button>
+				<button class="btn btn-primary btn-sm" type="button" data-audit-trim-tracks ${chosenTracks && !queueingGroup ? "" : "disabled"}>${button}</button>
 			</div>
 		</div>
 	</details>`;
@@ -525,32 +553,46 @@ function renderOverruns(): void {
 export function handleRepairAuditOverrunsClick(event: MouseEvent): void {
 	if (queueingGroup || !audit) return;
 	const target = event.target instanceof Element ? event.target : null;
-	if (target?.closest("[data-audit-trim-subtitles]")) void queueSubtitleTrim();
+	if (target?.closest("[data-audit-trim-tracks]")) void queueTrackTrim();
 }
 
-async function queueSubtitleTrim(): Promise<void> {
+export function handleRepairAuditOverrunsChange(event: Event): void {
+	const target = event.target;
+	if (target instanceof HTMLSelectElement && target.id === "repair-audit-overruns-save-mode") {
+		trimReplaceTarget = target.value === "existing";
+		return;
+	}
+	if (!(target instanceof HTMLInputElement) || !target.dataset.auditTrimKind) return;
+	if (target.dataset.auditTrimKind === "audio") trimAudioChosen = target.checked;
+	else trimSubtitlesChosen = target.checked;
+	renderOverruns();
+}
+
+async function queueTrackTrim(): Promise<void> {
 	if (!audit || queueingGroup) return;
 	const currentAudit = audit;
-	const files = audit.files.filter((file) => overrunSubtitles(file).length && !queuedPaths.has(file.path));
+	const files = audit.files.filter((file) => chosenOverruns(file).length && !queuedPaths.has(file.path));
 	if (!files.length) return;
-	const replaceTarget = (byId("repair-audit-overruns-save-mode") as HTMLSelectElement).value === "existing";
+	const replaceTarget = trimReplaceTarget;
+	const audio = trimAudioChosen && files.some((file) => overrunAudio(file).length);
+	const subtitles = trimSubtitlesChosen && files.some((file) => overrunSubtitles(file).length);
+	const what = audio && subtitles ? "audio and subtitles" : audio ? "audio" : "subtitles";
 	const where = replaceTarget ? "The files are rewritten in place." : "New .repaired.mkv copies are written next to them.";
-	if (
-		!confirm(
-			`End the subtitles of ${files.length} file${files.length === 1 ? "" : "s"} with the video?\n\nLines after the end are removed and lines running past it are cut short. ${where}`,
-		)
-	)
-		return;
+	const how = [
+		audio ? "Audio after the end is dropped." : "",
+		subtitles ? "Subtitle lines after the end are removed and lines running past it are cut short." : "",
+	].filter(Boolean);
+	if (!confirm(`End the ${what} of ${countText(files.length, "file")} with the video?\n\n${how.join(" ")} ${where}`)) return;
 	queueingGroup = true;
 	buttonById("repair-audit-pick-folder-btn").disabled = true;
 	renderOverruns();
-	byId("repair-audit-status").textContent = `Validating and queueing changes for ${files.length} file${files.length === 1 ? "" : "s"}...`;
+	byId("repair-audit-status").textContent = `Validating and queueing changes for ${countText(files.length, "file")}...`;
 	try {
-		const result = await trimRepairAuditSubtitles({ paths: files.map((file) => file.path), replaceTarget });
+		const result = await trimRepairAuditTracks({ paths: files.map((file) => file.path), replaceTarget, audio, subtitles });
 		if (audit === currentAudit) {
 			files.forEach((file) => queuedPaths.add(file.path));
 			byId("repair-audit-status").textContent =
-				`Queued ${result.jobIds.length} repair${result.jobIds.length === 1 ? "" : "s"} ending subtitles with the video. Follow their progress in the job list. Audit again after completion to see the updated tracks.`;
+				`Queued ${countText(result.jobIds.length, "repair")} ending ${what} with the video. Follow their progress in the job list. Audit again after completion to see the updated tracks.`;
 		}
 		void update().catch(() => {});
 	} catch (error) {

@@ -621,21 +621,40 @@ export function overrunningSubtitles(tracks: RepairAuditTrack[]): RepairAuditTra
 	return tracks.filter((track) => track.type === "subtitles" && track.overrunSeconds && isTextSubtitleCodec(track.codec));
 }
 
-/** One repair per file with subtitles longer than the video, ending those tracks at the video's end. Nothing else changes. */
-export function buildRepairTrimPlans(files: Pick<RepairAuditFile, "path" | "tracks">[], options: { replaceTarget: boolean }): RepairPlan[] {
+/** The audio tracks of a file that last longer than its video. */
+export function overrunningAudio(tracks: RepairAuditTrack[]): RepairAuditTrack[] {
+	return tracks.filter((track) => track.type === "audio" && track.overrunSeconds);
+}
+
+/** One repair per file with tracks longer than the video, ending the chosen kinds at the video's end. Nothing else changes. */
+export function buildRepairTrimPlans(
+	files: Pick<RepairAuditFile, "path" | "tracks">[],
+	options: { replaceTarget: boolean; subtitles?: boolean; audio?: boolean },
+): RepairPlan[] {
+	const { subtitles = true, audio = false } = options;
+	if (!subtitles && !audio) throw new Error("Choose subtitles, audio or both to end with the video");
 	const plans = files.flatMap((file) => {
-		const overrunning = overrunningSubtitles(file.tracks);
-		if (!overrunning.length) return [];
+		const trimSubtitles = subtitles ? overrunningSubtitles(file.tracks).map((track) => track.id) : [];
+		const trimAudio = audio ? overrunningAudio(file.tracks).map((track) => track.id) : [];
+		if (!trimSubtitles.length && !trimAudio.length) return [];
 		return [
 			sanitizeRepairPlan({
 				targetPath: file.path,
 				replaceTarget: options.replaceTarget,
-				trimSubtitles: overrunning.map((track) => track.id),
+				...(trimSubtitles.length ? { trimSubtitles } : {}),
+				...(trimAudio.length ? { trimAudio } : {}),
 				tracks: unchangedSubtitles(file.tracks),
 			}),
 		];
 	});
-	if (!plans.length) throw new Error("No file has text subtitles longer than the video");
+	if (!plans.length)
+		throw new Error(
+			audio && !subtitles
+				? "No file has audio longer than the video"
+				: subtitles && !audio
+					? "No file has text subtitles longer than the video"
+					: "No file has tracks longer than the video",
+		);
 	return plans;
 }
 
@@ -901,6 +920,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 	const fontFix = sanitizeFontFix(raw.fontFix);
 	const fonts = raw.fonts ? { rebuild: true as const, subset: !!raw.fonts.subset } : null;
 	const trimSubtitles = sanitizeTrimSubtitles(raw.trimSubtitles, tracks);
+	const trimAudio = sanitizeTrimAudio(raw.trimAudio);
 	const retimeSubtitles = sanitizeRetimeSubtitles(raw.retimeSubtitles, tracks);
 	return {
 		targetPath,
@@ -914,6 +934,7 @@ export function sanitizeRepairPlan(raw: RepairPlan): RepairPlan {
 		...(fontFix ? { fontFix } : {}),
 		...(fonts ? { fonts } : {}),
 		...(trimSubtitles.length ? { trimSubtitles } : {}),
+		...(trimAudio.length ? { trimAudio } : {}),
 		...(retimeSubtitles.length ? { retimeSubtitles } : {}),
 	};
 }
@@ -940,6 +961,14 @@ function sanitizeTrimSubtitles(raw: unknown, tracks: RepairSubtitleTrackPlan[]):
 		if (!tracks.some((track) => track.source === "target" && track.trackId === id))
 			throw new Error(`Subtitle track ${id} to cut at the end of the video is not kept by the repair`);
 	}
+	return ids;
+}
+
+function sanitizeTrimAudio(raw: unknown): number[] {
+	if (raw === undefined) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_REPAIR_TRACKS) throw new Error("Invalid audio tracks to cut at the end of the video");
+	const ids = [...new Set(raw.map(Number))];
+	if (ids.some((id) => !Number.isInteger(id) || id < 0)) throw new Error("Invalid audio tracks to cut at the end of the video");
 	return ids;
 }
 
@@ -1045,8 +1074,7 @@ function audioOrderChanged(plan: Pick<RepairPlan, "audioOrder">, target: MkvIden
 	return orderedTargetAudio(plan, target).some((track, index) => track !== audio[index]);
 }
 
-function audioTrackOptions(plan: RepairAudioTrackPlan): string[] {
-	const id = plan.trackId;
+function audioTrackOptions(plan: RepairAudioTrackPlan, id = plan.trackId): string[] {
 	return [
 		"--language",
 		`${id}:${plan.language}`,
@@ -1168,6 +1196,7 @@ function findTrack(identified: MkvIdentification, plan: RepairSubtitleTrackPlan)
 export function isMetadataOnlyRepair(plan: RepairPlan, target: MkvIdentification): boolean {
 	const originalSubtitles = (target.tracks || []).filter((track) => track.type === "subtitles");
 	return (
+		!plan.trimAudio?.length &&
 		!audioOrderChanged(plan, target) &&
 		plan.tracks.length === originalSubtitles.length &&
 		plan.tracks.every(
@@ -1400,6 +1429,26 @@ async function readCopiedAssText(
 }
 
 /** What ending subtitles with the video changed, for the job's step. */
+function audioTrimSummary(count: number): string {
+	return `${count} audio track${count === 1 ? "" : "s"} ended with the video`;
+}
+
+/** After audio is ended with the video, the video keeps its length and no audio track lasts past it. */
+function assertAudioEndsWithVideo(target: MkvIdentification, output: MkvIdentification, plan: Pick<RepairPlan, "audioOrder" | "trimAudio">): void {
+	const before = videoEndSeconds(target);
+	const after = videoEndSeconds(output);
+	if (Math.abs(before - after) > 0.5) throw new Error("Verification failed: the video length changed during repair");
+	const targetAudio = orderedTargetAudio(plan, target);
+	const outputAudio = (output.tracks || []).filter((track) => track.type === "audio");
+	targetAudio.forEach((original, index) => {
+		const seconds = tagSeconds(outputAudio[index]?.properties.tag_duration);
+		if (seconds > tagSeconds(original.properties.tag_duration) + 0.5) throw new Error(`Verification failed: audio ${index + 1} got longer during repair`);
+	});
+	const overruns = trackOverruns(output);
+	const stillLong = targetAudio.findIndex((original, index) => plan.trimAudio?.includes(original.id) && overruns.has(outputAudio[index]?.id ?? -1));
+	if (stillLong >= 0) throw new Error(`Verification failed: audio ${stillLong + 1} still lasts longer than the video`);
+}
+
 function trimmedSummary(trimmed: { removed: number; cut: number }): string {
 	if (!trimmed.removed && !trimmed.cut) return "Subtitles already end with the video";
 	const lines = (count: number) => `${count} line${count === 1 ? "" : "s"}`;
@@ -1502,6 +1551,39 @@ async function resolveAutoCompression(options: {
 	applyAutoCompression(plan, decisions);
 }
 
+/** A target audio track ended with the video, in a file of its own. */
+export interface TrimmedAudio {
+	trackId: number;
+	path: string;
+}
+
+/** Seconds as the HH:MM:SS.mmm mkvmerge takes, rounded up so the last frame keeps its sound. */
+function splitTimestamp(seconds: number): string {
+	const ms = Math.ceil(seconds * 1000);
+	const pad = (value: number, width = 2) => String(value).padStart(width, "0");
+	return `${pad(Math.floor(ms / 3_600_000))}:${pad(Math.floor(ms / 60_000) % 60)}:${pad(Math.floor(ms / 1000) % 60)}.${pad(ms % 1000, 3)}`;
+}
+
+/** The mkvmerge command that writes one audio track of a file, ending at `endSeconds`. Its delay, codec setup and metadata stay as they are. */
+export function buildAudioTrimArgs(path: string, trackId: number, endSeconds: number, outputPath: string): string[] {
+	return [
+		"mkvmerge",
+		"-o",
+		outputPath,
+		"--no-video",
+		"--no-subtitles",
+		"--no-buttons",
+		"--no-chapters",
+		"--no-attachments",
+		"--no-global-tags",
+		"--audio-tracks",
+		String(trackId),
+		"--split",
+		`parts:00:00:00.000-${splitTimestamp(endSeconds)}`,
+		path,
+	];
+}
+
 /** Build the mkvmerge command separately so selection/order behavior is unit-testable. */
 export function buildRepairMkvmergeArgs(options: {
 	outputPath: string;
@@ -1530,8 +1612,10 @@ export function buildRepairMkvmergeArgs(options: {
 	 * replace the target's earlier faces, which are left out of the target.
 	 */
 	rabbitFaces?: { faces: FontAttachment[]; dropTargetAttachmentIds: number[] } | null;
+	/** Target audio tracks already ended with the video, each a file of its own that takes the track's place. */
+	trimmedAudio?: TrimmedAudio[];
 }): string[] {
-	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts, rabbitFaces } = options;
+	const { outputPath, plan, target, prepared, keptAttachments, sourceSyncs = [], sourceFonts, rabbitFaces, trimmedAudio = [] } = options;
 	const sourceIds = options.sources ?? (options.source ? [options.source] : []);
 	const sourcePaths = repairSources(plan).map((s) => s.path);
 	const rewriteAttachments = !!keptAttachments;
@@ -1543,13 +1627,20 @@ export function buildRepairMkvmergeArgs(options: {
 	const usedSources = [...new Set(plan.tracks.filter((track) => track.source === "source").map(sourceIndexOf))].sort((a, b) => a - b);
 	const fileIndexOfSource = new Map(usedSources.map((index, i) => [index, i + 1]));
 	const firstPreparedFileIndex = usedSources.length + 1;
+	const firstTrimmedAudioFileIndex = firstPreparedFileIndex + prepared.length;
+	const trimmedIndex = (id: number) => trimmedAudio.findIndex((item) => item.trackId === id);
 
 	// Audio takes the planned order in the places the target's audio held.
 	const audioInOrder = orderedTargetAudio(plan, target);
 	let nextAudio = 0;
 	const targetNonSubs = (target.tracks || [])
 		.filter((track) => track.type !== "subtitles")
-		.map((track) => `0:${track.type === "audio" ? audioInOrder[nextAudio++]!.id : track.id}`);
+		.map((track) => {
+			if (track.type !== "audio") return `0:${track.id}`;
+			const id = audioInOrder[nextAudio++]!.id;
+			const trimmed = trimmedIndex(id);
+			return trimmed < 0 ? `0:${id}` : `${firstTrimmedAudioFileIndex + trimmed}:0`;
+		});
 	const plannedOrder = plan.tracks.map((track) => {
 		if (isDirect(track)) return `${track.source === "target" ? 0 : fileIndexOfSource.get(sourceIndexOf(track))}:${track.trackId}`;
 		const index = preparedIndex(track);
@@ -1565,9 +1656,14 @@ export function buildRepairMkvmergeArgs(options: {
 	} else {
 		args.push("--no-subtitles");
 	}
+	if (trimmedAudio.length) {
+		const kept = audioInOrder.filter((track) => trimmedIndex(track.id) < 0);
+		if (kept.length) args.push("--audio-tracks", kept.map((track) => track.id).join(","));
+		else args.push("--no-audio");
+	}
 	for (const track of plan.audioTracks ?? []) {
 		targetAudioTrack(target, track);
-		args.push(...audioTrackOptions(track));
+		if (trimmedIndex(track.trackId) < 0) args.push(...audioTrackOptions(track));
 	}
 	if (rabbitFaces && !rewriteAttachments) args.push(...dropAttachmentArgs(rabbitFaces.dropTargetAttachmentIds));
 	args.push(plan.targetPath);
@@ -1600,6 +1696,11 @@ export function buildRepairMkvmergeArgs(options: {
 	for (const item of prepared) {
 		const originalIdentification = item.plan.source === "target" ? target : sourceIds[sourceIndexOf(item.plan)]!;
 		args.push(...trackOptions(item.plan, 0, findTrack(originalIdentification, item.plan)), item.path);
+	}
+	// A cut audio file already carries the track's name, language and flags, so only changes to them are given.
+	for (const item of trimmedAudio) {
+		const metadata = plan.audioTracks?.find((track) => track.trackId === item.trackId);
+		args.push("--no-chapters", "--no-global-tags", "--no-attachments", ...(metadata ? audioTrackOptions(metadata, 0) : []), item.path);
 	}
 
 	const attached = new Set<string>();
@@ -2021,6 +2122,25 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			}
 			Logger.info(`[repair] Ended subtitles of ${basename(plan.targetPath)} with the video: ${trimmed.removed} line(s) removed, ${trimmed.cut} cut`);
 		}
+		// Audio longer than the video ends with it. Each track is cut into a file of its own that takes its place.
+		const trimmedAudio: TrimmedAudio[] = [];
+		if (plan.trimAudio?.length) {
+			setStep(S_PREPARE, { progress: 57, detail: "Ending audio with the video" });
+			const endSeconds = videoEndSeconds(targetId);
+			if (endSeconds <= 0) throw new Error("The video length is unknown, so audio cannot be ended with it");
+			for (const trackId of plan.trimAudio) {
+				checkCancelled();
+				if (!(targetId.tracks || []).some((track) => track.type === "audio" && track.id === trackId))
+					throw new Error(`target audio track ${trackId} no longer exists`);
+				const out = join(tempDir, `audio_${trackId}.trimmed.mka`);
+				const cut = await run(buildAudioTrimArgs(plan.targetPath, trackId, endSeconds, out), { signal });
+				checkCancelled();
+				if ((cut.code !== 0 && cut.code !== 1) || !existsSync(out))
+					throw new Error(`Could not end audio track ${trackId} with the video: ${(cut.stderr || cut.stdout).slice(-500)}`);
+				trimmedAudio.push({ trackId, path: out });
+			}
+			Logger.info(`[repair] Ended ${trimmedAudio.length} audio track(s) of ${basename(plan.targetPath)} with the video`);
+		}
 		if (warnings.length) updateJob({ repairPlan: savedPlan(plan), warning: warnings.join(". ") });
 
 		// Pass 2 - work out which attachments survive. A font still referenced by
@@ -2143,10 +2263,12 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 					: retimedCount
 						? `${retimedCount} track${retimedCount === 1 ? "" : "s"} moved to fit the audio`
 						: trimIds.size
-							? trimmedSummary(trimmed)
-							: fontsChanged
-								? fontPassSummary(fontPass!)
-								: "No subtitle conversion needed",
+							? trimmedSummary(trimmed) + (trimmedAudio.length ? `, ${audioTrimSummary(trimmedAudio.length)}` : "")
+							: trimmedAudio.length
+								? audioTrimSummary(trimmedAudio.length)
+								: fontsChanged
+									? fontPassSummary(fontPass!)
+									: "No subtitle conversion needed",
 		});
 
 		await resolveAutoCompression({
@@ -2183,6 +2305,7 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 				sourceFonts,
 				rabbitFaces,
 				sourceSyncs: timings.map((timing) => (timing ? mkvmergeSync(timing.map) : null)),
+				trimmedAudio,
 			});
 			Logger.info(`[repair] Remuxing ${basename(plan.targetPath)} with ${plan.tracks.length} subtitle track(s)`);
 			const merged = await run(args, { signal });
@@ -2210,7 +2333,8 @@ export async function runRepairJob(job: Job, config: AppConfig, updateJob: (part
 			(verified.tracks || []).filter((track) => track.type === "audio"),
 			targetId,
 		);
-		if (!durationsAreCompatible(targetId, verified)) throw new Error("Verification failed: repaired duration differs from the encoded target");
+		if (trimmedAudio.length) assertAudioEndsWithVideo(targetId, verified, plan);
+		else if (!durationsAreCompatible(targetId, verified)) throw new Error("Verification failed: repaired duration differs from the encoded target");
 		const attachedNames = new Set((verified.attachments || []).map((attachment) => attachment.file_name));
 		const notAttached = (plan.fontFix?.attachments ?? []).find((font) => !attachedNames.has(font.fileName));
 		if (notAttached) throw new Error(`Verification failed: ${notAttached.fileName} was not attached`);
